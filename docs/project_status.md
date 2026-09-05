@@ -160,14 +160,14 @@ newly introduced.
 3. ~~`app/db/base.py` didn't import every model~~ — **FIXED**. `Base` now lives in
    `app/db/base_class.py`; `app/db/base.py` is a pure aggregator. See `architecture.md` §5 for
    the convention this establishes going forward.
-4. ~~**Webhook handling isn't idempotent**~~ — **moot**. The Razorpay integration
-   (`payment_service.process_razorpay_webhook`, `verify_razorpay_signature`, the
-   `POST /payment/razorpay/webhook` route, the `razorpay` SDK dependency) has been removed —
+4. ~~**Webhook handling isn't idempotent**~~ — **moot**. The Paypal integration
+   (`payment_service.process_Paypal_webhook`, `verify_Paypal_signature`, the
+   `POST /payment/Paypal/webhook` route, the `Paypal` SDK dependency) has been removed —
    real payment gateway integration is deferred to a later phase; only the mock gateway remains,
    and `PaymentGateway` is kept as a single-member enum so a future gateway has somewhere to slot
    in. Whichever gateway lands in that phase will need its own idempotent webhook handler (keyed
    off that provider's event id) designed in before it's allowed to issue tickets — re-derive this
-   from that gateway's actual semantics rather than assuming Razorpay's.
+   from that gateway's actual semantics rather than assuming Paypal's.
 5. **Minor schema type inconsistencies**: `OrderItem.price` is `Integer` while `Product.price` is
    `Float` (truncates fractional prices in order history); `ShippingAddress.postal_code` is
    `Integer`, which breaks for alphanumeric postal codes (UK, Canada, Japan).

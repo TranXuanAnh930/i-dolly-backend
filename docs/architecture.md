@@ -26,7 +26,7 @@ this same folder. For *what's built vs. still open*, see `project_status.md`.
   `reset`), checked on decode so one can't be replayed as the other.
 - **bcrypt** via passlib for password hashing.
 - A `mock` payment gateway only (`PaymentGateway.mock`, driven by a `simulate_succ` flag) —
-  real gateway integration (Razorpay or otherwise) is deferred to a later phase; `PaymentGateway`
+  real gateway integration (Paypal or otherwise) is deferred to a later phase; `PaymentGateway`
   stays an enum with one member rather than being collapsed away, so a real gateway has somewhere
   to slot in later.
 - **SendGrid** for transactional email, sent via FastAPI `BackgroundTasks`, never inline.

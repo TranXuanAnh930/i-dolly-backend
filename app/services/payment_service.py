@@ -8,7 +8,7 @@ from app.db.models.payment import Payment
 from app.schema.shipping import ShippingStatus as SchemaShipStatus
 from app.utils.mock_id import generate_mock_id
 
-# Real gateway integration (Razorpay or otherwise) is next-phase work — see
+# Real gateway integration (Paypal or otherwise) is next-phase work — see
 # docs/project_status.md. PaymentGateway currently has only one member
 # (mock), kept as an enum rather than collapsed away so a real gateway has
 # somewhere to slot in later without reshaping this function's contract.
