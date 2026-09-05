@@ -94,11 +94,20 @@ newly introduced.
    same pattern once ticket issuance is built on top of `checkout()` — the ticket-domain failure
    mode is **selling the same seat twice**. Fix before, not after, wiring the draw job / direct
    purchase flow to real inventory decrements.
-2. **The rate limiter's key doesn't include the route** (`app/cache/rate_limit.py`) — every
-   endpoint sharing a `key_func` shares one Redis counter. Currently a minor annoyance; becomes a
-   real problem the moment a high-value, bot-targeted endpoint (a ticket drop, a lottery-entry
-   endpoint) needs its own independent budget. Fix by folding the route into the key before
-   building anything scalper-sensitive on top of this.
+2. ~~**The rate limiter's key doesn't include the route**~~ — **FIXED**. `ip_key`/`user_key`
+   (`app/cache/rate_limit.py`) previously built their Redis key from only the caller's identity
+   (`rate:ip:<ip>` / `rate:user:<id>`), so every endpoint sharing a `key_func` shared one counter
+   — a frontend page load firing several `ip_key`-gated GET requests (product list, categories,
+   idols, venues, ...) in one burst would exhaust a single shared 60s bucket sized for whichever
+   route happened to increment it first, producing 429s that looked unrelated to actual per-route
+   traffic. Both key functions now fold in `request.scope["route"].path` (the route's raw path
+   template, e.g. `/order/single_placed_order/{order_id}` — not the resolved URL, so different ids
+   on the same endpoint still share one budget): `rate:ip:<route>:<ip>` / `rate:user:<route>:<id>`.
+   Verified with `py_compile` only, per §3's standing limitation. **Still open**: `ip_key` uses
+   `request.client.host` with no `X-Forwarded-For`/`X-Real-IP` handling, so behind any reverse
+   proxy (Render, Docker's network, nginx) every visitor could still share one IP-bucket — that's
+   a separate fix (and one that needs care, since blindly trusting a forwarded-for header from an
+   untrusted network lets a client spoof its way around the limit) not attempted here.
 3. ~~`app/db/base.py` didn't import every model~~ — **FIXED**. `Base` now lives in
    `app/db/base_class.py`; `app/db/base.py` is a pure aggregator. See `architecture.md` §5 for
    the convention this establishes going forward.
