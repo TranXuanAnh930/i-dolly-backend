@@ -22,7 +22,7 @@ from app.db.models.idol import Idol
 # imported by the time mapper configuration is triggered — the live app
 # never noticed because main.py imports every router, which transitively
 # imports every model anyway, but any standalone script that imports models
-# individually (like seed.py) hits "failed to locate a name" the moment it
+# individually (like scripts/seed.py) hits "failed to locate a name" the moment it
 # touches a class whose relationships point at something never imported.
 # This file is the one place that's supposed to guarantee every model is
 # registered regardless of what else got imported — keep it in sync with

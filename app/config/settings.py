@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     DATABASE_NAME : str
     DATABASE_USER : str
     DATABASE_PWD : str
-    RAZORPAY_KEY_ID :str
-    RAZORPAY_KEY_SECRET : str
-    RAZORPAY_WEBHOOK_SECRET : str
     SENDGRID_API_KEY : str
     FROM_EMAIL : str
 
@@ -25,6 +22,12 @@ class Settings(BaseSettings):
     # verification link) that must resolve from outside the container.
     # Defaults to local dev; override per-environment via .env.
     BASE_URL: str = "http://localhost:8000"
+
+    # Comma-separated list of frontend origins allowed to call this API
+    # cross-origin (see main.py's CORSMiddleware). Defaults to the local Vue
+    # dev port; set to the deployed frontend's real origin(s) in production —
+    # e.g. "https://my-frontend.vercel.app,https://staging.my-frontend.app".
+    CORS_ORIGINS: str = "http://localhost:8080"
 
     # --- image storage (see app/utils/storage.py) ------------------------
     # "local" saves to LOCAL_UPLOAD_DIR on disk, served back out under

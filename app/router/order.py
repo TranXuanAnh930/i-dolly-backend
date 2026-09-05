@@ -17,12 +17,12 @@ from app.services.order_service import (
     update_shipping_status
 )
 from app.exception.checkout import (
-    CartItemError, 
-    PaymentFailedError, 
-    InsufficientStockError, 
-    AddressIdError, 
+    CartItemError,
+    PaymentFailedError,
+    InsufficientStockError,
+    AddressIdError,
     PaymentAmountMismatch,
-    RazorpayPaymentFailed
+    UnsupportedGatewayError
 )
 from app.exception.db_triggers import TriggerViolationError, commit_or_raise
 
@@ -40,7 +40,7 @@ async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user
     except PaymentFailedError as e:
         db.rollback()
         raise HTTPException(status_code=402, detail=str(e))
-    except (InsufficientStockError, PaymentAmountMismatch, RazorpayPaymentFailed) as e:
+    except (InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     except TriggerViolationError as e:

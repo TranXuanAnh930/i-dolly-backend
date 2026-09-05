@@ -469,6 +469,43 @@ class TestUserService:
         result = promote_admin(db, MISSING_ID)
         assert result is None
 
+    def test_create_manager_success(self):
+        from app.services.user_service import create_manager_user
+        from app.schema.user import ManagerCreate
+
+        db = MagicMock()
+        db.query().filter().first.return_value = None  # no existing user with this email
+        db.get.return_value = MagicMock()  # company exists
+        data = ManagerCreate(name="Manager", email="manager@example.com", password="pass123", company_id=DEFAULT_ID)
+
+        result = create_manager_user(db, data)
+        assert result not in ("email_taken", "company_not_found")
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+
+    def test_create_manager_email_taken(self):
+        from app.services.user_service import create_manager_user
+        from app.schema.user import ManagerCreate
+
+        db = MagicMock()
+        db.query().filter().first.return_value = make_mock_user()
+        data = ManagerCreate(name="Manager", email="manager@example.com", password="pass123", company_id=DEFAULT_ID)
+
+        result = create_manager_user(db, data)
+        assert result == "email_taken"
+
+    def test_create_manager_company_not_found(self):
+        from app.services.user_service import create_manager_user
+        from app.schema.user import ManagerCreate
+
+        db = MagicMock()
+        db.query().filter().first.return_value = None
+        db.get.return_value = None
+        data = ManagerCreate(name="Manager", email="manager@example.com", password="pass123", company_id=MISSING_ID)
+
+        result = create_manager_user(db, data)
+        assert result == "company_not_found"
+
     def test_revoke_token_success(self):
         from app.services.user_service import revoke_token
 
@@ -673,7 +710,8 @@ class TestShippingService:
 
 
 # ─────────────────────────────────────────────────────────────
-# Payment Service Tests (with mocked Razorpay)
+# Payment Service Tests (mock gateway only — real gateway integration is
+# deferred to a later phase)
 # ─────────────────────────────────────────────────────────────
 
 class TestPaymentService:
@@ -695,8 +733,7 @@ class TestPaymentService:
         data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.mock, simulate_succ=True)
 
         result = create_payment(db, DEFAULT_ID, order, data)
-        assert result is not None
-        assert result.payment is not None
+        assert result is not False
         db.add.assert_called()
         db.commit.assert_called()
 
@@ -714,48 +751,10 @@ class TestPaymentService:
         order.id = DEFAULT_ID
         data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.mock, simulate_succ=False)
 
+        # simulate_succ=False still returns the (failed-status) Payment row —
+        # only an unsupported gateway returns False.
         result = create_payment(db, DEFAULT_ID, order, data)
-        assert result is not None
-        # Payment should be failed
-        assert result.payment is not None
-
-    @patch("app.services.payment_service._razorpay_client")
-    def test_create_razorpay_payment(self, mock_rz_client):
-        from app.services.payment_service import create_payment
-        from app.schema.payment import PaymentCreate, PaymentGateway
-
-        mock_rz_client.order.create.return_value = {"id": "order_123"}
-
-        db = MagicMock()
-        def _refresh(obj):
-            obj.id = DEFAULT_ID
-            obj.created_at = datetime.now(timezone.utc)
-            obj.updated_at = datetime.now(timezone.utc)
-        db.refresh.side_effect = _refresh
-        order = MagicMock()
-        order.id = DEFAULT_ID
-        data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.razorpay)
-
-        result = create_payment(db, DEFAULT_ID, order, data)
-        assert result is not None
-        assert result.rz_data is not None
-        assert result.rz_data["pg_order_id"] == "order_123"
-
-    @patch("app.services.payment_service._razorpay_client")
-    def test_create_razorpay_payment_failure(self, mock_rz_client):
-        from app.services.payment_service import create_payment
-        from app.schema.payment import PaymentCreate, PaymentGateway
-        from app.exception.checkout import RazorpayPaymentFailed
-
-        mock_rz_client.order.create.side_effect = Exception("API Error")
-
-        db = MagicMock()
-        order = MagicMock()
-        order.id = DEFAULT_ID
-        data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.razorpay)
-
-        with pytest.raises(RazorpayPaymentFailed):
-            create_payment(db, DEFAULT_ID, order, data)
+        assert result is not False
 
     def test_fetch_payment_status_found(self):
         from app.services.payment_service import fetch_payment_status

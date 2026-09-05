@@ -8,7 +8,7 @@ from app.schema.order import OrderStatus
 from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.payment import PaymentCreate
 from app.services.payment_service import create_payment
-from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, RazorpayPaymentFailed
+from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
 from app.exception.db_triggers import flush_or_raise
 
 def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
@@ -40,7 +40,7 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     
     payment_res = create_payment(db, user_id, order, payment_data)
     if not payment_res:
-        raise RazorpayPaymentFailed("Unsupported payment gateway!")
+        raise UnsupportedGatewayError("Unsupported payment gateway!")
 
     for its in cart_items:
         product = db.query(Product).filter(Product.id==its.product_id).with_for_update().first()
@@ -58,8 +58,7 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     db.query(Cart).filter(Cart.user_id==user_id).delete()
 
     return {
-        "payment" : payment_res.payment,
-        "rz_data" : payment_res.rz_data
+        "payment" : payment_res
     }
 
 def fetch_placed_order(db:Session, user_id:uuid.UUID):

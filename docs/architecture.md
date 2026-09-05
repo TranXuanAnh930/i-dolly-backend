@@ -19,8 +19,10 @@ this same folder. For *what's built vs. still open*, see `project_status.md`.
   email-verification and password-reset tokens, discriminated by a `type` claim (`verify` vs.
   `reset`), checked on decode so one can't be replayed as the other.
 - **bcrypt** via passlib for password hashing.
-- **Razorpay** SDK for real payments, plus a `mock` gateway (`PaymentGateway.mock`, driven by a
-  `simulate_succ` flag) used in tests/local dev.
+- A `mock` payment gateway only (`PaymentGateway.mock`, driven by a `simulate_succ` flag) —
+  real gateway integration (Razorpay or otherwise) is deferred to a later phase; `PaymentGateway`
+  stays an enum with one member rather than being collapsed away, so a real gateway has somewhere
+  to slot in later.
 - **SendGrid** for transactional email, sent via FastAPI `BackgroundTasks`, never inline.
 - **boto3** (optional — only imported when `STORAGE_BACKEND=s3`) for S3-compatible image storage;
   see §5.
@@ -60,7 +62,7 @@ Every feature follows the same three-layer split:
   still uses plain `False` throughout rather than the string-sentinel convention.
 - **Exceptions** (checkout/payment only): `app/exception/checkout.py` defines `CartItemError` and
   subclasses (`InsufficientStockError`, `AddressIdError`, `PaymentAmountMismatch`,
-  `RazorpayPaymentFailed`, `OrderError`, `PaymentError`, `PaymentFailedError`). Raised in the
+  `UnsupportedGatewayError`, `OrderError`, `PaymentError`, `PaymentFailedError`). Raised in the
   service, caught in the router (`order.py`, `payment.py`), mapped to a status code. Follow this
   pattern for new multi-step flows (a lottery draw, seat reservation) rather than threading
   sentinel values through several layers.
@@ -125,7 +127,8 @@ cast to a Postgres user-defined enum (the enum's cast function is `STABLE`, not 
 Postgres rejects it) — use a plain `VARCHAR` generated column instead (see `venues.size`).
 
 Tests: `pytest --cov=app` (needs a real Postgres; `fakeredis` handles Redis automatically via
-`test/conftest.py`, no real Redis needed locally). CI (`.github/workflows/test.yml`) spins up
+`tests/conftest.py`, no real Redis needed locally) — split into `tests/unit/` (mocked, no DB) and
+`tests/integration/` (real `TestClient` against the app). CI (`.github/workflows/test.yml`) spins up
 Postgres 16 + Redis service containers, runs migrations, runs pytest with coverage, uploads to
 Codecov, then deploys to Render on `main`/`master`.
 

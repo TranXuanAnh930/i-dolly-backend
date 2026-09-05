@@ -42,7 +42,7 @@ The `docs/` folder is the source of truth for anything not obvious from the code
 - **PostgreSQL** via **SQLAlchemy 2.0** ORM, **Alembic** for migrations (one linear chain)
 - **Redis** for caching (msgpack-serialized) and rate limiting
 - **JWT** auth — short-lived access tokens + rotating refresh tokens, httponly cookies
-- **Razorpay** SDK for payments, plus a mock gateway for local dev/tests
+- **Mock payment gateway** — real gateway integration is deferred to a later phase
 - **SendGrid** for transactional email
 - Local disk / S3-compatible object storage abstraction for idol/product images
 - **Docker Compose** for local dev; **GitHub Actions** for CI (Postgres + Redis services,
@@ -61,7 +61,7 @@ Full detail and reasoning: [`docs/architecture.md`](docs/architecture.md) §1.
 - Local/S3 image uploads for idols and products
 - 12 database triggers enforcing money/fairness invariants (fan-only purchasing, the anti-resale
   cap, concert ticket-capacity, the lottery entry cap, and more)
-- An idempotent seed script (`seed.py`) with a full fictional roster of idols, groups, venues,
+- An idempotent seed script (`scripts/seed.py`) with a full fictional roster of idols, groups, venues,
   concerts, and marketplace products
 
 Detailed, current status (including what's *not* built yet, like the actual draw job and the
@@ -97,9 +97,9 @@ git clone https://github.com/TranXuanAnh930/i-dolly-backend.git
 cd i-dolly-backend
 cp .env.example .env
 ```
-Fill in `.env` — at minimum a JWT secret, and SendGrid/Razorpay keys if you want those flows to
-work end to end (the app runs locally without valid third-party keys, but email sending and real
-payments won't).
+Fill in `.env` — at minimum a JWT secret, and a SendGrid key if you want email flows to work end
+to end (the app runs locally without a valid key, but email sending won't). Payments use a mock
+gateway only — no third-party keys needed there.
 
 ### 2. Start the stack
 ```bash
@@ -114,7 +114,7 @@ http://localhost:8000/docs
 
 ### 4. (Optional) Seed sample data
 ```bash
-docker compose exec app python seed.py
+docker compose exec app python scripts/seed.py
 ```
 Populates a full fictional roster — management companies, idol groups, venues, concerts, ticket
 types, and marketplace products. Idempotent — safe to re-run.

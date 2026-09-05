@@ -3,15 +3,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.deps.db import get_db
-from app.schema.user import UserOut, ChangePasswordRequest, ForgotPasswordRequest, SetPasswordRequest, MakeAdminRequest
+from app.schema.user import UserOut, ChangePasswordRequest, ForgotPasswordRequest, SetPasswordRequest, MakeAdminRequest, ManagerCreate
 from app.deps.auth import get_current_user, require_admin
 from app.services.user_service import (
-    change_password_process, 
-    reset_password_process, 
-    verify_rtoken, 
-    promote_admin, 
+    change_password_process,
+    reset_password_process,
+    verify_rtoken,
+    promote_admin,
     revoke_token,
-    delete_user
+    delete_user,
+    create_manager_user
 )
 from app.db.models.user import Users
 
@@ -52,6 +53,15 @@ async def make_admin(payload:MakeAdminRequest, current_user:Users=Depends(requir
     if result is False:
         raise HTTPException(status_code=400, detail="user is already admin")
     return {"msg" : f"user {payload.user_id} promoted to admin successfully"}
+
+@router.post("/create-manager", response_model=UserOut)
+async def create_manager(payload:ManagerCreate, current_user:Users=Depends(require_admin), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
+    result = create_manager_user(db, payload)
+    if result == "email_taken":
+        raise HTTPException(status_code=400, detail="E-mail already registered")
+    if result == "company_not_found":
+        raise HTTPException(status_code=404, detail="Management company not found")
+    return result
 
 @router.post("/logout")
 async def logout(request:Request, db:Session=Depends(get_db)):

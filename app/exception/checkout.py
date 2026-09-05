@@ -19,5 +19,5 @@ class PaymentAmountMismatch(CartItemError):
 class AddressIdError(CartItemError):
     pass
 
-class RazorpayPaymentFailed(CartItemError):
+class UnsupportedGatewayError(CartItemError):
     pass

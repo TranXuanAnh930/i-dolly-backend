@@ -42,9 +42,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="i-dolly-backend", lifespan=lifespan)
 
-origins = [
-    "http://localhost:8080",      # Vue port
-]
+origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
 
 # 2. Add CORSMiddleware to your FastAPI application
 app.add_middleware(

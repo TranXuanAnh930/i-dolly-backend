@@ -991,9 +991,12 @@ sequencing ones, not code fixes: follow the FK-respecting migration order in §7
   a double-scheduled task) from processing the same `lottery_campaigns` row at once. Needs a lock
   — e.g. `SELECT ... FOR UPDATE` while transitioning `status: open → drawn` — designed in before
   the job is built, not discovered after a duplicate draw in production.
-- **Webhook idempotency** (`CLAUDE.md` §5 item 7) — moot while payments are mocked (this phase's
-  own assumption, §6), but must be fixed *before* the real Razorpay gateway is wired in, since a
-  replayed webhook could mint a second ticket once webhooks can issue tickets.
+- **Webhook idempotency** (`CLAUDE.md` §5 item 7) — moot for now: the Razorpay webhook and its
+  gateway integration were removed (real payment gateway work is deferred to a later phase; only
+  the mock gateway remains). Whichever gateway gets wired in during that phase will need its
+  webhook handler keyed off the provider's event id before it's allowed to issue tickets, so a
+  replay can't mint a second one — re-derive this from scratch against that gateway's actual
+  webhook semantics rather than assuming Razorpay's.
 
 ### 7.3 Cheap, no reason to defer — all three now FIXED
 

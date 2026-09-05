@@ -108,8 +108,9 @@ Create a new user account (role defaults to `fan` — nothing here lets a caller
 `manager`/`admin`).
 - Request (JSON — `UserCreate`): `name` (str), `email` (str, validated email), `password` (str,
   6–128 chars)
-- Response (`UserOut`): `id`, `name`, `email`, `is_active`, `is_admin`, `is_verified`,
-  `created_at`, `updated_at`
+- Response (`UserOut`): `id`, `name`, `email`, `role` (`"admin"|"manager"|"fan"` — always `"fan"`
+  here), `company_id` (uuid, nullable — always `null` here), `is_active`, `is_admin`,
+  `is_verified`, `created_at`, `updated_at`
 - UI: Register page
 
 ### `POST /account/login` 🔓
@@ -139,7 +140,8 @@ Confirm an email via the token from the verification link.
 - UI: the landing page a verification-email link opens
 
 ### `GET /profile/me` 🔒 fan
-- Response (`UserOut`): same shape as register's response
+- Response (`UserOut`): same shape as register's response — `role`/`company_id` now included, so
+  the frontend can read `currentUser.role`/`currentUser.company_id` directly
 - UI: profile page, header user menu
 
 ### `PUT /profile/change-password` 🔒 fan
@@ -162,6 +164,17 @@ Complete a password reset using the token from the emailed link.
 - Request (`MakeAdminRequest`): `user_id` (uuid)
 - Response: `{"msg": "user <id> promoted to admin successfully"}`
 - UI: admin user-management screen
+
+### `POST /profile/create-manager` 🔒 admin
+Creates a brand-new `role="manager"` account tied to a company in one call — distinct from
+`/make-admin`, which only *promotes an existing user* and has no company concept. Use this for
+"create a company user account" flows.
+- Request (`ManagerCreate`): `name` (str), `email` (str, validated email), `password` (str,
+  6–128 chars), `company_id` (uuid, must reference an existing management company)
+- Response (`UserOut`): same shape as register's response — `role` is `"manager"`, `company_id`
+  is the given company
+- Errors: `400` (email already registered), `404` (company_id doesn't exist)
+- UI: admin "create company user" screen
 
 ### `POST /profile/logout` 🔓
 Invalidates the current refresh token.
@@ -672,11 +685,10 @@ Same pattern as album details, for official lightstick merch.
 Converts the cart into an order and a payment in one call. **Response is payment info, not the
 order** — read that carefully when wiring the success screen.
 - Request (`PaymentCreate`): `amount` (int — must equal the cart's current total, checked
-  server-side), `shipping_address_id` (uuid), `gateway` (`"mock" | "razorpay"`, default `"mock"`),
-  `simulate_succ` (bool, optional — dev/testing only, forces a mock success/failure)
-- Response: not schema-enforced; `{"payment": PaymentResponse, "rz_data": dict | null}` —
-  `rz_data` carries gateway-specific data (e.g. a Razorpay order id to hand to their checkout
-  widget) and is `null` for the mock gateway
+  server-side), `shipping_address_id` (uuid), `gateway` (`"mock"`, default `"mock"` — the only
+  gateway today; real gateway integration is deferred to a later phase),
+  `simulate_succ` (bool, optional — forces a mock success/failure)
+- Response: not schema-enforced; `{"payment": PaymentResponse}`
 - Errors: `404` (empty cart / bad address), `402` (payment failed), `400` (stock/amount mismatch,
   unsupported gateway, or a resale-cap trigger violation) — distinguish these in the UI rather
   than showing one generic "checkout failed"
@@ -705,16 +717,10 @@ order** — read that carefully when wiring the success screen.
 - Response: `Order`
 - UI: admin — fulfillment/shipping dashboard
 
-### `POST /payment/razorpay/webhook` 🔓 (Razorpay-signed, not user-authenticated)
-Backend-to-backend only — not something the frontend ever calls directly. Verifies the
-`X-Razorpay-Signature` header against the raw body before processing.
-- UI: none — document for completeness / for whoever configures the Razorpay dashboard webhook
-  URL
-
 ### `PATCH /payment/status/{order_id}` 🔒 fan
 - Response (`PaymentResponse`): `id`, `order_id`, `user_id`, `amount`, `status`
-  (`"pending"|"success"|"failed"|"cancelled"`), `payment_gateway` (`"mock"|"razorpay"`),
-  `is_paid`, `pg_order_id`, `pg_payment_id`, `pg_signature`, `created_at`, `updated_at`
+  (`"pending"|"success"|"failed"|"cancelled"`), `payment_gateway` (`"mock"` — the only value
+  today), `is_paid`, `pg_order_id`, `pg_payment_id`, `pg_signature`, `created_at`, `updated_at`
 - UI: order detail / checkout success page — poll this while waiting on an async gateway
 
 ### `PATCH /payment/status/all` 🔒 fan

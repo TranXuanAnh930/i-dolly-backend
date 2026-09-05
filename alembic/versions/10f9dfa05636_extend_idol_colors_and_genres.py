@@ -5,7 +5,7 @@ Revises: 019b674bf0c1
 Create Date: 2026-09-04 18:30:00.000000
 
 Adds more idol_colors and genres rows for the expanded seed roster
-(seed.py: 3 companies / 5 groups / 25 idols across a J-Pop, city-pop,
+(scripts/seed.py: 3 companies / 5 groups / 25 idols across a J-Pop, city-pop,
 anime-tie-in, gothic, and vocaloid-adjacent lineup) — the original 12
 colors and 10 genres weren't enough for a roster this size without
 color reuse, and "anime"/"gothic"/"vocaloid"/"j-pop" genres didn't exist

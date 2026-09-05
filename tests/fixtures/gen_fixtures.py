@@ -278,7 +278,7 @@ def lightstick_art(act_label: str, hex_code: str, out_path: str, size=(320, 720)
 
 
 # ---------------------------------------------------------------------------
-# Roster / catalog (must match seed.py's IDOLS / RELEASES / LIGHTSTICKS)
+# Roster / catalog (must match scripts/seed.py's IDOLS / RELEASES / LIGHTSTICKS)
 # ---------------------------------------------------------------------------
 
 IDOLS = [

@@ -27,14 +27,20 @@ every Pydantic schema, every router/service id parameter, the JWT `sub` claim ha
 (`app/utils/jwt_manager.py`, `app/deps/auth.py` — decode to `uuid.UUID` instead of `int`), and
 the product-list Redis cache (`app/cache/cache_service.py` now stringifies `p.id` before
 `msgpack.packb`, since msgpack has no native UUID type — this would have silently broken the
-cache the first time it ran). `seed.py` needed no changes — it already wires foreign keys via
+cache the first time it ran). `scripts/seed.py` needed no changes — it already wires foreign keys via
 ORM-returned `.id`/name lookups, never a literal integer.
 
 ## 2. What's built
 
 - **Identity/RBAC**: `users.role`/`company_id`, `management_companies`, `require_admin`/
   `require_manager_or_admin` (`app/deps/auth.py`), company-scoping helpers on every
-  company-owned resource's service.
+  company-owned resource's service. `UserOut` (and so `/account/register` and `/profile/me`)
+  now returns `role`/`company_id` — previously omitted, so every logged-in user's role was
+  invisible to any client reading the API response despite being in the DB. Admins can also now
+  create a `role="manager"` account tied to a company directly via `POST /profile/create-manager`
+  (`user_service.create_manager_user`) — previously the only ways to get a non-fan account were
+  self-register-then-`/make-admin` (admin only, no company) or a raw DB write; there was no path
+  to a company-scoped manager account at all short of editing the database.
 - **Talent**: `groups`, `idols`, `idol_colors`, `positions`/`idol_positions` — full ORM + schema +
   service + router for all four, company-scoped CRUD.
 - **Events & ticketing**: `venues`, `concerts`/`concert_performers`, `ticket_types`,
@@ -47,14 +53,15 @@ ORM-returned `.id`/name lookups, never a literal integer.
   `POST /products/add_product` (now `multipart/form-data`, a breaking change from the original
   JSON body), plus `POST /idols/{id}/image` and `POST /products/{id}/image` to replace an image
   later. Full detail: `database-design.md` §9.
-- **Seed data** (`seed.py`, repo root): idempotent test-data script — 3 management companies
+- **Seed data** (`scripts/seed.py`): idempotent test-data script — 3 management companies
   (Nova Entertainment, Starlight Media, Kuroyuri Records), 8 users, 5 idol groups spanning
   J-Pop/city-pop/anime-tie-in/gothic/vocaloid-adjacent styles plus 3 solo idols (22 + 3 = 25
-  idols total, all Japanese, each with an invented personality blurb), 6 venues, 6 concerts, 18
-  ticket types across lottery + direct sale methods, 5 categories, a 20-item marketplace (10
-  albums/singles/EPs with genres, 8 lightsticks, 2 plain merch items), 2 lottery campaigns with
-  preferences + entries, 1 manually-issued ticket — run via `docker compose exec app python
-  seed.py`. Idol portraits and product covers are pushed through the real
+  idols total, all Japanese, each with an invented personality blurb), 6 venues (all Japan), 6
+  concerts, 18 ticket types across lottery + direct sale methods (priced in yen), 5 categories, a
+  20-item marketplace (10 albums/singles/EPs with genres, 8 lightsticks, 2 plain merch items, all
+  priced in yen), 2 lottery campaigns with preferences + entries, 1 manually-issued ticket — run
+  via `docker compose exec app python scripts/seed.py`. Idol portraits and product covers are
+  pushed through the real
   `get_storage().save()` pipeline from `tests/fixtures/{idols,products}/` — procedural
   placeholder art (Pillow gradients/patterns/monograms, no AI image generation was available in
   this environment), not real character art; see `tests/fixtures/README.md`.
@@ -65,7 +72,7 @@ ORM-returned `.id`/name lookups, never a literal integer.
 
 ## 3. Verification method (and its limit)
 
-No live Postgres/FastAPI/network access has been available in either environment this project has
+No live Postgres/FastAPI/network access has been available in most environments this project has
 been built in — confirmed repeatedly via failed `pip install` attempts (403 from a proxy). Every
 round of changes has instead been verified with:
 
@@ -75,8 +82,18 @@ round of changes has instead been verified with:
 3. An AST-based scan of every intra-app `from app.X import Y` statement, confirming the imported
    name actually exists in its target module (currently: 125 files scanned, no issues).
 
-**None of this exercises real SQL or a running app.** `alembic upgrade head` against a real
-Postgres, followed by hitting each endpoint (ideally via `seed.py`'s data), is still the
+**One session did have working network access**, and used it to go further than py_compile for
+the first time: a full `pip install -r requirements.txt` succeeded, `main.py` imported cleanly end
+to end (126 routes registered — confirms every router/service/schema import chain is sound, not
+just individually syntax-valid), and `pytest tests/unit` actually ran (against `MagicMock`s, no
+real DB — `tests/integration/test_main.py` needs a real Postgres+Redis and was **not** run). That
+run found and fixed a real test-isolation bug (`tests/conftest.py` didn't import `app.db.base`,
+so whichever test ran first and touched an ORM class could fail purely based on import order —
+see git history) and surfaced item 11 above (5 pre-existing stale tests, left as found).
+
+**Still true for everything else**: none of this exercises real SQL or a running app against a
+real database. `alembic upgrade head` against a real
+Postgres, followed by hitting each endpoint (ideally via `scripts/seed.py`'s data), is still the
 outstanding step before any of this should be treated as production-verified — it has not been
 done yet for anything built so far, including the ticketing/lottery/marketplace tables and the
 image-upload feature.
@@ -111,15 +128,21 @@ newly introduced.
 3. ~~`app/db/base.py` didn't import every model~~ — **FIXED**. `Base` now lives in
    `app/db/base_class.py`; `app/db/base.py` is a pure aggregator. See `architecture.md` §5 for
    the convention this establishes going forward.
-4. **Webhook handling isn't idempotent** — `payment_service.process_razorpay_webhook` re-applies
-   on every delivery (Razorpay retries webhooks). Harmless today; **must** be fixed before a
-   webhook can mint a ticket, since a replay would then mint a second one. Key the "already
-   handled" check off the Razorpay event id before wiring ticket issuance to this path.
+4. ~~**Webhook handling isn't idempotent**~~ — **moot**. The Razorpay integration
+   (`payment_service.process_razorpay_webhook`, `verify_razorpay_signature`, the
+   `POST /payment/razorpay/webhook` route, the `razorpay` SDK dependency) has been removed —
+   real payment gateway integration is deferred to a later phase; only the mock gateway remains,
+   and `PaymentGateway` is kept as a single-member enum so a future gateway has somewhere to slot
+   in. Whichever gateway lands in that phase will need its own idempotent webhook handler (keyed
+   off that provider's event id) designed in before it's allowed to issue tickets — re-derive this
+   from that gateway's actual semantics rather than assuming Razorpay's.
 5. **Minor schema type inconsistencies**: `OrderItem.price` is `Integer` while `Product.price` is
    `Float` (truncates fractional prices in order history); `ShippingAddress.postal_code` is
    `Integer`, which breaks for alphanumeric postal codes (UK, Canada, Japan).
-6. **CORS `allow_origins` is hardcoded** to a Vue dev port in `main.py` — needs to become
-   configurable per environment once there's a real frontend origin.
+6. ~~**CORS `allow_origins` is hardcoded**~~ — **FIXED**. `main.py` now builds `origins` from a
+   new `CORS_ORIGINS` setting (comma-separated, default `http://localhost:8080` to keep local dev
+   unchanged) instead of a hardcoded list — set it to the deployed frontend's real origin(s) in
+   production. See `docs/deployment.md`.
 7. **`cart_service.add_to_cart` doesn't lock the `Product` row** before comparing quantity —
    minor since checkout's own race (item 1) is the real gate, but two concurrent adds can both
    "pass" a stock check that's already stale.
@@ -167,6 +190,18 @@ newly introduced.
     idol/group link yet at creation time (that only exists once an `album_details`/
     `lightstick_details` row is attached, through its own already-scoped endpoint), so there is
     nothing to check at creation.
+
+11. **5 stale unit tests in `tests/unit/test_services.py`** (`TestProductService::test_update_product_found`/
+    `test_update_product_not_found`/`test_delete_product_found`/`test_delete_product_not_found`,
+    `TestCategoryService::test_update_category_success`) — found the first time this suite was
+    actually run (see §3: a full `pip install` + `pytest tests/unit` run finally worked in one of
+    this project's sessions). Two distinct causes, both test/production drift, not app bugs:
+    `update_product`/`delete_product` gained a required `current_user` parameter under item 10's
+    company-scoping fix but the tests still call them with the old (pre-scoping) argument count;
+    `test_update_category_success` constructs a `CategoryBase` (no `is_resale_capped` field)
+    where `category_service.update_category` expects a `CategoryUpdate`. Left as documented,
+    unfixed, per explicit instruction when found — fix by updating the test calls/schema choice
+    to match each service function's current signature.
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a

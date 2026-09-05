@@ -11,7 +11,6 @@ class PaymentStatus(str, Enum):
 
 class PaymentGateway(Enum):
     mock = "mock"
-    razorpay = "razorpay"
 
 class PaymentCreate(BaseModel):
     amount : int
@@ -32,11 +31,5 @@ class PaymentResponse(BaseModel):
     pg_signature : str | None
     created_at : datetime
     updated_at : datetime
-
-    model_config = {"from_attributes" : True}
-
-class PaymentResponseRazorpay(BaseModel):
-    payment : PaymentResponse
-    rz_data : dict | None = None
 
     model_config = {"from_attributes" : True}

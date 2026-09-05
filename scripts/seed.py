@@ -2,10 +2,11 @@
 development: three fictional management companies, five idol groups plus
 three solo idols (all Japanese, spanning J-Pop, city pop, an anime tie-in
 act, a gothic idol unit, and a vocaloid-adjacent digital unit), venues and
-concerts across Japan/Korea/US/Australia, ticket types, a 20-item
-album/single/EP/lightstick/merch lineup, and a slice of the lottery flow
-(preferences + entries) plus one manually-issued ticket. Every name here is
-invented for testing, not a real artist, group, or company.
+concerts across Japan, ticket types (priced in yen), a 20-item
+album/single/EP/lightstick/merch lineup (also priced in yen), and a slice of
+the lottery flow (preferences + entries) plus one manually-issued ticket.
+Every name here is invented for testing, not a real artist, group, or
+company.
 
 Idol portraits and product covers are seeded from tests/fixtures/ — see that
 folder's README for how they were generated (procedural placeholder art, not
@@ -24,18 +25,28 @@ name — seeded by migrations (see alembic/versions/46c5f500e7bd_*,
 ecf1f2ed802f_*, 44ccae8cac48_*, and 10f9dfa05636_extend_idol_colors_and_genres.py
 for the roster this file now needs). This script never deletes anything.
 
-Run inside the app container (after `alembic upgrade head` has succeeded):
-    docker compose exec app python seed.py
+Lives in scripts/, not the repo root — run from the repo root (paths below
+are resolved relative to this file's location either way, not the current
+working directory) inside the app container (after `alembic upgrade head`
+has succeeded):
+    docker compose exec app python scripts/seed.py
 
 If the app container isn't up yet, this starts a temporary one just for the
 seed run:
-    docker compose run --rm app python seed.py
+    docker compose run --rm app python scripts/seed.py
 
 All seeded user accounts share the password: Password123!
 """
 import asyncio
+import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+# This file lives in scripts/, one level below the repo root where the `app`
+# package actually is — insert the repo root at the front of sys.path so
+# `from app...` below resolves regardless of how this script is invoked
+# (`python scripts/seed.py` from any cwd, not just `python -m scripts.seed`).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.session import session as SessionLocal
 from app.utils.hashing import hash_password
@@ -73,7 +84,7 @@ from app.db.base import (
 )
 
 SEED_PASSWORD = "Password123!"
-FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
+FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 
 # --- fixture image upload (real storage abstraction, not a shortcut) -------
@@ -99,7 +110,7 @@ class _FixtureUploadFile:
 
 
 def upload_fixture(filename: str, subfolder: str) -> str:
-    """Synchronous wrapper: seed.py is a plain script, not an ASGI app, so
+    """Synchronous wrapper: this is a plain script, not an ASGI app, so
     there's no event loop already running — asyncio.run() per call is fine
     here (it would NOT be inside a real request handler)."""
     path = FIXTURES_DIR / subfolder / filename
@@ -388,15 +399,15 @@ def seed(db):
             db.add(IdolPosition(idol_id=row.id, position_id=position_id(db, pos_name), is_primary=(i == 0)))
     db.flush()
 
-    # --- venues ----------------------------------------------------------
-    grove_hall = Venue(name="The Grove Hall", address="1 Grove Way", city="Los Angeles",
-                        country="USA", total_capacity=8000, contact_info="events@grovehall.example")
-    skyline_arena = Venue(name="Skyline Arena", address="88 Skyline Blvd", city="Seoul",
-                           country="South Korea", total_capacity=15000, contact_info="booking@skylinearena.example")
-    harbor_point = Venue(name="Harbor Point Amphitheater", address="200 Harbor Rd", city="Sydney",
-                          country="Australia", total_capacity=35000, contact_info="events@harborpoint.example")
-    riverside_stadium = Venue(name="Riverside Stadium", address="45 River Ave", city="Busan",
-                               country="South Korea", total_capacity=55000, contact_info="booking@riversidestadium.example")
+    # --- venues (all Japan) ------------------------------------------------
+    grove_hall = Venue(name="The Grove Hall", address="2-14 Daimyo, Chuo-ku", city="Fukuoka",
+                        country="Japan", total_capacity=8000, contact_info="events@grovehall.example")
+    skyline_arena = Venue(name="Skyline Arena", address="1-1 Nakama, Naka-ku", city="Nagoya",
+                           country="Japan", total_capacity=15000, contact_info="booking@skylinearena.example")
+    harbor_point = Venue(name="Harbor Point Amphitheater", address="1-1 Minato Mirai, Nishi-ku", city="Yokohama",
+                          country="Japan", total_capacity=35000, contact_info="events@harborpoint.example")
+    riverside_stadium = Venue(name="Riverside Stadium", address="8 Shintoshin, Chuo-ku", city="Saitama",
+                               country="Japan", total_capacity=55000, contact_info="booking@riversidestadium.example")
     crescent_hall = Venue(name="Crescent Hall", address="5-1 Crescent Ave", city="Tokyo",
                            country="Japan", total_capacity=12000, contact_info="events@crescenthall.example")
     starlight_dome = Venue(name="Starlight Dome", address="3-2 Namba Blvd", city="Osaka",
@@ -471,29 +482,29 @@ def seed(db):
         db.add(row)
         return row
 
-    tt_sakura_vip = tt(concert_sakura, "vip", 120.00, 400)
-    tt(concert_sakura, "regular", 60.00, 6000)
-    tt(concert_sakura, "regular", 75.00, 2000, sale_method="direct")
+    tt_sakura_vip = tt(concert_sakura, "vip", 15000, 400)
+    tt(concert_sakura, "regular", 7500, 6000)
+    tt(concert_sakura, "regular", 9000, 2000, sale_method="direct")
 
-    tt(concert_nagisa, "vip", 90.00, 250)
-    tt(concert_nagisa, "regular", 45.00, 4000)
-    tt(concert_nagisa, "regular", 55.00, 1500, sale_method="direct")
+    tt(concert_nagisa, "vip", 11000, 250)
+    tt(concert_nagisa, "regular", 5500, 4000)
+    tt(concert_nagisa, "regular", 6800, 1500, sale_method="direct")
 
-    tt(concert_kessho, "vip", 150.00, 600)
-    tt_kessho_regular_lottery = tt(concert_kessho, "regular", 70.00, 20000)
-    tt(concert_kessho, "regular", 90.00, 3000, sale_method="direct")
+    tt(concert_kessho, "vip", 18000, 600)
+    tt_kessho_regular_lottery = tt(concert_kessho, "regular", 8500, 20000)
+    tt(concert_kessho, "regular", 11000, 3000, sale_method="direct")
 
-    tt(concert_yozora, "vip", 130.00, 500)
-    tt(concert_yozora, "regular", 65.00, 25000)
-    tt(concert_yozora, "regular", 80.00, 3500, sale_method="direct")
+    tt(concert_yozora, "vip", 16000, 500)
+    tt(concert_yozora, "regular", 8000, 25000)
+    tt(concert_yozora, "regular", 9800, 3500, sale_method="direct")
 
-    tt(concert_program, "vip", 140.00, 450)
-    tt(concert_program, "regular", 68.00, 8000)
-    tt(concert_program, "regular", 85.00, 2500, sale_method="direct")
+    tt(concert_program, "vip", 17000, 450)
+    tt(concert_program, "regular", 8300, 8000)
+    tt(concert_program, "regular", 10500, 2500, sale_method="direct")
 
-    tt(concert_solo_showcase, "vip", 200.00, 800)
-    tt(concert_solo_showcase, "regular", 95.00, 40000)
-    tt_showcase_regular_direct = tt(concert_solo_showcase, "regular", 110.00, 4000, sale_method="direct")
+    tt(concert_solo_showcase, "vip", 24000, 800)
+    tt(concert_solo_showcase, "regular", 11500, 40000)
+    tt_showcase_regular_direct = tt(concert_solo_showcase, "regular", 13500, 4000, sale_method="direct")
     db.flush()
 
     # --- categories (get-or-create — shared lookup table, not migration-seeded) ---
@@ -510,34 +521,34 @@ def seed(db):
     # (slug, title, price, description, quantity, kind, owner group/idol,
     #  release_date, track_count, format, genre names)
     releases = [
-        ("sakura-prism-hanabi-ranman", "Sakura Prism - Hanabi Ranman (1st Full Album)", 32.99,
+        ("sakura-prism-hanabi-ranman", "Sakura Prism - Hanabi Ranman (1st Full Album)", 3300,
          "Sakura Prism's debut full album — ten tracks of glossy, formation-ready idol pop.",
          5000, "album", sakura_prism, None, date(2026, 2, 20), 10, "physical", ["J-Pop", "Idol Pop"]),
-        ("sakura-prism-sparkle-signal", "Sakura Prism - Sparkle Signal (Single)", 9.99,
+        ("sakura-prism-sparkle-signal", "Sakura Prism - Sparkle Signal (Single)", 1200,
          "Sakura Prism's follow-up single, built around a fan-chant-ready chorus.",
          6000, "single", sakura_prism, None, date(2026, 6, 5), 2, "digital", ["J-Pop", "Pop"]),
-        ("nagisa-melody-midnight-drive", "Nagisa Melody - Midnight Drive (Single)", 11.99,
+        ("nagisa-melody-midnight-drive", "Nagisa Melody - Midnight Drive (Single)", 1500,
          "Nagisa Melody's title single from their Midnight Drive era — recorded live off the floor.",
          4000, "single", nagisa_melody, None, date(2026, 5, 12), 2, "physical", ["City Pop", "Acoustic"]),
-        ("kessho-stars-starlight-oath", "Kessho Stars - Starlight Oath (Single)", 12.99,
+        ("kessho-stars-starlight-oath", "Kessho Stars - Starlight Oath (Single)", 1300,
          "Kessho Stars' anime tie-in single, the opening theme for their in-universe franchise's latest season.",
          8000, "single", kessho_stars, None, date(2026, 7, 10), 2, "digital", ["Anime", "J-Pop"]),
-        ("yozora-requiem-requiem-for-dawn", "Yozora Requiem - Requiem for Dawn (EP)", 18.99,
+        ("yozora-requiem-requiem-for-dawn", "Yozora Requiem - Requiem for Dawn (EP)", 2500,
          "Yozora Requiem's five-track gothic EP, written almost entirely in minor keys.",
          3000, "ep", yozora_requiem, None, date(2026, 8, 1), 5, "physical", ["Gothic", "Ballad"]),
-        ("program-heart-recompile", "Program:HEART - Recompile (Digital Single)", 6.99,
+        ("program-heart-recompile", "Program:HEART - Recompile (Digital Single)", 800,
          "Program:HEART's vocal-synth-forward debut single, self-produced and self-mixed.",
          9000, "single", program_heart, None, date(2026, 3, 18), 2, "digital", ["Vocaloid", "Electronic"]),
-        ("program-heart-debug-heart", "Program:HEART - Debug Heart (EP)", 16.99,
+        ("program-heart-debug-heart", "Program:HEART - Debug Heart (EP)", 2000,
          "Program:HEART's second release, blending vocal-synth production with city-pop-leaning hooks.",
          4000, "ep", program_heart, None, date(2026, 9, 22), 4, "digital", ["Vocaloid", "City Pop"]),
-        ("rin-amane-tideline", "Rin Amane - Tideline (Solo EP)", 18.99,
+        ("rin-amane-tideline", "Rin Amane - Tideline (Solo EP)", 2500,
          "Rin Amane's five-track solo EP, written by hand before a single note was recorded.",
          3000, "ep", None, idol_rows["Rin Amane"], date(2026, 4, 1), 5, "physical", ["R&B", "Ballad"]),
-        ("kaede-shirogane-crimson-overture", "Kaede Shirogane - Crimson Overture (Single)", 10.99,
+        ("kaede-shirogane-crimson-overture", "Kaede Shirogane - Crimson Overture (Single)", 1400,
          "Kaede Shirogane's rock-tinged anime insert-song single.",
          5000, "single", None, idol_rows["Kaede Shirogane"], date(2026, 6, 28), 2, "digital", ["Anime", "Rock"]),
-        ("yoru-kuon-ghost-in-the-chorus", "Yoru Kuon - Ghost in the Chorus (Digital Album)", 24.99,
+        ("yoru-kuon-ghost-in-the-chorus", "Yoru Kuon - Ghost in the Chorus (Digital Album)", 3000,
          "Yoru Kuon's first solo album since stepping out from behind the DAW.",
          2500, "album", None, idol_rows["Yoru Kuon"], date(2026, 10, 5), 8, "digital", ["Vocaloid", "Electronic"]),
     ]
@@ -563,21 +574,21 @@ def seed(db):
     # --- marketplace: lightsticks --------------------------------------------
     # (slug, title, price, quantity, owner group/idol, edition, color name)
     lightsticks = [
-        ("sakura-prism-lightstick", "Sakura Prism Official Lightstick", 45.00, 2000,
+        ("sakura-prism-lightstick", "Sakura Prism Official Lightstick", 5000, 2000,
          sakura_prism, None, "Ver. 1", "Cotton Candy Pink"),
-        ("nagisa-melody-lightstick", "Nagisa Melody Official Lightstick", 42.00, 1500,
+        ("nagisa-melody-lightstick", "Nagisa Melody Official Lightstick", 4800, 1500,
          nagisa_melody, None, "Ver. 1", "Sky Mint"),
-        ("kessho-stars-lightstick", "Kessho Stars Official Lightstick", 46.00, 2500,
+        ("kessho-stars-lightstick", "Kessho Stars Official Lightstick", 5200, 2500,
          kessho_stars, None, "Ver. 1", "Periwinkle Pop"),
-        ("yozora-requiem-lightstick", "Yozora Requiem Official Lightstick", 44.00, 1200,
+        ("yozora-requiem-lightstick", "Yozora Requiem Official Lightstick", 4900, 1200,
          yozora_requiem, None, "Ver. 1", "Blood Rose"),
-        ("program-heart-lightstick", "Program:HEART Official Lightstick", 48.00, 1800,
+        ("program-heart-lightstick", "Program:HEART Official Lightstick", 5500, 1800,
          program_heart, None, "Ver. 1", "Synth Teal"),
-        ("rin-amane-penlight", "Rin Amane Solo Penlight", 30.00, 800,
+        ("rin-amane-penlight", "Rin Amane Solo Penlight", 3300, 800,
          None, idol_rows["Rin Amane"], "Solo Ver.", "Ivory Frost"),
-        ("kaede-shirogane-penlight", "Kaede Shirogane Solo Penlight", 30.00, 800,
+        ("kaede-shirogane-penlight", "Kaede Shirogane Solo Penlight", 3300, 800,
          None, idol_rows["Kaede Shirogane"], "Solo Ver.", "Crimson Ember"),
-        ("yoru-kuon-penlight", "Yoru Kuon Solo Penlight", 32.00, 600,
+        ("yoru-kuon-penlight", "Yoru Kuon Solo Penlight", 3500, 600,
          None, idol_rows["Yoru Kuon"], "Solo Ver.", "Twilight Rose"),
     ]
 
@@ -601,12 +612,12 @@ def seed(db):
     # --- marketplace: plain merch (not resale-capped) -----------------------
     db.add_all([
         Product(
-            name="Sakura Prism Tour Hoodie", price=48.00,
+            name="Sakura Prism Tour Hoodie", price=6800,
             description="Official Hanabi Ranman Tour hoodie.",
             quantity=800, category_id=cat_merch.id,
         ),
         Product(
-            name="Yozora Requiem Coffin Tote Bag", price=22.00,
+            name="Yozora Requiem Coffin Tote Bag", price=2500,
             description="Coffin-shaped tote bag from the Requiem for Dawn merch line.",
             quantity=600, category_id=cat_merch.id,
         ),

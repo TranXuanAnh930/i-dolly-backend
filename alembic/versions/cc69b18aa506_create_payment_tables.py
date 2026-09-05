@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("amount", sa.Integer, nullable=False),
         sa.Column("status", sa.Enum("pending", "success", "failed", "cancelled", name="payment_status_enum"), server_default="pending"),
-        sa.Column("payment_gateway", sa.Enum("mock", "razorpay", name="payment_gateway_enum"), server_default="mock"),
+        sa.Column("payment_gateway", sa.Enum("mock", name="payment_gateway_enum"), server_default="mock"),
         sa.Column("is_paid", sa.Boolean, server_default=sa.false()),
         sa.Column("pg_order_id", sa.String, nullable=True),
         sa.Column("pg_payment_id", sa.String, nullable=True),

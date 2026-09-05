@@ -1,8 +1,9 @@
 import uuid
+from typing import Literal
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 
-class User(BaseModel): 
+class User(BaseModel):
     name : str = Field(..., min_length=1, max_length=100)
     email : EmailStr
 
@@ -11,10 +12,12 @@ class UserCreate(User):
 
 class UserOut(User):
     id : uuid.UUID
+    role : Literal["admin", "manager", "fan"]
+    company_id : uuid.UUID | None = None
     is_active : bool = True
     is_admin : bool = False
     is_verified : bool = False
-    created_at : datetime 
+    created_at : datetime
     updated_at : datetime
 
 class ChangePasswordRequest(BaseModel):
@@ -30,3 +33,9 @@ class SetPasswordRequest(BaseModel):
 
 class MakeAdminRequest(BaseModel):
     user_id: uuid.UUID
+
+class ManagerCreate(BaseModel):
+    name : str = Field(..., min_length=1, max_length=100)
+    email : EmailStr
+    password : str = Field(..., min_length=6, max_length=128)
+    company_id : uuid.UUID

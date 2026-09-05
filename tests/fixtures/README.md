@@ -1,9 +1,9 @@
 # tests/fixtures/
 
-Sample images used by `seed.py` to populate idol profile photos and product
+Sample images used by `scripts/seed.py` to populate idol profile photos and product
 cover art through the real upload/storage pipeline (`get_storage().save()`,
 the same coroutine `app/router/idol.py` and `app/router/products.py` call on
-a real multipart upload — see `upload_fixture()` in `seed.py`).
+a real multipart upload — see `upload_fixture()` in `scripts/seed.py`).
 
 ## What these are
 
@@ -26,11 +26,11 @@ a character.
   version of their full name (e.g. `hinata-kisaragi.png`). 25 files.
 - `products/<slug>.png` — one cover per album/single/EP (600×600) or
   lightstick (320×720, with an added glow blur), named by the product's
-  slug as it appears in `seed.py`'s `releases` / `lightsticks` lists
+  slug as it appears in `scripts/seed.py`'s `releases` / `lightsticks` lists
   (e.g. `sakura-prism-hanabi-ranman.png`, `sakura-prism-lightstick.png`).
   18 files.
 
-Every filename `seed.py` requests via `upload_fixture()` is generated from
+Every filename `scripts/seed.py` requests via `upload_fixture()` is generated from
 the same slugification rule the generation script uses, so the two stay in
 sync as long as both are edited together.
 
@@ -49,7 +49,7 @@ python3 gen_fixtures.py
 It writes into `tests/fixtures/{idols,products}/`, overwriting existing
 files with the same name. The idol/release/lightstick rosters are hardcoded
 at the top of the script (`IDOLS`, `RELEASES`, `LIGHTSTICKS`) and must be
-kept in sync with the corresponding lists in `seed.py` — same names, same
+kept in sync with the corresponding lists in `scripts/seed.py` — same names, same
 slugs, same hex codes — since that's what keeps the placeholder art color-
 themed consistently with what's actually stored in the database.
 
@@ -58,6 +58,6 @@ themed consistently with what's actually stored in the database.
 Because every image is pushed through `get_storage().save()` rather than a
 hardcoded `image_url`, replacing a placeholder with real character art later
 is just a matter of dropping a same-named (or differently-named, with a
-one-line change in `seed.py`) file into `idols/` or `products/` and
-re-running `seed.py` against a fresh database — no code changes needed
+one-line change in `scripts/seed.py`) file into `idols/` or `products/` and
+re-running `scripts/seed.py` against a fresh database — no code changes needed
 beyond that.

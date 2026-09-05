@@ -22,7 +22,8 @@ documented — including what's unfinished — over one that looks superficially
 ## 3. Tech stack
 
 FastAPI + Pydantic v2, PostgreSQL via SQLAlchemy 2.0 + Alembic, Redis (caching + rate limiting),
-JWT auth, Razorpay (+ a mock gateway), SendGrid, a local/S3 image-storage abstraction, Docker
+JWT auth, a mock payment gateway (real gateway integration is next-phase work), SendGrid,
+a local/S3 image-storage abstraction, Docker
 Compose for local dev. Full detail, versions, and reasoning: **`docs/architecture.md`** §1.
 
 ## 4. Domains
@@ -51,6 +52,9 @@ Don't re-derive these from the code — read the docs first, they're kept curren
 - **`docs/project_status.md`** — what's actually built vs. still open, known issues/tech debt,
   and the verification method used so far (static analysis, not a live DB — see its §3 for why).
   Read this before assuming a feature exists or is finished.
+- **`docs/deployment.md`** — how to actually deploy this: Render (API), Supabase (Postgres), an
+  S3-compatible bucket (image uploads), and Render's Key Value add-on (Redis). Read this before
+  touching env-var handling, CORS, or storage/cache backend selection.
 
 ## 6. Coding style
 

@@ -1,5 +1,5 @@
 import pytest
-from test.conftest import fake_redis
+from tests.conftest import fake_redis
 from fastapi.testclient import TestClient
 from main import app
 
