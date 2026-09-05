@@ -7,10 +7,13 @@ from app.cache.rate_limit import ip_key, rate_limit
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.db.models.user import Users
-from app.schema.idol import IdolCreate, IdolUpdate, IdolRead, MembersPageRead, IdolDetailRead
+from app.schema.idol import (
+    IdolCreate, IdolUpdate, IdolRead, MembersPageRead, IdolDetailRead,
+    ManagerIdolsPageRead, ManagerIdolFormPageRead,
+)
 from app.services.idol_service import (
     add_idol, get_idols, get_idol, update_idol, delete_idol, set_idol_image,
-    get_members_page, get_idol_detail,
+    get_members_page, get_idol_detail, get_manager_idols_page, get_manager_idol_form_page,
 )
 from app.utils.storage import get_storage, StorageError
 
@@ -87,6 +90,17 @@ async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=404, detail="Idol not found")
     return result
+
+# Manager/admin settings pages — ManagerIdolsPage only needs idols+groups
+# (no colors); ManagerIdolFormPage needs all three for its dropdowns. Both
+# registered before /{id} for the same reason as the routes above.
+@router.get("/manager-idols-page", response_model=ManagerIdolsPageRead)
+async def get_manager_idols_page_data(db: Session = Depends(get_db)):
+    return get_manager_idols_page(db)
+
+@router.get("/manager-idol-form-page", response_model=ManagerIdolFormPageRead)
+async def get_manager_idol_form_page_data(db: Session = Depends(get_db)):
+    return get_manager_idol_form_page(db)
 
 @router.get("/{id}", response_model=IdolRead)
 async def get_idol_by_id(id: uuid.UUID, db: Session = Depends(get_db)):

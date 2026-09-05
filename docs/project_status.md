@@ -246,6 +246,34 @@ newly introduced.
     Pillow is "already a project dependency" — it isn't, `requirements.txt` doesn't list it;
     harmless since `gen_fixtures.py` only ever runs standalone/locally, but the doc line is wrong.
 
+13. ~~**An invalid `category_id` on a product write crashed with a raw 500**~~ — **FIXED**.
+    `product_service.add_product`/`update_product`/`add_bulk_products` all set `category_id`
+    straight onto a `Product` row and committed with no existence check, so a bad id raised an
+    uncaught `IntegrityError` at `db.commit()` instead of a clean 4xx. Found while investigating
+    the item below (a manual repro against the live local dev stack — real seed data, real JWT,
+    real HTTP call — hit this by accident with a placeholder `category_id`). `update_product`
+    returns a new `"category_not_found"` sentinel (mapped to 400 in `products.py`'s router,
+    alongside the existing `"forbidden"` case); `add_product`/`add_bulk_products` return `False`,
+    which already mapped to 400 with no router change needed. `add_bulk_products` checks every
+    referenced category up front (all-or-nothing), not just the first bad one. Verified live
+    against the running dev stack, not just `py_compile`: the exact request that previously 500'd
+    now returns a clean 400, a valid update on the same product still succeeds, and the
+    cross-company 403 from item 14 below still fires correctly (no regression).
+14. **Plain "Merch" products have no company ownership at all**, so any manager can edit/delete
+    one, even a merch item whose *name* clearly signals which company's group it belongs to (e.g.
+    `Sakura Prism Tour Hoodie`, seeded under Nova Entertainment's group but with no structural
+    link to it). This is not a bug in `_manager_scope_violation` — verified live: a manager editing
+    an **album**-linked product from another company correctly gets 403; the gap is specifically
+    that `_resolve_product_company_id` (`product_service.py`) has nothing to resolve for a product
+    with no `album_details`/`lightstick_details` row, and `None` was already documented (item 10,
+    `database-design.md` §3.15/§6) as "ownerless — any manager may manage it," a deliberate
+    decision at the time. Reported as "manager from another company can edit other companies'
+    products" — that framing is accurate for merch specifically, just not for the reason it first
+    sounds like. **Still open**: needs a real design decision (add `company_id` directly to
+    `products`; give merch its own optional idol/group link like `album_details`/
+    `lightstick_details` do; or leave it ownerless on purpose and document it as a known
+    limitation rather than a gap) — not fixed here, since it's schema/scope work, not a bug fix.
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't

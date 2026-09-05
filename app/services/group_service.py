@@ -122,3 +122,9 @@ def get_group_detail(db: Session, id: uuid.UUID):
         "events": events,
         "products": products,
     }
+
+# --- manager/admin settings page (see idol_service.py's equivalent comment
+# — an empty list here is a normal state, not a 404).
+
+def get_manager_groups_page(db: Session):
+    return {"groups": db.query(Group).all()}

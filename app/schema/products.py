@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from app.schema.genre import GenreRead
 from app.schema.artist import ArtistRef
 from app.schema.idol import GroupMini
+from app.schema.category import CategoryRead
 
 class ProductBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -54,3 +55,15 @@ class StorePageRead(BaseModel):
 class ProductDetailRead(BaseModel):
     product: ProductCard
     recommendations: list[ProductCard]
+
+# --- manager/admin settings pages — ManagerProductsPage's table only needs
+# the plain product rows (no album/genre/artist embedding); the form page
+# additionally needs the category list for its <select>. Neither needs
+# album_details at all. An empty list here is a normal state, not a 404.
+
+class ManagerProductsPageRead(BaseModel):
+    products: list[ProductRead]
+
+class ManagerProductFormPageRead(BaseModel):
+    products: list[ProductRead]
+    categories: list[CategoryRead]

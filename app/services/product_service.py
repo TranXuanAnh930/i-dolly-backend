@@ -77,6 +77,8 @@ def search_product(db:Session, id:uuid.UUID):
     }
 
 def add_product(db: Session, product:ProductCreate):
+    if not db.get(Category, product.category_id):
+        return False  # invalid category_id — was an uncaught IntegrityError -> 500 at commit
     db_product = Product(**product.model_dump())
     db.add(db_product)
     db.commit()
@@ -89,6 +91,8 @@ def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user
         return False
     if _manager_scope_violation(db, current_user, id):
         return "forbidden"
+    if not db.get(Category, product.category_id):
+        return "category_not_found"  # was an uncaught IntegrityError -> 500 at commit
     db_product.name = product.name
     db_product.description = product.description
     db_product.price = product.price
@@ -127,6 +131,12 @@ def delete_product(db:Session, id: uuid.UUID, current_user: Users):
 def add_bulk_products(db:Session, product:List[ProductRead]):
     db_products = [Product(**p.model_dump()) for p in product]
     if not db_products:
+        return False
+    # All-or-nothing: check every referenced category exists before saving
+    # any of them — was an uncaught IntegrityError -> 500 at commit.
+    category_ids = {p.category_id for p in product}
+    existing_ids = {row[0] for row in db.query(Category.id).filter(Category.id.in_(category_ids)).all()}
+    if category_ids - existing_ids:
         return False
     db.bulk_save_objects(db_products)
     db.commit()
@@ -277,3 +287,75 @@ def get_product_detail(db: Session, id: uuid.UUID):
                 recommendations.append(other)
 
     return {"product": card, "recommendations": recommendations[:8]}
+
+# --- manager/admin settings pages (see idol_service.py's equivalent
+# comment — an empty list here is a normal state, not a 404). Plain
+# ProductRead dicts, not the embedded ProductCard shape above — neither
+# manager page renders album/genre/artist info, so album_details is never
+# even queried here.
+
+def _product_read_dict(product: Product):
+    return {
+        "id": product.id,
+        "name": product.name,
+        "price": product.price,
+        "description": product.description,
+        "quantity": product.quantity,
+        "image_url": product.image_url,
+        "category": product.category.name if product.category else None,
+    }
+
+# Batch version of _resolve_product_company_id — one query per detail table
+# instead of two per product. A product with neither an album_details nor a
+# lightstick_details row (plain merch) resolves to None: "no company owns
+# this", not "belongs to no one's view" — _manager_scope_violation already
+# treats that as manageable by any manager, so a manager's product list
+# must show it too, not just their own company's products.
+def _resolve_product_company_ids(db: Session, products: list[Product]):
+    product_ids = [p.id for p in products]
+    if not product_ids:
+        return {}
+    albums = db.query(AlbumDetail).filter(AlbumDetail.product_id.in_(product_ids)).all()
+    lightsticks = db.query(LightstickDetail).filter(LightstickDetail.product_id.in_(product_ids)).all()
+    detail_by_product = {}
+    for detail in albums + lightsticks:
+        detail_by_product[detail.product_id] = detail
+
+    idol_ids = {d.idol_id for d in detail_by_product.values() if d.idol_id}
+    group_ids = {d.group_id for d in detail_by_product.values() if d.group_id}
+    idol_company = {i.id: i.company_id for i in db.query(Idol).filter(Idol.id.in_(idol_ids)).all()} if idol_ids else {}
+    group_company = {g.id: g.company_id for g in db.query(Group).filter(Group.id.in_(group_ids)).all()} if group_ids else {}
+
+    company_by_product = {}
+    for product in products:
+        detail = detail_by_product.get(product.id)
+        if not detail:
+            company_by_product[product.id] = None
+        elif detail.idol_id:
+            company_by_product[product.id] = idol_company.get(detail.idol_id)
+        elif detail.group_id:
+            company_by_product[product.id] = group_company.get(detail.group_id)
+        else:
+            company_by_product[product.id] = None
+    return company_by_product
+
+# company_id is optional: an admin (no single company of their own) passes
+# none and sees every product; a manager passes their own company_id and
+# sees that company's products plus every ownerless one (matching
+# _manager_scope_violation's "ownerless = manageable by anyone" rule) —
+# without this, a manager could see (and try to edit) another company's
+# products and only find out it was forbidden after submitting the form.
+def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None):
+    products = db.query(Product).options(joinedload(Product.category)).all()
+    if company_id is not None:
+        company_by_product = _resolve_product_company_ids(db, products)
+        products = [p for p in products if company_by_product[p.id] in (None, company_id)]
+    return {"products": [_product_read_dict(p) for p in products]}
+
+def get_manager_product_form_page(db: Session, company_id: uuid.UUID | None = None):
+    products = db.query(Product).options(joinedload(Product.category)).all()
+    if company_id is not None:
+        company_by_product = _resolve_product_company_ids(db, products)
+        products = [p for p in products if company_by_product[p.id] in (None, company_id)]
+    categories = db.query(Category).all()
+    return {"products": [_product_read_dict(p) for p in products], "categories": categories}

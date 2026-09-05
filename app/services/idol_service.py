@@ -101,6 +101,19 @@ def get_idol_detail(db: Session, id: uuid.UUID):
     siblings = siblings_query.options(*_with_positions_and_color()).all()
     return {"idol": idol, "group": group, "siblings": siblings}
 
+# --- manager/admin settings pages (see idol.py schema's equivalent comment
+# — empty lists here are a normal state, not a 404).
+
+def get_manager_idols_page(db: Session):
+    return {"idols": db.query(Idol).all(), "groups": db.query(Group).all()}
+
+def get_manager_idol_form_page(db: Session):
+    return {
+        "idols": db.query(Idol).all(),
+        "groups": db.query(Group).all(),
+        "colors": db.query(IdolColor).all(),
+    }
+
 def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users):
     db_idol = db.get(Idol, id)
     if not db_idol:

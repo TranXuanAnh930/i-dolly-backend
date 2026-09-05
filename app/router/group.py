@@ -6,10 +6,12 @@ from app.cache.rate_limit import ip_key, rate_limit
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.db.models.user import Users
-from app.schema.group import GroupCreate, GroupUpdate, GroupRead, GroupsPageRead, GroupDetailRead
+from app.schema.group import (
+    GroupCreate, GroupUpdate, GroupRead, GroupsPageRead, GroupDetailRead, ManagerGroupsPageRead,
+)
 from app.services.group_service import (
     add_group, get_groups, get_group, update_group, delete_group,
-    get_groups_page, get_group_detail,
+    get_groups_page, get_group_detail, get_manager_groups_page,
 )
 
 # require_manager_or_admin per database-design.md §4's role table ("CRUD own
@@ -46,6 +48,10 @@ async def get_groups_page_data(db: Session = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=404, detail="No groups found")
     return result
+
+@router.get("/manager-groups-page", response_model=ManagerGroupsPageRead)
+async def get_manager_groups_page_data(db: Session = Depends(get_db)):
+    return get_manager_groups_page(db)
 
 @router.get("/{id}/detail", response_model=GroupDetailRead)
 async def get_group_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):

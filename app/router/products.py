@@ -5,11 +5,14 @@ from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.deps.db import get_db
 from app.deps.auth import require_manager_or_admin
-from app.schema.products import ProductRead, ProductCreate, StorePageRead, ProductDetailRead
+from app.schema.products import (
+    ProductRead, ProductCreate, StorePageRead, ProductDetailRead,
+    ManagerProductsPageRead, ManagerProductFormPageRead,
+)
 from app.db.models.user import Users
 from app.services.product_service import (
     add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products, set_product_image,
-    get_store_page, get_product_detail,
+    get_store_page, get_product_detail, get_manager_products_page, get_manager_product_form_page,
 )
 from app.cache.cache_service import get_cached_products, delete_cached_product
 from app.cache.redis_client import redis_client
@@ -37,6 +40,14 @@ async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db))
     if not result:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
+
+@router.get("/manager-products-page", response_model=ManagerProductsPageRead)
+async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)):
+    return get_manager_products_page(db, company_id)
+
+@router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
+async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)):
+    return get_manager_product_form_page(db, company_id)
 
 @router.get("/search/{id:uuid}")
 async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)):
@@ -83,6 +94,8 @@ async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_u
     db_product = update_product(db, id, product, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
+    if db_product == "category_not_found":
+        raise HTTPException(status_code=400, detail="category_id does not reference an existing category")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     delete_cached_product(id)

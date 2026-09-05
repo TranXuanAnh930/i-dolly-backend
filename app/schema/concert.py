@@ -69,3 +69,12 @@ class ConcertDetailRead(BaseModel):
     ticket_types: list[TicketTypeRead]
     lineup: list[LineupIdol]
     performing_groups: list[PerformingGroupMini]
+
+# --- manager/admin settings page — ManagerEventsPage's table and
+# ManagerEventFormPage's venue <select> both need the full venues list
+# separately from concerts (a venue not yet booked for any concert must
+# still appear in the dropdown), so venues aren't embedded per-concert here
+# the way ConcertWithVenue does. An empty list is a normal state, not a 404.
+class ManagerEventsPageRead(BaseModel):
+    concerts: list[ConcertRead]
+    venues: list[VenueRead]

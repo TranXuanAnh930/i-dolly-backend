@@ -38,3 +38,10 @@ class GroupDetailRead(BaseModel):
     members: list[IdolWithPositions]
     events: list[ConcertWithVenue]
     products: list[ProductCard]
+
+# --- manager/admin settings page — ManagerGroupsPage's table and
+# ManagerGroupFormPage's groupById lookup both only need the plain group
+# rows, no members/events/products. An empty list is a normal state (a
+# fresh company has no groups yet), not a 404.
+class ManagerGroupsPageRead(BaseModel):
+    groups: list[GroupRead]

@@ -167,3 +167,9 @@ def get_concert_detail(db: Session, id: uuid.UUID):
         "lineup": lineup,
         "performing_groups": performing_groups,
     }
+
+# --- manager/admin settings page (see idol_service.py's equivalent
+# comment — an empty list here is a normal state, not a 404).
+
+def get_manager_events_page(db: Session):
+    return {"concerts": db.query(Concert).all(), "venues": db.query(Venue).all()}

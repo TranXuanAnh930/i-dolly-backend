@@ -8,12 +8,12 @@ from app.deps.db import get_db
 from app.db.models.user import Users
 from app.schema.concert import (
     ConcertCreate, ConcertUpdate, ConcertRead, ConcertPerformerAssign, ConcertPerformerRead,
-    EventsPageRead, ConcertDetailRead,
+    EventsPageRead, ConcertDetailRead, ManagerEventsPageRead,
 )
 from app.services.concert_service import (
     add_concert, get_concerts, get_concert, update_concert, delete_concert,
     assign_performer, get_performers, get_all_performers, remove_performer,
-    get_events_page, get_concert_detail,
+    get_events_page, get_concert_detail, get_manager_events_page,
 )
 
 # Company-scoped exactly like groups/idols (database-design.md §4): a manager
@@ -51,6 +51,10 @@ async def get_events_page_data(db: Session = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=404, detail="No concerts found")
     return result
+
+@router.get("/manager-events-page", response_model=ManagerEventsPageRead)
+async def get_manager_events_page_data(db: Session = Depends(get_db)):
+    return get_manager_events_page(db)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
 async def get_concert_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
