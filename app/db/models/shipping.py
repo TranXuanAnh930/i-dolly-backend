@@ -1,4 +1,4 @@
-from app.db.base import Base
+from app.db.base_class import Base
 from app.schema.shipping import ShippingStatus as SchemaStatus
 from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Enum, func
 from sqlalchemy.orm import relationship

@@ -5,3 +5,15 @@ class CategoryBase(BaseModel):
 
 class CategoryCreate(CategoryBase):
     id:int
+
+class CategoryUpdate(CategoryBase):
+    # Optional: lets an admin flip the data-driven anti-resale flag via the
+    # API (database-design.md §4.2 — "an UPDATE, not a migration"). Omitting
+    # it leaves the category's existing value untouched.
+    is_resale_capped: bool | None = None
+
+class CategoryRead(CategoryBase):
+    id: int
+    is_resale_capped: bool
+
+    model_config = {"from_attributes": True}

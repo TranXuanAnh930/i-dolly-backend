@@ -1,215 +1,135 @@
-# E-Commerce Backend
+# i-dolly-backend
 
-[![CI/CD](https://github.com/VinayParmar555/E-commerce/actions/workflows/test.yml/badge.svg)](https://github.com/VinayParmar555/E-commerce/actions)
-[![codecov](https://codecov.io/gh/VinayParmar555/E-commerce/badge.svg)](https://codecov.io/gh/VinayParmar555/E-commerce)
+An idol-concert **ticket reservation** backend with an **album/singles marketplace**, built as a
+**portfolio project** to showcase backend engineering: schema design, layered API architecture,
+migration discipline, and RBAC. It started as a generic FastAPI e-commerce boilerplate
+([`VinayParmar555/E-commerce`](https://github.com/VinayParmar555/E-commerce), forked) and has been
+turned, incrementally, into the idol-ticket domain — idols/groups, venues/concerts, lottery-based
+ticket sales, and an album/lightstick marketplace layered on the original cart/order/payment
+plumbing.
 
-A production-ready **FastAPI backend** built with **PostgreSQL**, **Alembic migrations**, **Redis**, and **Docker**.  
-The application is fully containerized and deployed on **Render**.
-
----
-
-## Features
-
-- **JWT Authentication** — Access tokens + refresh token rotation with secure httponly cookies
-- **Email Verification** — Background email verification via SendGrid
-- **Role-Based Access Control** — Centralized `get_current_user` dependency for admin-only routes
-- **Product Management** — Full CRUD with category support, bulk import, pagination & filtering
-- **Shopping Cart** — Add, view, update, and remove cart items with stock validation
-- **Order & Checkout** — Cart-to-order flow with address validation and atomic stock deduction
-- **Payment Integration** — Razorpay (live) + mock gateway for testing; webhook with HMAC verification
-- **Shipping Management** — Address CRUD and order shipping status tracking
-- **Redis Caching** — Product listing cache with msgpack serialization and TTL-based invalidation
-- **Rate Limiting** — Redis-backed rate limiter with IP and user-level strategies
-- **Input Validation** — Pydantic schemas with field-level constraints (min/max length, value ranges)
-- **Refresh Token Cleanup** — Automatic cleanup of expired/revoked tokens on app startup
-- **Database Migrations** — 13 Alembic migration versions with full schema history
-- **Docker & CI/CD** — Multi-service Docker Compose, GitHub Actions pipeline, Codecov integration
+This is **not** a production system, and the docs below say so plainly where it isn't finished —
+see [Known limitations](#known-limitations).
 
 ---
 
-## API Endpoints
+## Documentation
 
-### Authentication (`/account`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/account/register` | Register a new user |
-| POST | `/account/login` | Login and receive tokens |
-| POST | `/account/refresh` | Refresh access token |
-| POST | `/account/verify-request` | Send email verification link |
-| GET | `/account/verify` | Verify email with token |
+The `docs/` folder is the source of truth for anything not obvious from the code itself:
 
-### User Profile (`/profile`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/profile/me` | Get current user profile |
-| PUT | `/profile/change-password` | Change password |
-| POST | `/profile/forgot-password` | Request password reset |
-| POST | `/profile/set-password` | Set new password with reset token |
-| POST | `/profile/make-admin` | Promote user to admin (admin only) |
-| POST | `/profile/logout` | Logout and revoke refresh token |
-| DELETE | `/profile/delete` | Delete account |
-
-### Products (`/products`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/products/all` | List all products (cached) |
-| GET | `/products/search/{id}` | Search product by ID |
-| POST | `/products/add_product` | Add product (admin only) |
-| PUT | `/products/update/{id}` | Update product (admin only) |
-| DELETE | `/products/delete/{id}` | Delete product (admin only) |
-| POST | `/products/bulk_products` | Bulk add products (admin only) |
-| GET | `/products/pagination` | Paginated product list |
-| GET | `/products/filter` | Filter by category, name, price range |
-
-### Categories (`/Categories`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/Categories/add` | Add category (admin only) |
-| GET | `/Categories/all` | List all categories |
-| PUT | `/Categories/update` | Update category (admin only) |
-| DELETE | `/Categories/delete/{id}` | Delete category (admin only) |
-
-### Cart (`/Cart`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/Cart/add_cart` | Add item to cart |
-| GET | `/Cart/see_cart` | View cart contents |
-| DELETE | `/Cart/delete_cart/{cart_id}` | Remove item from cart |
-
-### Orders (`/order`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/order/checkout` | Checkout and place order |
-| GET | `/order/fetch_placed_order` | Get all placed orders |
-| GET | `/order/single_placed_order/{id}` | Get single order details |
-| PATCH | `/order/cancel/{order_id}` | Cancel an order |
-| GET | `/order/shipping_status/{order_id}` | Get shipping status |
-| PATCH | `/order/update_shipping_status/{id}` | Update shipping status (admin only) |
-
-### Shipping Addresses (`/shipping_addresses`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/shipping_addresses/add` | Add shipping address |
-| GET | `/shipping_addresses/fetch` | Get all addresses |
-| GET | `/shipping_addresses/fetch_byid/{id}` | Get address by ID |
-| PUT | `/shipping_addresses/update/{id}` | Update address |
-| DELETE | `/shipping_addresses/delete/{id}` | Delete address |
-
-### Payments (`/payment`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/payment/razorpay/webhook` | Razorpay webhook handler |
-| PATCH | `/payment/status/{order_id}` | Check payment status |
-| PATCH | `/payment/status/all` | Check all payment statuses |
+| File | What's in it |
+|---|---|
+| [`docs/database-design.md`](docs/database-design.md) | Schema (ERD), table-by-table notes, the RBAC matrix, the lottery business logic |
+| [`docs/architecture.md`](docs/architecture.md) | How the code is organized: router → service → model layering, conventions |
+| [`docs/project_status.md`](docs/project_status.md) | What's actually built vs. still open, known issues, verification method |
+| [`docs/api-spec.md`](docs/api-spec.md) | Every route the backend exposes, grouped by frontend use case |
 
 ---
 
-## Tech Stack
+## Domains
 
-- **Framework:** FastAPI (Python 3.12)
-- **Database:** PostgreSQL with SQLAlchemy ORM
-- **Migrations:** Alembic (13 versions)
-- **Cache:** Redis with msgpack serialization
-- **Auth:** JWT (access + refresh tokens) + bcrypt
-- **Payments:** Razorpay + Mock gateway
-- **Email:** SendGrid
-- **Containerization:** Docker & Docker Compose
-- **CI/CD:** GitHub Actions → Codecov → Render
+- **Identity** — role-based access (`admin` / `manager` / `fan`), company-scoped managers.
+- **Talent** — management companies, idol groups, idols, idol colors, positions.
+- **Events & ticketing** — venues, concerts, ticket types (lottery or direct sale), lottery
+  preferences/campaigns/entries, issued tickets. Ticket tiers are **capacity-based, not
+  seat-mapped** — a deliberate scope decision, not a shortcut (see `database-design.md`'s intro).
+- **Marketplace** — products/categories extended with album/single/EP details, lightstick
+  details, genres — reusing the original cart/order/payment/shipping machinery.
+
+## Tech stack
+
+- **FastAPI** (Python 3.12) + **Pydantic v2** for request/response schemas
+- **PostgreSQL** via **SQLAlchemy 2.0** ORM, **Alembic** for migrations (one linear chain)
+- **Redis** for caching (msgpack-serialized) and rate limiting
+- **JWT** auth — short-lived access tokens + rotating refresh tokens, httponly cookies
+- **Razorpay** SDK for payments, plus a mock gateway for local dev/tests
+- **SendGrid** for transactional email
+- Local disk / S3-compatible object storage abstraction for idol/product images
+- **Docker Compose** for local dev; **GitHub Actions** for CI (Postgres + Redis services,
+  Alembic migrations, pytest + coverage)
+
+Full detail and reasoning: [`docs/architecture.md`](docs/architecture.md) §1.
+
+## What's actually built
+
+- Identity/RBAC, company-scoped managers
+- Full CRUD (ORM + schema + service + router) for groups, idols, idol colors, positions, venues,
+  concerts, ticket types, lottery preferences/campaigns/entries, tickets, album details, genres,
+  lightstick details
+- Local/S3 image uploads for idols and products
+- 12 database triggers enforcing money/fairness invariants (fan-only purchasing, the anti-resale
+  cap, concert ticket-capacity, the lottery entry cap, and more)
+- An idempotent seed script (`seed.py`) with a full fictional roster of idols, groups, venues,
+  concerts, and marketplace products
+
+Detailed, current status (including what's *not* built yet, like the actual draw job and the
+direct/non-lottery checkout flow): [`docs/project_status.md`](docs/project_status.md) §2 and §5.
+
+## Known limitations
+
+This project has been verified with `py_compile` sweeps and AST-based static checks, **not**
+against a live Postgres/Redis instance (see `docs/project_status.md` §3 for why, and what that
+does and doesn't confirm). A few things worth knowing before treating this as more than a
+portfolio piece:
+
+- **Checkout is not one atomic transaction** and has a known stock-overselling race — see
+  `docs/project_status.md` §4.1. Ticket issuance would inherit the same bug if wired on top of it
+  as-is.
+- **The lottery draw job doesn't exist yet** — the schema supports it, nothing runs it.
+- **The rate limiter's key doesn't include the route**, so endpoints sharing a `key_func` share
+  one Redis budget.
+- **Payment webhook handling isn't idempotent** (harmless today, would double-mint a ticket later).
+
+Full list, ordered by how much each matters: `docs/project_status.md` §4.
 
 ---
 
-## Getting Started
-
-You can run this project in two ways:
-
-1. **Local Development (Docker)**
-2. **Production (Deployed on Render)**
-
----
-
-## Local Development (Docker)
+## Getting started (Docker)
 
 ### Prerequisites
-- Docker
-- Docker Compose
+- Docker + Docker Compose
 
----
-
-### 1. Clone the Repository
+### 1. Clone and configure
 ```bash
-git clone https://github.com/VinayParmar555/E-commerce.git
-cd E-commerce
+git clone https://github.com/TranXuanAnh930/i-dolly-backend.git
+cd i-dolly-backend
+cp .env.example .env
 ```
+Fill in `.env` — at minimum a JWT secret, and SendGrid/Razorpay keys if you want those flows to
+work end to end (the app runs locally without valid third-party keys, but email sending and real
+payments won't).
 
-### 2. Create environment variables
-Create a `.env` file in the project root:
+### 2. Start the stack
 ```bash
-DATABASE_URL="postgresql://postgres:yourpassword@postgres:5432/yourdbname"
-DATABASE_NAME=yourdbname
-DATABASE_USER=postgres
-DATABASE_PWD=yourpassword
-
-JWT_SECRET_KEY=your_jwt_secret_key
-JWT_REFRESH_SECRET_KEY=your_jwt_refresh_secret_key
-JWT_EMAIL_SECRET_KEY=your_jwt_email_secret_key
-
-ACCESS_TOKEN_EXPIRE_MINUTES=15
-REFRESH_TOKEN_EXPIRE_DAYS=7
-EMAIL_TOKEN_EXPIRE_MINUTES=60
-
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_DB=0
-
-RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
-RAZORPAY_KEY_SECRET=your_razorpay_key_secret
-RAZORPAY_WEBHOOK_SECRET=your_razorpay_webhook_secret
-
-SENDGRID_API_KEY=SG.your_sendgrid_api_key
-FROM_EMAIL=your_email@example.com
-
+docker compose up --build
 ```
+This starts the FastAPI app, PostgreSQL, and Redis, and runs `alembic upgrade head` on boot.
 
-### 3. Start the development server
-```bash
-docker compose up --build --no-cache
-```
-This will start your:
-- FastAPI application
-- PostgreSQL database
-- Redis cache
-
-### 4. Run the Application (Swagger API Docs)
+### 3. Explore the API
 ```
 http://localhost:8000/docs
 ```
 
-### 5. View logs
+### 4. (Optional) Seed sample data
 ```bash
-docker logs -f e-commerce_app
+docker compose exec app python seed.py
+```
+Populates a full fictional roster — management companies, idol groups, venues, concerts, ticket
+types, and marketplace products. Idempotent — safe to re-run.
+
+### 5. Run tests
+```bash
+docker compose exec app pytest --cov=app
 ```
 
-### 6. Stop the application
+### 6. Stop the stack
 ```bash
 docker compose stop
 ```
-This stops containers but keeps database data intact.
+Keeps database data intact.
 
-### 7. Production Deployment (Render)
-The application is deployed on Render directly from github repository.
-- Source: GitHub repository  
-- Build & Deploy: Managed by Render using Dockerfile  
-- Auto-deploy enabled on every CI Pass to `main` branch 
+---
 
-```bash
-https://e-commerce-ytgi.onrender.com/docs
-```
+## License
 
-
-
-
-
-
-
-
-
+No license file yet — all rights reserved by default until one is added.

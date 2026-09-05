@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Boolean, func
-from app.db.base import Base
+from app.db.base_class import Base
 
 class RefreshToken(Base):
 

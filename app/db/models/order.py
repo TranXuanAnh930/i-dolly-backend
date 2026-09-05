@@ -1,6 +1,6 @@
 from sqlalchemy.orm import relationship
 from sqlalchemy import DateTime, Enum, Column, Integer, ForeignKey, Float, func
-from app.db.base import Base
+from app.db.base_class import Base
 from app.schema.order import OrderStatus
 
 class Order(Base):

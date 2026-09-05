@@ -1,0 +1,25 @@
+from sqlalchemy import String, Integer, Column, DateTime, ForeignKey, Date, Text, func
+from sqlalchemy.orm import relationship
+from app.db.base_class import Base
+
+class Idol(Base):
+
+    __tablename__ = "idols"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("management_companies.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    group_id = Column(Integer, ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # nullable: solo idols
+    name = Column(String, nullable=False)  # single name field; real_name deliberately deferred, see database-design.md §6
+    date_of_birth = Column(Date, nullable=True)
+    hometown = Column(String, nullable=True)
+    color_id = Column(Integer, ForeignKey("idol_colors.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # signature/member color
+    short_intro = Column(String(500), nullable=True)
+    long_description = Column(Text, nullable=True)
+    profile_image_url = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now(), nullable=False)
+
+    company = relationship("ManagementCompany", back_populates="idols")
+    group = relationship("Group", back_populates="idols")
+    color = relationship("IdolColor", back_populates="idols")
+    idol_positions = relationship("IdolPosition", back_populates="idol")

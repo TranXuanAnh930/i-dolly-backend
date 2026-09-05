@@ -1,0 +1,232 @@
+<mxfile host="app.diagrams.net" version="24.0.0">
+  <diagram name="Business Logic" id="bizlogic">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="2000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="n214" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EBF3FB;strokeColor=#6C8EBF;verticalAlign=top;align=left;fontSize=14;fontStyle=1;spacingLeft=10;spacingTop=8;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="360" height="710" as="geometry" />
+        </mxCell>
+        <mxCell id="n252" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF6E8;strokeColor=#82B366;verticalAlign=top;align=left;fontSize=14;fontStyle=1;spacingLeft=10;spacingTop=8;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="720" y="10" width="420" height="1550" as="geometry" />
+        </mxCell>
+        <mxCell id="n201" value="Flow A — Buy album / single / EP /
+lightstick / merch (fully independent of the lottery)" style="text;html=1;align=left;verticalAlign=middle;fontSize=18;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="60" y="40" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n202" value="Fan adds album/single/EP/lightstick/merch
+to cart and checks out" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="320" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n203" value="Existing checkout flow:
+create Order / OrderItem / Payment" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="190" width="320" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n204" value="trg_orders_items_resale_cap:
+is this product&#x27;s category is_resale_capped
+(true by default for EVERY category, incl. Merch),
+and would this push the SAME product_id
+past 3 lifetime units for this fan?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="290" width="320" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="n205" value="Reject this line —
+anti-resale cap (§4.2).
+All products are capped by default now;
+a category can opt out via UPDATE." style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="440" y="305" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n206" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#B85450;" edge="1" parent="1" source="n204" target="n205">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n207" value="Payment assumed to succeed
+(mock gateway, this phase)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="420" width="320" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n208" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#82B366;" edge="1" parent="1" source="n204" target="n207">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n209" value="Order complete.
+No lottery_entries row is ever created
+as a side effect of this flow." style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="520" width="320" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n210" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n202" target="n203">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n211" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n203" target="n204">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n212" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n207" target="n209">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n213" value="Physical formats keep using
+ShippingAddress / ShippingStatus unmodified.
+Digital formats skip shipping entirely." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;fontSize=10;fontColor=#666666;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="60" y="620" width="320" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n215" value="Flow B — Apply to a concert&#x27;s lottery directly
+(fully independent of purchases — free)" style="text;html=1;align=left;verticalAlign=middle;fontSize=18;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="740" y="40" width="380" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n216" value="Fan ranks tier preferences for a concert
+(e.g. 1st VIP, 2nd Premium, 3rd Regular)" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="100" width="380" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n217" value="Upsert lottery_preferences rows
+(concert_id, user_id, ticket_type_id, rank)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="740" y="190" width="380" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n218" value="Fan applies to ONE specific tier&#x27;s lottery
+(no cart, no payment, no purchase at all)" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="280" width="380" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n219" value="fn_require_lottery_preference:
+has this fan ranked that tier
+for this concert?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="740" y="370" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n220" value="Reject the application —
+no rank, no entry (§3.11)." style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="390" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n221" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#B85450;" edge="1" parent="1" source="n219" target="n220">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n222" value="trg_lottery_entries_cap:
+has this fan already reached this
+campaign&#x27;s max_entries_per_user
+(default 1, a campaign-level knob)?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="740" y="480" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n223" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#82B366;" edge="1" parent="1" source="n219" target="n222">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n224" value="Reject — at the cap.
+One entry per campaign by default;
+raisable per-campaign via UPDATE (§3.13)." style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="500" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n225" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#B85450;" edge="1" parent="1" source="n222" target="n224">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n226" value="Insert lottery_entries row
+(status = pending)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="740" y="590" width="380" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n227" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#82B366;" edge="1" parent="1" source="n222" target="n226">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n228" value="AT DRAW TIME — campaigns for ONE concert
+are drawn together. For rank = 1, 2, 3, ...
+(highest preference first):" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="740" y="680" width="380" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="n229" value="Draw among PENDING entries for this rank&#x27;s
+campaign, excluding fans who already won
+this concert at an earlier rank" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="740" y="810" width="380" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="n230" value="Won at this rank?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="740" y="930" width="380" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n231" value="Stays pending — rolls
+forward into next rank&#x27;s draw
+(loop back to the rank loop)" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="935" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n232" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#B85450;" edge="1" parent="1" source="n230" target="n231">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n233" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;dashed=1;strokeColor=#999999;" edge="1" parent="1" source="n231" target="n228">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n234" value="entries.status=won; insert tickets row
+(pending_payment); ticket_types.sold_quantity += 1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="740" y="1030" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n235" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#82B366;" edge="1" parent="1" source="n230" target="n234">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n236" value="After the last rank: any entries
+still pending become status=lost" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="740" y="1140" width="380" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n237" value="Notify winner by email
+(payment link + deadline)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="740" y="1230" width="380" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n238" value="Fan pays before payment_deadline_at
+— the FIRST money in this whole flow" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="740" y="1320" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n239" value="tickets.status=expired;
+sold_quantity -= 1 (slot released,
+optionally re-drawn from lost pool)" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="1340" width="260" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n240" value="no / too late" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#B85450;" edge="1" parent="1" source="n238" target="n239">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n241" value="Payment row created (existing gateway
+logic, reused); tickets.status=paid;
+issued_code generated" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="1430" width="380" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="n242" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;strokeColor=#82B366;" edge="1" parent="1" source="n238" target="n241">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n243" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n216" target="n217">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n244" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n217" target="n218">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n245" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n218" target="n219">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n246" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n226" target="n228">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n247" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n228" target="n229">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n248" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n229" target="n230">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n249" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n234" target="n236">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n250" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n236" target="n237">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n251" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=10;fontColor=#333333;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="n237" target="n238">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="n253" value="Legend" style="text;html=1;align=left;verticalAlign=middle;fontSize=18;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1610" width="200" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="n254" value="Start / trigger" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1650" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n255" value="Successful outcome" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1650" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n256" value="Rejected / DB backstop fires" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="1650" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n257" value="Neutral outcome (lost / retry)" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="780" y="1650" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n258" value="Process step" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1710" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n259" value="DB write" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1710" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="n260" value="Decision" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="540" y="1710" width="220" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

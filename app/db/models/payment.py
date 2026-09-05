@@ -1,4 +1,4 @@
-from app.db.base import Base
+from app.db.base_class import Base
 from app.schema.payment import PaymentStatus, PaymentGateway
 from sqlalchemy import Boolean, Column, DateTime, Integer, ForeignKey, Enum, String, func
 from sqlalchemy.orm import relationship

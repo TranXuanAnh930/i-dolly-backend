@@ -1,0 +1,32 @@
+# Version control
+.git
+.gitignore
+
+# Secrets — never bake these into an image; pass real values at deploy time
+.env
+.env.*
+!.env.example
+
+# Python cruft
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# OS cruft
+.DS_Store

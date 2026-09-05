@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.cache.rate_limit import user_key, rate_limit
 from app.db.models.user import Users
 from app.deps.db import get_db
-from app.deps.auth import get_current_user
+from app.deps.auth import get_current_user, require_admin
 from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.order import Order
 from app.schema.payment import PaymentCreate
@@ -23,6 +23,7 @@ from app.exception.checkout import (
     PaymentAmountMismatch,
     RazorpayPaymentFailed
 )
+from app.exception.db_triggers import TriggerViolationError, commit_or_raise
 
 router = APIRouter(prefix="/order", tags=["Order"])
 
@@ -30,7 +31,7 @@ router = APIRouter(prefix="/order", tags=["Order"])
 async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
     try:
         order = checkout(db, user.id, data)
-        db.commit()
+        commit_or_raise(db)  # trg_orders_items_resale_cap fires here
         return order
     except (CartItemError, AddressIdError) as e:
         db.rollback()
@@ -41,6 +42,9 @@ async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user
     except (InsufficientStockError, PaymentAmountMismatch, RazorpayPaymentFailed) as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    except TriggerViolationError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.status_code, detail=str(e))
     
 @router.get("/fetch_placed_order", response_model=List[Order])
 async def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
@@ -73,9 +77,7 @@ async def shipping_status(order_id:int, user:Users=Depends(get_current_user), db
     return shipstat
 
 @router.patch("/update_shipping_status/{order_id}")
-async def update_status(new_status:SchemaShippingStatus, order_id:int, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admins Only!")                           
+async def update_status(new_status:SchemaShippingStatus, order_id:int, user:Users=Depends(require_admin), db:Session=Depends(get_db)):
     order = update_shipping_status(db, new_status, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found/is cancelled")

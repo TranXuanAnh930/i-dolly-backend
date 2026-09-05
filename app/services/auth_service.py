@@ -70,7 +70,7 @@ def verify_refresh_token(db: Session, token: str):
 
 def email_verification_process(background_tasks:BackgroundTasks, user: Users):
     token = create_email_verification_token(user.id)
-    link = f"http://e-commerce-ytgi.onrender.com/account/verify?token={token}"
+    link = f"{settings.BASE_URL}/account/verify?token={token}"
     email_body = f"""
         Hi {user.email}, 
         Please verify your email by clicking the link below:

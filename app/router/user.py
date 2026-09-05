@@ -3,8 +3,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.deps.db import get_db
-from app.schema.user import UserOut
-from app.deps.auth import get_current_user
+from app.schema.user import UserOut, ChangePasswordRequest, ForgotPasswordRequest, SetPasswordRequest, MakeAdminRequest
+from app.deps.auth import get_current_user, require_admin
 from app.services.user_service import (
     change_password_process, 
     reset_password_process, 
@@ -22,22 +22,22 @@ async def me(user=Depends(get_current_user), _:None=Depends(rate_limit(10,60,use
     return user
 
 @router.put("/change-password")
-async def change_password(old_password:str, new_password:str, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
-    result = change_password_process(db, user, old_password, new_password)
+async def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
+    result = change_password_process(db, user, payload.old_password, payload.new_password)
     if not result:
         raise HTTPException(status_code=400, detail="Incorrect old password")
     return {"msg" : "Password changed succesfully"}
 
 @router.post("/forgot-password")
-async def forgot_password(email:str, background_tasks:BackgroundTasks, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)):
-    result = reset_password_process(db, email, background_tasks)
+async def forgot_password(payload:ForgotPasswordRequest, background_tasks:BackgroundTasks, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)):
+    result = reset_password_process(db, payload.email, background_tasks)
     if not result:
         raise HTTPException(status_code=400, detail="Email not registered")
     return {"msg" : "reset link sent successfully"}
 
 @router.post("/set-password")
-async def set_new_password(new_password:str, token:str, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
-    result = verify_rtoken(db, token, new_password)
+async def set_new_password(payload:SetPasswordRequest, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
+    result = verify_rtoken(db, payload.token, payload.new_password)
     if result is False:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if result is None:
@@ -45,15 +45,13 @@ async def set_new_password(new_password:str, token:str, _:None=Depends(rate_limi
     return {"msg" : "password changed successfully"}
 
 @router.post("/make-admin")
-async def make_admin(user_id:int, current_user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    result = promote_admin(db, user_id)
+async def make_admin(payload:MakeAdminRequest, current_user:Users=Depends(require_admin), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
+    result = promote_admin(db, payload.user_id)
     if result is None:
         raise HTTPException(status_code=404, detail="user not found")
     if result is False:
         raise HTTPException(status_code=400, detail="user is already admin")
-    return {"msg" : f"user {user_id} promoted to admin successfully"}
+    return {"msg" : f"user {payload.user_id} promoted to admin successfully"}
 
 @router.post("/logout")
 async def logout(request:Request, db:Session=Depends(get_db)):

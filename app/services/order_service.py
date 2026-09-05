@@ -8,6 +8,7 @@ from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.payment import PaymentCreate
 from app.services.payment_service import create_payment
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, RazorpayPaymentFailed
+from app.exception.db_triggers import flush_or_raise
 
 def checkout(db:Session, user_id:int, payment_data:PaymentCreate):
     cart_items = db.query(Cart).filter(Cart.user_id==user_id).options(selectinload(Cart.product)).all()
@@ -31,7 +32,7 @@ def checkout(db:Session, user_id:int, payment_data:PaymentCreate):
         raise AddressIdError("Invalid address id!")
     order = Order(user_id=user_id, shipping_address_id=payment_data.shipping_address_id, total_price=float(total_amount))
     db.add(order)
-    db.flush()
+    flush_or_raise(db)  # trg_orders_fan_only fires here (fn_enforce_fan_only_purchase)
 
     if payment_data.amount!=total_amount:
         raise PaymentAmountMismatch("Payment amount does not match cart total!")

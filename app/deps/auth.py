@@ -17,3 +17,28 @@ def get_current_user(request:Request, token:str=Depends(oauth_scheme), db:Sessio
         raise HTTPException(status_code=404, detail="user not found")
     request.state.user = user
     return user
+
+def require_admin(current_user:Users=Depends(get_current_user)) -> Users:
+    """Gate for admin-only actions (managing categories, promoting users, etc.).
+    Factored out per CLAUDE.md Section 5 item 8 — replaces the inline
+    `if not current_user.is_admin: raise HTTPException(403, ...)` duplicated
+    across products.py/category.py/order.py/user.py. Checks `role`, not
+    `is_admin` — role is now the source of truth (is_admin is deprecated,
+    kept in sync via the migration backfill only).
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+def require_manager_or_admin(current_user:Users=Depends(get_current_user)) -> Users:
+    """Gate for actions a company manager can also do (CRUD on their own
+    company's idols/groups/concerts/albums/singles/lightsticks — see
+    database-design.md Section 4's role table). Does NOT scope to the
+    manager's own company_id — that's a query-level filter each service
+    function still needs to apply (CLAUDE.md Section 9), same as how every
+    other mutating query already filters by user_id. This dependency only
+    answers "is this role allowed to attempt the action at all."
+    """
+    if current_user.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Manager or admin access required")
+    return current_user

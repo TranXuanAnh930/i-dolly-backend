@@ -5,12 +5,16 @@ from app.deps.auth import get_current_user
 from app.schema.cart import CartItem
 from app.db.models.user import Users
 from app.services.cart_service import add_to_cart, remove_cart, see_cart
+from app.exception.db_triggers import TriggerViolationError
 
 router = APIRouter(prefix="/Cart", tags=["Cart"])
 
 @router.post("/add_cart")
 async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    cart = add_to_cart(db, cart_item, user.id)
+    try:
+        cart = add_to_cart(db, cart_item, user.id)
+    except TriggerViolationError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
     if cart is None:
         raise HTTPException(status_code=404, detail="Insufficient stock or product not found")
     if cart is False:

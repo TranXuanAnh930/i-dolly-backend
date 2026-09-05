@@ -5,12 +5,14 @@ class ProductBase(BaseModel):
     price: float = Field(..., gt=0)
     description: str = Field(..., min_length=1, max_length=1000)
     quantity: int = Field(..., ge=0)
+    image_url: str | None = None
 
 class ProductUpdate(ProductBase):
     id : int
 
 class ProductCreate(ProductBase):
-    category_id : int | None = None
+    category_id : int
 
 class ProductRead(ProductBase):
-    category : str | None
+    id: int
+    category : str

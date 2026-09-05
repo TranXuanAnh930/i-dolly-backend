@@ -18,7 +18,7 @@ services:
       - 6379:6379
   app:
     build: .
-    container_name: e-commerce_app
+    container_name: i-dolly-backend
     restart: unless-stopped
     command: >
       sh -c "echo 'Running Alembic migrations...' &&

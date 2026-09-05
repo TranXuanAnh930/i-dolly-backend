@@ -4,6 +4,7 @@ from app.db.models.user import Users
 from app.schema.cart import CartItem
 from app.db.models.cart import Cart
 from app.db.models.products import Product
+from app.exception.db_triggers import commit_or_raise
 
 def add_to_cart(db:Session, cart_item:CartItem, user_id:int):
     user = db.get(Users, user_id)
@@ -20,7 +21,7 @@ def add_to_cart(db:Session, cart_item:CartItem, user_id:int):
         stmt = Cart(**cart_item.model_dump(), user_id=user_id, price=product.price, total_price=product.price*cart_item.quantity)
         db.add(stmt)
         
-    db.commit()
+    commit_or_raise(db)
     db.refresh(stmt)
     return stmt
 

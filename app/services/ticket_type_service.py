@@ -1,0 +1,61 @@
+from sqlalchemy.orm import Session
+from app.schema.ticket_type import TicketTypeCreate, TicketTypeUpdate
+from app.db.models.ticket_type import TicketType
+from app.db.models.concert import Concert
+from app.db.models.user import Users
+from app.exception.db_triggers import commit_or_raise
+
+# Company-scoped via the parent concert's company_id, same pattern as
+# concert_performers (concert_service._manager_scope_violation).
+
+def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+    return current_user.role == "manager" and current_user.company_id != company_id
+
+def add_ticket_type(db: Session, data: TicketTypeCreate, current_user: Users):
+    concert = db.get(Concert, data.concert_id)
+    if not concert:
+        return "not_found"
+    if _manager_scope_violation(current_user, concert.company_id):
+        return "forbidden"
+    db_tt = TicketType(**data.model_dump())
+    db.add(db_tt)
+    commit_or_raise(db)  # trg_ticket_types_capacity
+    db.refresh(db_tt)
+    return db_tt
+
+def get_ticket_types(db: Session, concert_id: int):
+    result = db.query(TicketType).filter(TicketType.concert_id == concert_id).all()
+    if not result:
+        return False
+    return result
+
+def get_ticket_type(db: Session, id: int):
+    return db.get(TicketType, id)
+
+def update_ticket_type(db: Session, id: int, data: TicketTypeUpdate, current_user: Users):
+    db_tt = db.get(TicketType, id)
+    if not db_tt:
+        return "not_found"
+    concert = db.get(Concert, db_tt.concert_id)
+    if _manager_scope_violation(current_user, concert.company_id):
+        return "forbidden"
+    if data.total_quantity is not None:
+        if data.total_quantity < db_tt.sold_quantity:
+            return "invalid"  # would violate chk_ticket_types_capacity
+        db_tt.total_quantity = data.total_quantity
+    if data.price is not None:
+        db_tt.price = data.price
+    commit_or_raise(db)  # trg_ticket_types_capacity (fires on UPDATE OF total_quantity)
+    db.refresh(db_tt)
+    return db_tt
+
+def delete_ticket_type(db: Session, id: int, current_user: Users):
+    db_tt = db.get(TicketType, id)
+    if not db_tt:
+        return "not_found"
+    concert = db.get(Concert, db_tt.concert_id)
+    if _manager_scope_violation(current_user, concert.company_id):
+        return "forbidden"
+    db.delete(db_tt)
+    db.commit()
+    return True

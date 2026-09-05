@@ -1,16 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from typing import List
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.deps.db import get_db
-from app.deps.auth import get_current_user
+from app.deps.auth import require_manager_or_admin
 from app.schema.products import ProductRead, ProductCreate
 from app.db.models.user import Users
 from app.services.product_service import (
-    add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products
+    add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products, set_product_image
 )
 from app.cache.cache_service import get_cached_products, delete_cached_product
 from app.cache.redis_client import redis_client
+from app.utils.storage import get_storage, StorageError
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -28,10 +29,33 @@ async def search_existing_product(id:int, _:None=Depends(rate_limit(10,60,ip_key
         raise HTTPException(status_code=404, detail="Product not found")
     return db_product
 
+# multipart/form-data, not JSON — mirrors idols.py: an optional `image`
+# file alongside the rest of the product fields in the same request.
+# FastAPI can't mix a JSON body with Form/File fields on one endpoint, so
+# this replaced the previous plain-JSON version; any client posting here
+# now sends form fields, not a JSON body.
 @router.post("/add_product")
-async def add_new_product(product:ProductCreate, current_user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admins Only")
+async def add_new_product(
+    name: str = Form(...),
+    price: float = Form(...),
+    description: str = Form(...),
+    quantity: int = Form(...),
+    category_id: int = Form(...),
+    image: UploadFile | None = File(None),
+    current_user:Users=Depends(require_manager_or_admin),
+    db:Session=Depends(get_db),
+):
+    image_url = None
+    if image is not None:
+        try:
+            image_url = await get_storage().save(image, subfolder="products")
+        except StorageError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    product = ProductCreate(
+        name=name, price=price, description=description, quantity=quantity,
+        category_id=category_id, image_url=image_url,
+    )
     db_product = add_product(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add product")
@@ -39,29 +63,43 @@ async def add_new_product(product:ProductCreate, current_user:Users=Depends(get_
     return {"msg" : "Product added successfully"}
 
 @router.put("/update/{id}")
-async def update_existing_product(id:int, product:ProductCreate, current_user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admins Only")
-    db_product = update_product(db, id, product)
+async def update_existing_product(id:int, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+    db_product = update_product(db, id, product, current_user)
+    if db_product == "forbidden":
+        raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     delete_cached_product(id)
     return {"msg" : "Product Updated successfully"}
 
-@router.delete("/delete/{id}")        
-async def delete_existing_product(id:int, current_user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admins Only")                           
-    db_product = delete_product(db, id)
+@router.post("/{id}/image")
+async def upload_product_image(id:int, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+    """Replace an existing product's image without touching any other
+    field — the complement to the inline upload on /products/add_product."""
+    try:
+        image_url = await get_storage().save(image, subfolder="products")
+    except StorageError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db_product = set_product_image(db, id, image_url, current_user)
+    if db_product == "forbidden":
+        raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
+    if not db_product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    delete_cached_product(id)
+    return {"msg" : "Product image updated successfully"}
+
+@router.delete("/delete/{id}")
+async def delete_existing_product(id:int, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+    db_product = delete_product(db, id, current_user)
+    if db_product == "forbidden":
+        raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     delete_cached_product(id)
     return {"detail" : "Product Deleted successfully"}
 
 @router.post("/bulk_products")
-async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admins Only")                           
+async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
     db_product = add_bulk_products(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add products")
@@ -80,9 +118,9 @@ async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, l
 
 @router.get("/filter")
 async def filter_product(
-    category:str, 
-    name:str | None = None, 
-    min_price:int | None = None, 
+    category:str,
+    name:str | None = None,
+    min_price:int | None = None,
     max_price:int | None = None,
     limit:int=Query(10, ge=1, le=50),
     page:int=Query(1, ge=1),

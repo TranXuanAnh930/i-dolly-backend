@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, Float, String, ForeignKey
 from sqlalchemy.orm import relationship
-from app.db.base import Base
+from app.db.base_class import Base
 
 class Product(Base):
    
@@ -11,7 +11,8 @@ class Product(Base):
     price = Column(Float)
     description = Column(String)
     quantity = Column(Integer)
-    category_id = Column(Integer, ForeignKey("categories.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True)
+    category_id = Column(Integer, ForeignKey("categories.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    image_url = Column(String, nullable=True)  # local path or S3/CDN URL — see app/utils/storage.py
 
     cart_items = relationship("Cart", back_populates="product")
     category = relationship("Category", back_populates="products")
