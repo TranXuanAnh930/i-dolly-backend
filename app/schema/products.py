@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, Field
 
 class ProductBase(BaseModel):
@@ -8,11 +9,11 @@ class ProductBase(BaseModel):
     image_url: str | None = None
 
 class ProductUpdate(ProductBase):
-    id : int
+    id : uuid.UUID
 
 class ProductCreate(ProductBase):
-    category_id : int
+    category_id : uuid.UUID
 
 class ProductRead(ProductBase):
-    id: int
+    id: uuid.UUID
     category : str

@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.ticket import TicketCreate, TicketUpdate
 from app.db.models.ticket import Ticket
@@ -48,10 +49,10 @@ def get_my_tickets(db: Session, current_user: Users):
         return False
     return result
 
-def get_ticket(db: Session, id: int):
+def get_ticket(db: Session, id: uuid.UUID):
     return db.get(Ticket, id)
 
-def update_ticket(db: Session, id: int, data: TicketUpdate):
+def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate):
     db_ticket = db.get(Ticket, id)
     if not db_ticket:
         return "not_found"
@@ -67,7 +68,7 @@ def update_ticket(db: Session, id: int, data: TicketUpdate):
     db.refresh(db_ticket)
     return db_ticket
 
-def delete_ticket(db: Session, id: int):
+def delete_ticket(db: Session, id: uuid.UUID):
     db_ticket = db.get(Ticket, id)
     if not db_ticket:
         return "not_found"

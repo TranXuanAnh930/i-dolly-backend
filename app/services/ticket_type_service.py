@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.ticket_type import TicketTypeCreate, TicketTypeUpdate
 from app.db.models.ticket_type import TicketType
@@ -8,7 +9,7 @@ from app.exception.db_triggers import commit_or_raise
 # Company-scoped via the parent concert's company_id, same pattern as
 # concert_performers (concert_service._manager_scope_violation).
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def add_ticket_type(db: Session, data: TicketTypeCreate, current_user: Users):
@@ -23,16 +24,16 @@ def add_ticket_type(db: Session, data: TicketTypeCreate, current_user: Users):
     db.refresh(db_tt)
     return db_tt
 
-def get_ticket_types(db: Session, concert_id: int):
+def get_ticket_types(db: Session, concert_id: uuid.UUID):
     result = db.query(TicketType).filter(TicketType.concert_id == concert_id).all()
     if not result:
         return False
     return result
 
-def get_ticket_type(db: Session, id: int):
+def get_ticket_type(db: Session, id: uuid.UUID):
     return db.get(TicketType, id)
 
-def update_ticket_type(db: Session, id: int, data: TicketTypeUpdate, current_user: Users):
+def update_ticket_type(db: Session, id: uuid.UUID, data: TicketTypeUpdate, current_user: Users):
     db_tt = db.get(TicketType, id)
     if not db_tt:
         return "not_found"
@@ -49,7 +50,7 @@ def update_ticket_type(db: Session, id: int, data: TicketTypeUpdate, current_use
     db.refresh(db_tt)
     return db_tt
 
-def delete_ticket_type(db: Session, id: int, current_user: Users):
+def delete_ticket_type(db: Session, id: uuid.UUID, current_user: Users):
     db_tt = db.get(TicketType, id)
     if not db_tt:
         return "not_found"

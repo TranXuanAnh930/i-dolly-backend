@@ -1,4 +1,6 @@
+import uuid
 from sqlalchemy import String, Integer, Column, DateTime, ForeignKey, Text, Enum, CheckConstraint, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -11,9 +13,9 @@ class Concert(Base):
 
     __tablename__ = "concerts"
 
-    id = Column(Integer, primary_key=True, index=True)
-    company_id = Column(Integer, ForeignKey("management_companies.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
-    venue_id = Column(Integer, ForeignKey("venues.id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("management_companies.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    venue_id = Column(UUID(as_uuid=True), ForeignKey("venues.id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     capacity = Column(Integer, nullable=False)  # may be <= venue.total_capacity; not DB-enforced (database-design.md §3.7)
@@ -33,10 +35,10 @@ class ConcertPerformer(Base):
 
     __tablename__ = "concert_performers"
 
-    id = Column(Integer, primary_key=True, index=True)
-    concert_id = Column(Integer, ForeignKey("concerts.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
-    idol_id = Column(Integer, ForeignKey("idols.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True)
-    group_id = Column(Integer, ForeignKey("groups.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    idol_id = Column(UUID(as_uuid=True), ForeignKey("idols.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True)
 
     concert = relationship("Concert", back_populates="performers")
     idol = relationship("Idol")

@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -28,7 +29,7 @@ async def list_genres(db: Session = Depends(get_db)):
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_genre(id: int, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
+async def delete_existing_genre(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
     result = delete_genre(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Genre not found")
@@ -54,14 +55,14 @@ async def assign_genre_to_album(data: AlbumGenreAssign, current_user: Users = De
     return result
 
 @router.get("/album_genres/album/{product_id}", response_model=List[AlbumGenreRead])
-async def list_album_genres(product_id: int, db: Session = Depends(get_db)):
+async def list_album_genres(product_id: uuid.UUID, db: Session = Depends(get_db)):
     result = get_album_genres(db, product_id)
     if not result:
         raise HTTPException(status_code=404, detail="This album has no genres tagged")
     return result
 
 @router.delete("/album_genres/{product_id}/{genre_id}")
-async def unassign_genre_from_album(product_id: int, genre_id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def unassign_genre_from_album(product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = remove_genre(db, product_id, genre_id, current_user)
     if isinstance(result, str):
         _raise_for_link(result)

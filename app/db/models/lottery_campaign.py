@@ -1,4 +1,6 @@
+import uuid
 from sqlalchemy import Integer, Column, DateTime, ForeignKey, Enum, CheckConstraint, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -9,8 +11,8 @@ class LotteryCampaign(Base):
 
     __tablename__ = "lottery_campaigns"
 
-    id = Column(Integer, primary_key=True, index=True)
-    ticket_type_id = Column(Integer, ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    ticket_type_id = Column(UUID(as_uuid=True), ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, index=True)
     entry_start_at = Column(DateTime(timezone=True), nullable=False)
     entry_end_at = Column(DateTime(timezone=True), nullable=False)
     draw_at = Column(DateTime(timezone=True), nullable=False)

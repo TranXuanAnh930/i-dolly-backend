@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -37,21 +38,21 @@ async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session
     return result
 
 @router.get("/{id}", response_model=GroupRead)
-async def get_group_by_id(id: int, db: Session = Depends(get_db)):
+async def get_group_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
     group = get_group(db, id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     return group
 
 @router.put("/update/{id}", response_model=GroupRead)
-async def update_existing_group(id: int, data: GroupUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_group(id: uuid.UUID, data: GroupUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = update_group(db, id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Group not found")
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_group(id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = delete_group(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Group not found")

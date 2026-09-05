@@ -18,6 +18,18 @@ migration was written directly against the design doc's table-by-table notes, no
 from a DDL file. If a `schema.sql` is wanted (e.g. for an ERD tool, or a single-file review
 artifact), it would need to be generated from the live migrations/models, not assumed present.
 
+**Every primary/foreign key is now a UUID, not a sequential integer** (enumeration resistance —
+see `database-design.md`'s intro for the rationale). Since none of these 40 migrations has ever
+run against a real Postgres instance (§3 below), they were edited **in place** rather than
+layering `ALTER COLUMN` migrations on top — revision ids and the `down_revision` chain are
+unchanged, only column type definitions changed. This touched every model, every migration,
+every Pydantic schema, every router/service id parameter, the JWT `sub` claim handling
+(`app/utils/jwt_manager.py`, `app/deps/auth.py` — decode to `uuid.UUID` instead of `int`), and
+the product-list Redis cache (`app/cache/cache_service.py` now stringifies `p.id` before
+`msgpack.packb`, since msgpack has no native UUID type — this would have silently broken the
+cache the first time it ran). `seed.py` needed no changes — it already wires foreign keys via
+ORM-returned `.id`/name lookups, never a literal integer.
+
 ## 2. What's built
 
 - **Identity/RBAC**: `users.role`/`company_id`, `management_companies`, `require_admin`/

@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.lightstick_detail import LightstickDetailCreate, LightstickDetailUpdate
 from app.db.models.lightstick_detail import LightstickDetail
@@ -10,7 +11,7 @@ from app.exception.db_triggers import commit_or_raise
 
 # Same dual-FK scoping as album_details.
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def _resolve_company_id(db: Session, idol_id, group_id):
@@ -40,7 +41,7 @@ def add_lightstick_detail(db: Session, data: LightstickDetailCreate, current_use
     db.refresh(db_ls)
     return db_ls
 
-def get_lightstick_detail(db: Session, product_id: int):
+def get_lightstick_detail(db: Session, product_id: uuid.UUID):
     return db.get(LightstickDetail, product_id)
 
 def get_lightstick_details(db: Session):
@@ -49,7 +50,7 @@ def get_lightstick_details(db: Session):
         return False
     return result
 
-def update_lightstick_detail(db: Session, product_id: int, data: LightstickDetailUpdate, current_user: Users):
+def update_lightstick_detail(db: Session, product_id: uuid.UUID, data: LightstickDetailUpdate, current_user: Users):
     db_ls = db.get(LightstickDetail, product_id)
     if not db_ls:
         return "not_found"
@@ -64,7 +65,7 @@ def update_lightstick_detail(db: Session, product_id: int, data: LightstickDetai
     db.refresh(db_ls)
     return db_ls
 
-def delete_lightstick_detail(db: Session, product_id: int, current_user: Users):
+def delete_lightstick_detail(db: Session, product_id: uuid.UUID, current_user: Users):
     db_ls = db.get(LightstickDetail, product_id)
     if not db_ls:
         return "not_found"

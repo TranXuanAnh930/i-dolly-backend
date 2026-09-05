@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, Field
 
 class PositionBase(BaseModel):
@@ -7,18 +8,18 @@ class PositionCreate(PositionBase):
     pass
 
 class PositionRead(PositionBase):
-    id: int
+    id: uuid.UUID
 
     model_config = {"from_attributes": True}
 
 class IdolPositionAssign(BaseModel):
-    idol_id: int
-    position_id: int
+    idol_id: uuid.UUID
+    position_id: uuid.UUID
     is_primary: bool = False
 
 class IdolPositionRead(BaseModel):
-    idol_id: int
-    position_id: int
+    idol_id: uuid.UUID
+    position_id: uuid.UUID
     is_primary: bool
     position: PositionRead
 

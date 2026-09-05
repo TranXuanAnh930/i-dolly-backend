@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -29,7 +30,7 @@ SEED_POSITIONS = [
 def upgrade() -> None:
     op.create_table(
         "positions",
-        sa.Column("id", sa.Integer(), primary_key=True, index=True),
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, index=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column("name", sa.VARCHAR(), nullable=False, unique=True),
     )
 

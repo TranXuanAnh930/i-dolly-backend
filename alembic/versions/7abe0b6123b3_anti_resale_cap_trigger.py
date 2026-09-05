@@ -31,7 +31,7 @@ def upgrade() -> None:
         """
         CREATE OR REPLACE FUNCTION fn_enforce_resale_cap() RETURNS TRIGGER AS $$
         DECLARE
-            buyer_id INTEGER;
+            buyer_id UUID;
             is_capped BOOLEAN;
             existing_qty INTEGER;
         BEGIN

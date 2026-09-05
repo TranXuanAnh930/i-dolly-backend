@@ -1,4 +1,6 @@
-from sqlalchemy import String, Integer, Column, DateTime, func
+import uuid
+from sqlalchemy import String, Column, DateTime, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -6,7 +8,7 @@ class ManagementCompany(Base):
 
     __tablename__ = "management_companies"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     contact_email = Column(String, nullable=True)

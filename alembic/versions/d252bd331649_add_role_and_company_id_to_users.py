@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -43,7 +44,7 @@ def upgrade() -> None:
     # migration once management_companies exists (one concern per migration).
     op.add_column(
         "users",
-        sa.Column("company_id", sa.Integer(), nullable=True),
+        sa.Column("company_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
     # Indexed now (same convention as every other *_company_id FK column in
     # this design — groups, idols, concerts) since manager-scoped queries

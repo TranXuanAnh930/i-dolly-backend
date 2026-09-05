@@ -1,11 +1,12 @@
+import uuid
 from datetime import datetime
 from pydantic import BaseModel, Field
 
 class LotteryPreferenceRead(BaseModel):
-    id: int
-    concert_id: int
-    user_id: int
-    ticket_type_id: int
+    id: uuid.UUID
+    concert_id: uuid.UUID
+    user_id: uuid.UUID
+    ticket_type_id: uuid.UUID
     rank: int
     created_at: datetime
 
@@ -16,5 +17,5 @@ class LotteryPreferenceSet(BaseModel):
     order of preference. Replaces any existing preferences for
     (concert_id, current_user) — see lottery_preference_service.set_preferences.
     rank is derived from list position (1-indexed), not supplied by the fan."""
-    concert_id: int
-    ticket_type_ids_in_order: list[int] = Field(..., min_length=1)
+    concert_id: uuid.UUID
+    ticket_type_ids_in_order: list[uuid.UUID] = Field(..., min_length=1)

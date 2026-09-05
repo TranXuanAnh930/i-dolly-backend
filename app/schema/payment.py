@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel
@@ -14,14 +15,14 @@ class PaymentGateway(Enum):
 
 class PaymentCreate(BaseModel):
     amount : int
-    shipping_address_id : int
+    shipping_address_id : uuid.UUID
     gateway : PaymentGateway = PaymentGateway.mock
     simulate_succ : bool | None = None
 
 class PaymentResponse(BaseModel):
-    id : int
-    order_id : int
-    user_id : int
+    id : uuid.UUID
+    order_id : uuid.UUID
+    user_id : uuid.UUID
     amount : int
     status : PaymentStatus
     payment_gateway : PaymentGateway

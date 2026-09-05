@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -21,22 +22,22 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "lottery_preferences",
-        sa.Column("id", sa.Integer(), primary_key=True, index=True),
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, index=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column(
             "concert_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("concerts.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
             "user_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("users.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
             "ticket_type_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),
@@ -67,7 +68,7 @@ def upgrade() -> None:
         """
         CREATE OR REPLACE FUNCTION fn_require_ticket_type_matches_concert() RETURNS TRIGGER AS $$
         DECLARE
-            actual_concert_id INTEGER;
+            actual_concert_id UUID;
         BEGIN
             SELECT concert_id INTO actual_concert_id
             FROM ticket_types

@@ -1,4 +1,6 @@
+import uuid
 from sqlalchemy import String, Integer, Column, DateTime, Computed, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -7,7 +9,7 @@ class Venue(Base):
 
     __tablename__ = "venues"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
     city = Column(String, nullable=False)

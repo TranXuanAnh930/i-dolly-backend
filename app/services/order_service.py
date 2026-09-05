@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session, selectinload
 from app.db.models.cart import Cart
 from app.db.models.order import Order, OrderItem
@@ -10,7 +11,7 @@ from app.services.payment_service import create_payment
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, RazorpayPaymentFailed
 from app.exception.db_triggers import flush_or_raise
 
-def checkout(db:Session, user_id:int, payment_data:PaymentCreate):
+def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     cart_items = db.query(Cart).filter(Cart.user_id==user_id).options(selectinload(Cart.product)).all()
     if not cart_items:
         raise CartItemError("No item in cart")
@@ -61,7 +62,7 @@ def checkout(db:Session, user_id:int, payment_data:PaymentCreate):
         "rz_data" : payment_res.rz_data
     }
 
-def fetch_placed_order(db:Session, user_id:int):
+def fetch_placed_order(db:Session, user_id:uuid.UUID):
     order = (
         db.query(Order)
         .filter(Order.user_id==user_id)
@@ -70,7 +71,7 @@ def fetch_placed_order(db:Session, user_id:int):
     )
     return order
 
-def fetch_single_placed_order(db:Session, user_id:int, order_id:int):
+def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
     order = (
         db.query(Order)
         .filter(Order.id==order_id, Order.user_id==user_id)
@@ -81,7 +82,7 @@ def fetch_single_placed_order(db:Session, user_id:int, order_id:int):
         return False
     return order
 
-def cancel_placed_order(db:Session, user_id:int, order_id:int):
+def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
     order = fetch_single_placed_order(db, user_id, order_id)
     if not order:
         return None
@@ -93,13 +94,13 @@ def cancel_placed_order(db:Session, user_id:int, order_id:int):
     db.refresh(order)
     return order
 
-def get_user_shipping_status(db:Session, user_id:int, order_id:int):
+def get_user_shipping_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
     ship_status = db.query(Order).filter(Order.user_id==user_id, Order.id==order_id).options(selectinload(Order.shippingstatus)).first()
     if not ship_status:
         return None
     return ship_status.shippingstatus
 
-def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:int):
+def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID):
     order_shippingstatus = db.query(ShippingStatus).filter(ShippingStatus.order_id==order_id).first()
     if not order_shippingstatus or order_shippingstatus.status == SchemaShippingStatus.cancelled:
         return None

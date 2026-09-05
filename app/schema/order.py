@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel
@@ -8,18 +9,18 @@ class OrderStatus(str, Enum):
     confirmed = "confirmed"
     cancelled = "cancelled"
 
-class OrderItem(BaseModel): 
-    order_id : int
-    product_id : int
+class OrderItem(BaseModel):
+    order_id : uuid.UUID
+    product_id : uuid.UUID
     quantity : int
     price : int
 
     model_config = {"from_attributes" : True}
 
 class Order(BaseModel):
-    id : int
-    user_id : int
-    shipping_address_id :int
+    id : uuid.UUID
+    user_id : uuid.UUID
+    shipping_address_id :uuid.UUID
     total_price : float
     status : OrderStatus
     created_at : datetime

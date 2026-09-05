@@ -48,19 +48,19 @@ def upgrade() -> None:
         "album_details",
         sa.Column(
             "product_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("products.id", onupdate="CASCADE", ondelete="CASCADE"),
             primary_key=True,
         ),
         sa.Column(
             "idol_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("idols.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),
         sa.Column(
             "group_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),

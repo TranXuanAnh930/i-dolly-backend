@@ -159,7 +159,7 @@ Complete a password reset using the token from the emailed link.
 - UI: "Forgot password?" flow, step 2 (the link target)
 
 ### `POST /profile/make-admin` 🔒 admin
-- Request (`MakeAdminRequest`): `user_id` (int)
+- Request (`MakeAdminRequest`): `user_id` (uuid)
 - Response: `{"msg": "user <id> promoted to admin successfully"}`
 - UI: admin user-management screen
 
@@ -239,7 +239,7 @@ per-company.
 
 ### `POST /positions/idol_positions/assign` 🔒 manager+
 Assign a position to an idol.
-- Request (`IdolPositionAssign`): `idol_id` (int), `position_id` (int), `is_primary` (bool,
+- Request (`IdolPositionAssign`): `idol_id` (uuid), `position_id` (uuid), `is_primary` (bool,
   default `false`)
 - Response (`IdolPositionRead`): `idol_id`, `position_id`, `is_primary`, nested `position`
   (`PositionRead`)
@@ -261,7 +261,7 @@ Toggle whether this position is the idol's primary one.
 
 ### `POST /groups/add` 🔒 manager+
 - Request (`GroupCreate`): `name` (str), `debut_date` (date, optional), `description` (str,
-  optional, ≤2000 chars), `company_id` (int)
+  optional, ≤2000 chars), `company_id` (uuid)
 - Response (`GroupRead`): adds `id`, `created_at`, `updated_at`
 - UI: manager — create group
 
@@ -281,8 +281,8 @@ Toggle whether this position is the idol's primary one.
 - Response: `{"msg": "Group deleted successfully"}`
 
 ### `POST /idols/add` 🔒 manager+ — **multipart/form-data**, not JSON
-- Request (form fields): `name` (str, required), `company_id` (int, required), `group_id` (int,
-  optional), `date_of_birth` (date, optional), `hometown` (str, optional), `color_id` (int,
+- Request (form fields): `name` (str, required), `company_id` (uuid, required), `group_id` (uuid,
+  optional), `date_of_birth` (date, optional), `hometown` (str, optional), `color_id` (uuid,
   optional), `short_intro` (str, optional, ≤500 chars), `long_description` (str, optional),
   `image` (file, optional — max 5MB, `image/jpeg|png|webp|gif`)
 - Response (`IdolRead`): all the above plus `id`, `profile_image_url`, `created_at`, `updated_at`
@@ -335,9 +335,9 @@ Replace an idol's photo only, without touching any other field.
 - Response: `{"msg": "Venue deleted successfully"}`
 
 ### `POST /concerts/add` 🔒 manager+
-- Request (`ConcertCreate`): `venue_id` (int), `title` (str), `description` (str, optional),
+- Request (`ConcertCreate`): `venue_id` (uuid), `title` (str), `description` (str, optional),
   `capacity` (int, >0), `event_datetime` (datetime), `doors_open_at` (datetime, optional),
-  `company_id` (int)
+  `company_id` (uuid)
 - Response (`ConcertRead`): adds `id`, `status`, `created_at`, `updated_at`
 - UI: manager — create concert
 
@@ -359,8 +359,8 @@ Replace an idol's photo only, without touching any other field.
 
 ### `POST /concerts/performers/assign` 🔒 manager+
 Attach an idol or group as a performer at a concert.
-- Request (`ConcertPerformerAssign`): `concert_id` (int), `idol_id` (int, optional), `group_id`
-  (int, optional) — exactly one of `idol_id`/`group_id` in practice
+- Request (`ConcertPerformerAssign`): `concert_id` (uuid), `idol_id` (uuid, optional), `group_id`
+  (uuid, optional) — exactly one of `idol_id`/`group_id` in practice
 - Response (`ConcertPerformerRead`): adds `id`
 - UI: manager — concert edit, "lineup" section
 
@@ -376,7 +376,7 @@ Attach an idol or group as a performer at a concert.
 A ticket tier for a concert (e.g. "VIP", "General") — `sale_method` decides whether it's sold via
 lottery or (once built — see `project_status.md` §5) direct purchase.
 - Request (`TicketTypeCreate`): `tier` (str), `price` (float, ≥0), `total_quantity` (int, ≥0),
-  `sale_method` (str, default `"lottery"`), `concert_id` (int)
+  `sale_method` (str, default `"lottery"`), `concert_id` (uuid)
 - Response (`TicketTypeRead`): adds `id`, `sold_quantity`, `created_at`
 - UI: manager — concert edit, "ticket tiers" section
 
@@ -399,7 +399,7 @@ lottery or (once built — see `project_status.md` §5) direct purchase.
 ### `POST /lottery_campaigns/add` 🔒 manager+
 - Request (`LotteryCampaignCreate`): `entry_start_at`, `entry_end_at`, `draw_at` (all datetime),
   `payment_deadline_hours` (int, default 48), `max_entries_per_user` (int, default 1),
-  `ticket_type_id` (int)
+  `ticket_type_id` (uuid)
 - Response (`LotteryCampaignRead`): adds `id`, `status`, `created_at`
 - UI: manager — set up a lottery for a ticket tier
 
@@ -421,7 +421,7 @@ lottery or (once built — see `project_status.md` §5) direct purchase.
 Enter a lottery campaign. Enforced by both a service-layer check and a DB trigger (cap, and — see
 `project_status.md` §4 item 9 — a required-preference check); trigger violations surface as a
 normal HTTP error, not a 500.
-- Request (`LotteryEntryApply`): `campaign_id` (int)
+- Request (`LotteryEntryApply`): `campaign_id` (uuid)
 - Response (`LotteryEntryRead`): `id`, `campaign_id`, `user_id`, `status`, `created_at`, `drawn_at`
 - UI: "Apply" button on the lottery application page — disable/hide once the fan has already
   entered, or once `entry_end_at` has passed
@@ -437,7 +437,7 @@ normal HTTP error, not a 500.
 ### `POST /lottery_preferences/set` 🔒 fan
 Rank which ticket tiers (within one concert) the fan would accept, in priority order — required
 before applying to some lotteries (see the trigger note above).
-- Request (`LotteryPreferenceSet`): `concert_id` (int), `ticket_type_ids_in_order` (list[int],
+- Request (`LotteryPreferenceSet`): `concert_id` (uuid), `ticket_type_ids_in_order` (list[uuid],
   min 1 — order is the ranking)
 - Response: `List[LotteryPreferenceRead]` (`id`, `concert_id`, `user_id`, `ticket_type_id`,
   `rank`, `created_at`)
@@ -456,7 +456,7 @@ Clears the fan's ranking for that concert.
 ### `POST /tickets/add` 🔒 admin
 The only way a ticket gets created today — manual issuance, since the lottery draw job doesn't
 exist yet (`project_status.md` §5).
-- Request (`TicketCreate`): `ticket_type_id` (int), `user_id` (int), `lottery_entry_id` (int,
+- Request (`TicketCreate`): `ticket_type_id` (uuid), `user_id` (uuid), `lottery_entry_id` (uuid,
   optional — link back to the winning entry)
 - Response (`TicketRead`): adds `id`, `payment_id`, `status`, `issued_code`, `reserved_at`,
   `payment_deadline_at`, `created_at`, `updated_at`
@@ -494,7 +494,7 @@ exist yet (`project_status.md` §5).
 
 ### `PUT /Categories/update` 🔒 admin
 Note: `id` is a query param here, not a path segment.
-- Request: query param `id` (int) + body (`CategoryUpdate`): `name`, `is_resale_capped`
+- Request: query param `id` (uuid) + body (`CategoryUpdate`): `name`, `is_resale_capped`
   (optional)
 - Response: `{"msg": "Category updated successfully"}`
 
@@ -525,7 +525,7 @@ Note: `id` is a query param here, not a path segment.
 
 ### `POST /products/add_product` 🔒 manager+ — **multipart/form-data**, not JSON
 - Request (form fields): `name` (str), `price` (float), `description` (str), `quantity` (int),
-  `category_id` (int), `image` (file, optional, same constraints as idol images)
+  `category_id` (uuid), `image` (file, optional, same constraints as idol images)
 - Response: `{"msg": "Product added successfully"}` — refetch to get the new product's `id`
 - UI: manager — create product. Deliberately unscoped to any company at creation (see
   `project_status.md` §4 item 10) — a bare product has no idol/group tie until an album/lightstick
@@ -558,8 +558,8 @@ Replace a product's image only.
 ### `POST /album_details/add` 🔒 manager+
 Attaches album-specific data to an existing product, and is what establishes that product's
 company ownership.
-- Request (`AlbumDetailCreate`): `product_id` (int, must already exist), `idol_id` (int,
-  optional), `group_id` (int, optional — exactly one of the two required), `release_date` (date,
+- Request (`AlbumDetailCreate`): `product_id` (uuid, must already exist), `idol_id` (uuid,
+  optional), `group_id` (uuid, optional — exactly one of the two required), `release_date` (date,
   optional), `track_count` (int, optional, >0), `format` (str, default `"physical"`),
   `cover_image_url` (str, optional)
 - Response (`AlbumDetailRead`): `product_id`, `idol_id`, `group_id`, plus base fields
@@ -593,7 +593,7 @@ company ownership.
 - Response: `{"msg": "Genre deleted successfully"}`
 
 ### `POST /genres/album_genres/assign` 🔒 manager+
-- Request (`AlbumGenreAssign`): `product_id` (int), `genre_id` (int)
+- Request (`AlbumGenreAssign`): `product_id` (uuid), `genre_id` (uuid)
 - Response (`AlbumGenreRead`): `product_id`, `genre_id`
 - UI: album edit page — "genres" multi-select
 
@@ -607,8 +607,8 @@ company ownership.
 
 ### `POST /lightstick_details/add` 🔒 manager+
 Same pattern as album details, for official lightstick merch.
-- Request (`LightstickDetailCreate`): `product_id` (int), `idol_id` (int, optional), `group_id`
-  (int, optional — exactly one), `edition` (str, optional), `color_id` (int, optional — links to
+- Request (`LightstickDetailCreate`): `product_id` (uuid), `idol_id` (uuid, optional), `group_id`
+  (uuid, optional — exactly one), `edition` (str, optional), `color_id` (uuid, optional — links to
   `idol_colors`)
 - Response (`LightstickDetailRead`): adds `created_at`
 - UI: manager — "this is a lightstick" toggle on the product form
@@ -631,7 +631,7 @@ Same pattern as album details, for official lightstick merch.
 ## 6. Shopping — Cart, Shipping, Order, Payment
 
 ### `POST /Cart/add_cart` 🔒 fan
-- Request (`CartItem`): `product_id` (int), `quantity` (int, ≥1)
+- Request (`CartItem`): `product_id` (uuid), `quantity` (int, ≥1)
 - Response: not schema-enforced; the raw `Cart` row (`id`, `product_id`, `quantity`, `user_id`,
   `price`, `total_price`) — adding an item already in the cart increments its quantity rather
   than creating a duplicate row
@@ -672,7 +672,7 @@ Same pattern as album details, for official lightstick merch.
 Converts the cart into an order and a payment in one call. **Response is payment info, not the
 order** — read that carefully when wiring the success screen.
 - Request (`PaymentCreate`): `amount` (int — must equal the cart's current total, checked
-  server-side), `shipping_address_id` (int), `gateway` (`"mock" | "razorpay"`, default `"mock"`),
+  server-side), `shipping_address_id` (uuid), `gateway` (`"mock" | "razorpay"`, default `"mock"`),
   `simulate_succ` (bool, optional — dev/testing only, forces a mock success/failure)
 - Response: not schema-enforced; `{"payment": PaymentResponse, "rz_data": dict | null}` —
   `rz_data` carries gateway-specific data (e.g. a Razorpay order id to hand to their checkout

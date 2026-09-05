@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import razorpay
+import uuid
 from sqlalchemy.orm import Session
 from app.config.settings import settings
 from app.db.models.order import Order
@@ -18,7 +19,7 @@ RAZORPAY_WEBHOOK_SECRET=settings.RAZORPAY_WEBHOOK_SECRET
 
 _razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
-def create_payment(db:Session, user_id:int, order:Order, data:PaymentCreate) -> PaymentResponseRazorpay:
+def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> PaymentResponseRazorpay:
     pg_order_id = None
     pg_payment_id = None
     pg_signature = None
@@ -125,13 +126,13 @@ def process_razorpay_webhook(db:Session, payload:dict, signature:str):
     db.commit()
     return {"status": "success"}
 
-def fetch_payment_status(db:Session, user_id:int, order_id:int):
+def fetch_payment_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
     payment = db.query(Payment).filter(Payment.user_id==user_id, Payment.order_id==order_id).first()
     if not payment:
         return None
     return payment
 
-def fetch_all_payments(db:Session, user_id:int):
+def fetch_all_payments(db:Session, user_id:uuid.UUID):
     payment = db.query(Payment).filter(Payment.user_id==user_id).all()
     if not payment:
         return None

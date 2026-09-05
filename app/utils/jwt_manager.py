@@ -1,6 +1,7 @@
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 from app.config.settings import settings
+import uuid
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -24,7 +25,7 @@ def decode_token(token: str):
     except JWTError:
         return None
     
-def create_email_verification_token(user_id: int):
+def create_email_verification_token(user_id: uuid.UUID):
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.EMAIL_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub" : str(user_id), "type":"verify", "exp":expires}
     return jwt.encode(to_encode, settings.JWT_EMAIL_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
@@ -34,11 +35,11 @@ def verify_token_and_get_user_id(token: str, token_type: str):
         payload = jwt.decode(token, settings.JWT_EMAIL_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         if not payload or payload.get("type") != "verify":
             return None
-        return int(payload.get("sub"))
+        return uuid.UUID(payload.get("sub"))
     except JWTError:
         return None
     
-def create_password_reset_token(user_id: int):
+def create_password_reset_token(user_id: uuid.UUID):
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.EMAIL_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub" : str(user_id), "type":"reset", "exp":expires}
     return jwt.encode(to_encode, settings.JWT_EMAIL_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
@@ -48,6 +49,6 @@ def verify_rtoken_and_get_user_id(token: str, token_type: str):
         payload = jwt.decode(token, settings.JWT_EMAIL_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         if not payload or payload.get("type") != "reset":
             return None
-        return int(payload.get("sub"))
+        return uuid.UUID(payload.get("sub"))
     except JWTError:
         return None

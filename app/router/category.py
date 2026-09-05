@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from app.cache.rate_limit import ip_key, rate_limit
@@ -25,14 +26,14 @@ async def see_categories(_:None=Depends(rate_limit(10,60,ip_key)), db:Session=De
     return result
 
 @router.put("/update")
-async def update_existing_category(new_category:CategoryUpdate, id:int, db:Session=Depends(get_db), current_user:Users=Depends(require_admin)):
+async def update_existing_category(new_category:CategoryUpdate, id:uuid.UUID, db:Session=Depends(get_db), current_user:Users=Depends(require_admin)):
     db_category = update_category(db, id, new_category)
     if not db_category:
         raise HTTPException(status_code=404, detail="Category not found")
     return {"msg" : "Category updated successfully"}
 
 @router.delete("/delete/{id}")
-async def delete_existing_category(id:int, db:Session=Depends(get_db), current_user:Users=Depends(require_admin)):
+async def delete_existing_category(id:uuid.UUID, db:Session=Depends(get_db), current_user:Users=Depends(require_admin)):
     result = delete_category(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Category not found")    

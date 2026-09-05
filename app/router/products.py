@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from typing import List
 from sqlalchemy.orm import Session
@@ -22,8 +23,8 @@ async def List_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
-@router.get("/search/{id:int}")
-async def search_existing_product(id:int, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)):
+@router.get("/search/{id:uuid}")
+async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)):
     db_product = search_product(db, id)
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -40,7 +41,7 @@ async def add_new_product(
     price: float = Form(...),
     description: str = Form(...),
     quantity: int = Form(...),
-    category_id: int = Form(...),
+    category_id: uuid.UUID = Form(...),
     image: UploadFile | None = File(None),
     current_user:Users=Depends(require_manager_or_admin),
     db:Session=Depends(get_db),
@@ -63,7 +64,7 @@ async def add_new_product(
     return {"msg" : "Product added successfully"}
 
 @router.put("/update/{id}")
-async def update_existing_product(id:int, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
     db_product = update_product(db, id, product, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
@@ -73,7 +74,7 @@ async def update_existing_product(id:int, product:ProductCreate, current_user:Us
     return {"msg" : "Product Updated successfully"}
 
 @router.post("/{id}/image")
-async def upload_product_image(id:int, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
     """Replace an existing product's image without touching any other
     field — the complement to the inline upload on /products/add_product."""
     try:
@@ -89,7 +90,7 @@ async def upload_product_image(id:int, image: UploadFile = File(...), current_us
     return {"msg" : "Product image updated successfully"}
 
 @router.delete("/delete/{id}")
-async def delete_existing_product(id:int, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
     db_product = delete_product(db, id, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")

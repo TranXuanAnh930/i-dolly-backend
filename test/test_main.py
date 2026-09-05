@@ -5,6 +5,13 @@ from main import app
 
 client = TestClient(app)
 
+# Ids are UUIDs now, not autoincrementing ints. None of these tests depend on
+# a real row existing at this id — every one asserts 401/403 (auth/authz
+# short-circuits before an id lookup happens) or 404 via this intentionally
+# nonexistent sentinel. A plain int literal here would now fail path/body
+# validation with 422 before ever reaching the logic these tests target.
+FAKE_ID = "11111111-1111-1111-1111-111111111111"
+
 # ─────────────────────────────────────────────────────────────
 # Fixtures
 # ─────────────────────────────────────────────────────────────
@@ -110,7 +117,7 @@ def test_add_product_requires_admin():
         "price": 9999.0,
         "description": "A test product",
         "quantity": 50,
-        "category_id": 1
+        "category_id": FAKE_ID
     }
     response = client.post("/products/add_product", json=payload, headers=headers)
     assert response.status_code == 403
@@ -121,18 +128,18 @@ def test_add_product_unauthenticated():
         "price": 9999.0,
         "description": "A test product",
         "quantity": 50,
-        "category_id": 1
+        "category_id": FAKE_ID
     }
     response = client.post("/products/add_product", json=payload)
     assert response.status_code == 401
 
 def test_search_product_not_found():
-    response = client.get("/products/search/999999")
+    response = client.get(f"/products/search/{FAKE_ID}")
     assert response.status_code == 404
 
 def test_delete_product_requires_admin():
     headers = auth_headers()
-    response = client.delete("/products/delete/1", headers=headers)
+    response = client.delete(f"/products/delete/{FAKE_ID}", headers=headers)
     assert response.status_code == 403
 
 # ─────────────────────────────────────────────────────────────
@@ -149,19 +156,19 @@ def test_see_cart_empty():
     assert response.status_code in (200, 404)
 
 def test_add_to_cart_unauthenticated():
-    response = client.post("/Cart/add_cart", json={"product_id": 1, "quantity": 1})
+    response = client.post("/Cart/add_cart", json={"product_id": FAKE_ID, "quantity": 1})
     assert response.status_code == 401
 
 def test_add_to_cart_nonexistent_product():
     headers = auth_headers()
     response = client.post("/Cart/add_cart",
-                           json={"product_id": 999999, "quantity": 1},
+                           json={"product_id": FAKE_ID, "quantity": 1},
                            headers=headers)
     assert response.status_code == 404
 
 def test_delete_cart_not_found():
     headers = auth_headers()
-    response = client.delete("/Cart/delete_cart/999999", headers=headers)
+    response = client.delete(f"/Cart/delete_cart/{FAKE_ID}", headers=headers)
     assert response.status_code == 404
 
 # ─────────────────────────────────────────────────────────────
@@ -171,7 +178,7 @@ def test_delete_cart_not_found():
 def test_checkout_unauthenticated():
     payload = {
         "amount": 1000,
-        "shipping_address_id": 1,
+        "shipping_address_id": FAKE_ID,
         "gateway": "mock",
         "simulate_succ": True
     }
@@ -182,7 +189,7 @@ def test_checkout_empty_cart():
     headers = auth_headers()
     payload = {
         "amount": 1000,
-        "shipping_address_id": 1,
+        "shipping_address_id": FAKE_ID,
         "gateway": "mock",
         "simulate_succ": True
     }
@@ -200,18 +207,18 @@ def test_fetch_placed_orders_empty():
 
 def test_cancel_nonexistent_order():
     headers = auth_headers()
-    response = client.patch("/order/cancel/999999", headers=headers)
+    response = client.patch(f"/order/cancel/{FAKE_ID}", headers=headers)
     assert response.status_code == 404
 
 def test_shipping_status_not_found():
     headers = auth_headers()
-    response = client.get("/order/shipping_status/999999", headers=headers)
+    response = client.get(f"/order/shipping_status/{FAKE_ID}", headers=headers)
     assert response.status_code == 404
 
 def test_update_shipping_status_requires_admin():
     headers = auth_headers()
     response = client.patch(
-        "/order/update_shipping_status/1",
+        f"/order/update_shipping_status/{FAKE_ID}",
         params={"new_status": "processing"},
         headers=headers
     )

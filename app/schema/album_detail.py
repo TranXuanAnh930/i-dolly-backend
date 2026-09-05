@@ -1,3 +1,4 @@
+import uuid
 from datetime import date
 from pydantic import BaseModel, Field, model_validator
 
@@ -8,9 +9,9 @@ class AlbumDetailBase(BaseModel):
     cover_image_url: str | None = None
 
 class AlbumDetailCreate(AlbumDetailBase):
-    product_id: int  # must reference an existing products row (created via the products endpoints)
-    idol_id: int | None = None
-    group_id: int | None = None
+    product_id: uuid.UUID  # must reference an existing products row (created via the products endpoints)
+    idol_id: uuid.UUID | None = None
+    group_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _check_artist(self):
@@ -24,8 +25,8 @@ class AlbumDetailUpdate(AlbumDetailBase):
     pass
 
 class AlbumDetailRead(AlbumDetailBase):
-    product_id: int
-    idol_id: int | None
-    group_id: int | None
+    product_id: uuid.UUID
+    idol_id: uuid.UUID | None
+    group_id: uuid.UUID | None
 
     model_config = {"from_attributes": True}

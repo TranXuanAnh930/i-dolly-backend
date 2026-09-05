@@ -1,15 +1,17 @@
+import uuid
 from app.db.base_class import Base
 from app.schema.payment import PaymentStatus, PaymentGateway
 from sqlalchemy import Boolean, Column, DateTime, Integer, ForeignKey, Enum, String, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 class Payment(Base):
 
     __tablename__ = "payment"
 
-    id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     amount = Column(Integer, nullable=False)
     status = Column(Enum(PaymentStatus, name="payment_status_enum"), default=PaymentStatus.pending)
     payment_gateway = Column(Enum(PaymentGateway, name="payment_gateway_enum"), default=PaymentGateway.mock)

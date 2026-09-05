@@ -43,10 +43,16 @@ def upgrade() -> None:
 
     op.create_table(
         "lottery_campaigns",
-        sa.Column("id", sa.Integer(), primary_key=True, index=True),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            index=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column(
             "ticket_type_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),

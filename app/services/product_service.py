@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session, selectinload
 from app.db.models.products import Product
 from app.db.models.category import Category
@@ -25,7 +26,7 @@ from typing import List
 # details row is created, by album_detail_service/lightstick_detail_service's
 # own scoping.
 
-def _resolve_product_company_id(db: Session, product_id: int):
+def _resolve_product_company_id(db: Session, product_id: uuid.UUID):
     album = db.get(AlbumDetail, product_id)
     if album:
         if album.idol_id is not None:
@@ -46,7 +47,7 @@ def _resolve_product_company_id(db: Session, product_id: int):
         return None
     return None  # plain merch - no company owner
 
-def _manager_scope_violation(db: Session, current_user: Users, product_id: int) -> bool:
+def _manager_scope_violation(db: Session, current_user: Users, product_id: uuid.UUID) -> bool:
     if current_user.role != "manager":
         return False
     company_id = _resolve_product_company_id(db, product_id)
@@ -60,7 +61,7 @@ def List_of_products(db:Session):
         return False
     return db_products
 
-def search_product(db:Session, id:int):
+def search_product(db:Session, id:uuid.UUID):
     db_product = db.query(Product).options(selectinload(Product.category)).filter(Product.id==id).first()
     if not db_product:
         return False
@@ -81,7 +82,7 @@ def add_product(db: Session, product:ProductCreate):
     db.refresh(db_product)
     return db_product
 
-def update_product(db:Session, id:int, product:ProductCreate, current_user:Users):
+def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user:Users):
     db_product = db.get(Product, id)
     if not db_product:
         return False
@@ -98,7 +99,7 @@ def update_product(db:Session, id:int, product:ProductCreate, current_user:Users
     db.refresh(db_product)
     return db_product
 
-def set_product_image(db: Session, id: int, image_url: str, current_user: Users):
+def set_product_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users):
     """Used by the dedicated /products/{id}/image upload endpoint — updates
     only the image, leaving every other field untouched (unlike
     update_product, which replaces the whole row from a ProductCreate)."""
@@ -112,7 +113,7 @@ def set_product_image(db: Session, id: int, image_url: str, current_user: Users)
     db.refresh(db_product)
     return db_product
 
-def delete_product(db:Session, id: int, current_user: Users):
+def delete_product(db:Session, id: uuid.UUID, current_user: Users):
     db_product = db.get(Product, id)
     if not db_product:
         return False

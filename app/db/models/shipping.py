@@ -1,14 +1,16 @@
+import uuid
 from app.db.base_class import Base
 from app.schema.shipping import ShippingStatus as SchemaStatus
 from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Enum, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 class ShippingAddress(Base):
 
     __tablename__ = "shipping_addresses"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     address_line1 = Column(String, nullable=False)
     address_line2 = Column(String,nullable=True)
     city = Column(String, nullable=False)
@@ -23,8 +25,8 @@ class ShippingStatus(Base):
      
     __tablename__ = "shipping_status"
 
-    id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
     status =  Column(Enum(SchemaStatus, name="shipping_status_enum"), default=SchemaStatus.pending)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now(), nullable=False)
 

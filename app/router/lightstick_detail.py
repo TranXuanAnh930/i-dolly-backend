@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -39,21 +40,21 @@ async def list_lightstick_details(db: Session = Depends(get_db)):
     return result
 
 @router.get("/{product_id}", response_model=LightstickDetailRead)
-async def get_lightstick_detail_by_id(product_id: int, db: Session = Depends(get_db)):
+async def get_lightstick_detail_by_id(product_id: uuid.UUID, db: Session = Depends(get_db)):
     ls = get_lightstick_detail(db, product_id)
     if not ls:
         raise HTTPException(status_code=404, detail="Lightstick details not found")
     return ls
 
 @router.put("/update/{product_id}", response_model=LightstickDetailRead)
-async def update_existing_lightstick_detail(product_id: int, data: LightstickDetailUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_lightstick_detail(product_id: uuid.UUID, data: LightstickDetailUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = update_lightstick_detail(db, product_id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Lightstick details not found")
     return result
 
 @router.delete("/delete/{product_id}")
-async def delete_existing_lightstick_detail(product_id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_lightstick_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = delete_lightstick_detail(db, product_id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Lightstick details not found")

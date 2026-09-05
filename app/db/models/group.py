@@ -1,4 +1,6 @@
-from sqlalchemy import String, Integer, Column, DateTime, ForeignKey, Date, func
+import uuid
+from sqlalchemy import String, Column, DateTime, ForeignKey, Date, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -6,8 +8,8 @@ class Group(Base):
 
     __tablename__ = "groups"
 
-    id = Column(Integer, primary_key=True, index=True)
-    company_id = Column(Integer, ForeignKey("management_companies.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("management_companies.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
     debut_date = Column(Date, nullable=True)
     description = Column(String, nullable=True)

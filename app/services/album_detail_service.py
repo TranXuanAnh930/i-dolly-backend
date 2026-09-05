@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.album_detail import AlbumDetailCreate, AlbumDetailUpdate
 from app.db.models.album_detail import AlbumDetail
@@ -12,7 +13,7 @@ from app.exception.db_triggers import commit_or_raise
 # concerts' direct company_id, same idea as lottery_campaigns' two-level
 # join but resolved by "which FK is non-null" instead of a fixed path).
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def _resolve_company_id(db: Session, idol_id, group_id):
@@ -40,7 +41,7 @@ def add_album_detail(db: Session, data: AlbumDetailCreate, current_user: Users):
     db.refresh(db_album)
     return db_album
 
-def get_album_detail(db: Session, product_id: int):
+def get_album_detail(db: Session, product_id: uuid.UUID):
     return db.get(AlbumDetail, product_id)
 
 def get_album_details(db: Session):
@@ -49,7 +50,7 @@ def get_album_details(db: Session):
         return False
     return result
 
-def update_album_detail(db: Session, product_id: int, data: AlbumDetailUpdate, current_user: Users):
+def update_album_detail(db: Session, product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users):
     db_album = db.get(AlbumDetail, product_id)
     if not db_album:
         return "not_found"
@@ -64,7 +65,7 @@ def update_album_detail(db: Session, product_id: int, data: AlbumDetailUpdate, c
     db.refresh(db_album)
     return db_album
 
-def delete_album_detail(db: Session, product_id: int, current_user: Users):
+def delete_album_detail(db: Session, product_id: uuid.UUID, current_user: Users):
     db_album = db.get(AlbumDetail, product_id)
     if not db_album:
         return "not_found"

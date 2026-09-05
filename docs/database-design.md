@@ -33,6 +33,14 @@ a tier (VIP/Premium/Regular) has a total quantity per concert, not individual nu
 This keeps the schema to one `ticket_types` row per tier per concert rather than a
 venue → section → seat hierarchy, while still fully supporting pricing, lottery, and checkout.
 
+**Design choice confirmed with the user:** every table's primary key (and every foreign key) is a
+`uuid` (Postgres native `uuid` type, `gen_random_uuid()`/app-side `uuid4()` default), not a
+sequential integer — sequential ids let anyone enumerate resources
+(`/products/search/2`, `/products/search/3`, ...) to scrape a table or probe for ids that
+shouldn't be guessable (another user's cart, order, or ticket). This is a schema-wide,
+retrofitted change (every `int`/`INTEGER` id below should be read as `uuid`); it isn't re-drawn
+per table throughout this doc.
+
 ## 1. Entity overview
 
 Four clusters, three of them new:
@@ -63,11 +71,11 @@ Four clusters, three of them new:
 erDiagram
     USERS ||--o{ IDOLS : "manages (via company)"
     USERS {
-        int id PK
+        uuid id PK
         string name
         string email
         user_role_enum role
-        int company_id FK "nullable, set for role=manager"
+        uuid company_id FK "nullable, set for role=manager"
     }
 
     MANAGEMENT_COMPANIES ||--o{ GROUPS : owns
@@ -77,28 +85,28 @@ erDiagram
 
     GROUPS ||--o{ IDOLS : "has members (optional)"
     GROUPS {
-        int id PK
-        int company_id FK
+        uuid id PK
+        uuid company_id FK
         string name
         date debut_date
         string description
     }
 
     IDOLS {
-        int id PK
-        int company_id FK
-        int group_id FK "nullable — solo idols allowed"
+        uuid id PK
+        uuid company_id FK
+        uuid group_id FK "nullable — solo idols allowed"
         string name
         date date_of_birth
         string hometown
-        int color_id FK "nullable — member/signature color"
+        uuid color_id FK "nullable — member/signature color"
         string short_intro
         string long_description
     }
 
     IDOL_COLORS ||--o{ IDOLS : "signature color"
     IDOL_COLORS {
-        int id PK
+        uuid id PK
         string name
         string hex_code
     }
@@ -106,14 +114,14 @@ erDiagram
     POSITIONS ||--o{ IDOL_POSITIONS : ""
     IDOLS ||--o{ IDOL_POSITIONS : ""
     IDOL_POSITIONS {
-        int idol_id FK
-        int position_id FK
+        uuid idol_id FK
+        uuid position_id FK
         bool is_primary
     }
 
     VENUES ||--o{ CONCERTS : hosts
     VENUES {
-        int id PK
+        uuid id PK
         string name
         string city
         int total_capacity
@@ -123,9 +131,9 @@ erDiagram
     IDOLS ||--o{ CONCERT_PERFORMERS : performs
     GROUPS ||--o{ CONCERT_PERFORMERS : performs
     CONCERTS {
-        int id PK
-        int company_id FK
-        int venue_id FK
+        uuid id PK
+        uuid company_id FK
+        uuid venue_id FK
         string title
         int capacity "this event's capacity, may be <= venue.total_capacity"
         timestamp event_datetime
@@ -134,8 +142,8 @@ erDiagram
 
     CONCERTS ||--o{ TICKET_TYPES : offers
     TICKET_TYPES {
-        int id PK
-        int concert_id FK
+        uuid id PK
+        uuid concert_id FK
         ticket_tier_enum tier "vip / premium / regular"
         numeric price
         int total_quantity
@@ -147,9 +155,9 @@ erDiagram
     USERS ||--o{ LOTTERY_PREFERENCES : ranks
     TICKET_TYPES ||--o{ LOTTERY_PREFERENCES : "ranked as a choice"
     LOTTERY_PREFERENCES {
-        int concert_id FK
-        int user_id FK
-        int ticket_type_id FK
+        uuid concert_id FK
+        uuid user_id FK
+        uuid ticket_type_id FK
         smallint rank "1 = first choice"
     }
 
@@ -157,8 +165,8 @@ erDiagram
     LOTTERY_CAMPAIGNS ||--o{ LOTTERY_ENTRIES : collects
     USERS ||--o{ LOTTERY_ENTRIES : "applies directly (free, no purchase)"
     LOTTERY_ENTRIES {
-        int campaign_id FK
-        int user_id FK
+        uuid campaign_id FK
+        uuid user_id FK
         lottery_entry_status_enum status
     }
 
@@ -169,7 +177,7 @@ erDiagram
 
     CATEGORIES ||--o{ PRODUCTS : classifies
     CATEGORIES {
-        int id PK
+        uuid id PK
         string name UQ "Album / Single / EP / Lightstick / Merch"
         bool is_resale_capped "drives the anti-resale trigger, §4.2"
     }
@@ -178,9 +186,9 @@ erDiagram
     IDOLS ||--o{ ALBUM_DETAILS : "credited artist (nullable)"
     GROUPS ||--o{ ALBUM_DETAILS : "credited artist (nullable)"
     ALBUM_DETAILS {
-        int product_id PK_FK
-        int idol_id FK "nullable"
-        int group_id FK "nullable"
+        uuid product_id PK_FK
+        uuid idol_id FK "nullable"
+        uuid group_id FK "nullable"
         date release_date
         int track_count
         release_format_enum format "physical / digital"
@@ -189,11 +197,11 @@ erDiagram
     ALBUM_DETAILS ||--o{ ALBUM_GENRES : ""
     GENRES ||--o{ ALBUM_GENRES : ""
     ALBUM_GENRES {
-        int product_id FK
-        int genre_id FK
+        uuid product_id FK
+        uuid genre_id FK
     }
     GENRES {
-        int id PK
+        uuid id PK
         string name
     }
 
@@ -202,11 +210,11 @@ erDiagram
     GROUPS ||--o{ LIGHTSTICK_DETAILS : "owner (XOR with idol)"
     IDOL_COLORS ||--o{ LIGHTSTICK_DETAILS : "shell/light color (nullable)"
     LIGHTSTICK_DETAILS {
-        int product_id PK_FK
-        int idol_id FK "nullable, XOR with group_id"
-        int group_id FK "nullable, XOR with idol_id"
+        uuid product_id PK_FK
+        uuid idol_id FK "nullable, XOR with group_id"
+        uuid group_id FK "nullable, XOR with idol_id"
         string edition "e.g. Ver. 3 (nullable)"
-        int color_id FK "nullable"
+        uuid color_id FK "nullable"
     }
 ```
 
@@ -220,7 +228,7 @@ relationship to it.)*
 
 ### 3.1 `users` (altered, not new)
 
-Add `role user_role_enum NOT NULL DEFAULT 'fan'` and `company_id INTEGER NULL REFERENCES
+Add `role user_role_enum NOT NULL DEFAULT 'fan'` and `company_id UUID NULL REFERENCES
 management_companies(id)`. `company_id` is only ever set when `role = 'manager'` — enforce that
 pairing in the service layer (`user_service`), the same way the codebase already enforces
 `user_id` scoping in service functions rather than DB constraints.

@@ -1,4 +1,5 @@
-from sqlalchemy import Integer, Column, String, ForeignKey, DateTime, CheckConstraint, func
+from sqlalchemy import Column, String, ForeignKey, DateTime, CheckConstraint, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -7,11 +8,11 @@ class LightstickDetail(Base):
 
     __tablename__ = "lightstick_details"
 
-    product_id = Column(Integer, ForeignKey("products.id", onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
-    idol_id = Column(Integer, ForeignKey("idols.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
-    group_id = Column(Integer, ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
+    idol_id = Column(UUID(as_uuid=True), ForeignKey("idols.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
     edition = Column(String, nullable=True)  # e.g. "Ver. 3", "10th Anniversary Edition" — free text, not worth a lookup table
-    color_id = Column(Integer, ForeignKey("idol_colors.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # reuses idol_colors (§2)
+    color_id = Column(UUID(as_uuid=True), ForeignKey("idol_colors.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # reuses idol_colors (§2)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (

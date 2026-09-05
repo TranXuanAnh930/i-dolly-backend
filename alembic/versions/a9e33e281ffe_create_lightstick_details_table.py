@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -26,19 +27,19 @@ def upgrade() -> None:
         "lightstick_details",
         sa.Column(
             "product_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("products.id", onupdate="CASCADE", ondelete="CASCADE"),
             primary_key=True,
         ),
         sa.Column(
             "idol_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("idols.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),
         sa.Column(
             "group_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),
@@ -48,7 +49,7 @@ def upgrade() -> None:
         # signature color.
         sa.Column(
             "color_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("idol_colors.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),

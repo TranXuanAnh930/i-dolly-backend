@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from app.cache.redis_client import redis_client
 from app.services.product_service import List_of_products
 import msgpack
+import uuid
 
 def get_cached_products(db:Session):
     cache_key = "products:list"
@@ -15,7 +16,10 @@ def get_cached_products(db:Session):
 
     result = [
         {
-            "id" : p.id, 
+            # str(...) — msgpack has no native UUID type and would raise on
+            # a raw uuid.UUID; the API schema (uuid.UUID) parses this string
+            # back into a UUID on the way out, same as any JSON id would.
+            "id" : str(p.id),
             "name" : p.name,
             "price" : p.price,
             "description" : p.description,
@@ -29,6 +33,6 @@ def get_cached_products(db:Session):
     redis_client.setex(cache_key, 60 * 5, msgpack.packb(result))
     return result
 
-def delete_cached_product(product_id:int):
+def delete_cached_product(product_id: uuid.UUID):
     redis_client.delete("products:list")
     redis_client.delete(f"product:{product_id}")

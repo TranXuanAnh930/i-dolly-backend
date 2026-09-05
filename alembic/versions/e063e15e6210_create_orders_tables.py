@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -21,9 +22,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "orders",
-        sa.Column("id", sa.Integer, primary_key=True, index=True),
-        sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("shipping_address_id", sa.Integer, sa.ForeignKey("shipping_addresses.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, index=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("shipping_address_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("shipping_addresses.id", ondelete="CASCADE"), nullable=False),
         sa.Column("total_price", sa.Float, nullable=False),
         sa.Column("status", sa.Enum("pending", "confirmed", "cancelled", name="order_status_enum"), server_default="pending"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False)

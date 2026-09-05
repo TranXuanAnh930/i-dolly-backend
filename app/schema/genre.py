@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, Field
 
 class GenreBase(BaseModel):
@@ -7,16 +8,16 @@ class GenreCreate(GenreBase):
     pass
 
 class GenreRead(GenreBase):
-    id: int
+    id: uuid.UUID
 
     model_config = {"from_attributes": True}
 
 class AlbumGenreAssign(BaseModel):
-    product_id: int
-    genre_id: int
+    product_id: uuid.UUID
+    genre_id: uuid.UUID
 
 class AlbumGenreRead(BaseModel):
-    product_id: int
-    genre_id: int
+    product_id: uuid.UUID
+    genre_id: uuid.UUID
 
     model_config = {"from_attributes": True}

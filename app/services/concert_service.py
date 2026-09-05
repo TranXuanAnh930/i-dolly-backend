@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.concert import ConcertCreate, ConcertUpdate, ConcertPerformerAssign
 from app.db.models.concert import Concert, ConcertPerformer
@@ -10,7 +11,7 @@ from app.db.models.user import Users
 # Same sentinel convention as group_service/idol_service: "not_found" (404),
 # "forbidden" (403, manager acting outside their own company_id).
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def add_concert(db: Session, concert: ConcertCreate, current_user: Users):
@@ -32,10 +33,10 @@ def get_concerts(db: Session):
         return False
     return result
 
-def get_concert(db: Session, id: int):
+def get_concert(db: Session, id: uuid.UUID):
     return db.get(Concert, id)
 
-def update_concert(db: Session, id: int, data: ConcertUpdate, current_user: Users):
+def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users):
     db_concert = db.get(Concert, id)
     if not db_concert:
         return "not_found"
@@ -55,7 +56,7 @@ def update_concert(db: Session, id: int, data: ConcertUpdate, current_user: User
     db.refresh(db_concert)
     return db_concert
 
-def delete_concert(db: Session, id: int, current_user: Users):
+def delete_concert(db: Session, id: uuid.UUID, current_user: Users):
     db_concert = db.get(Concert, id)
     if not db_concert:
         return "not_found"
@@ -86,13 +87,13 @@ def assign_performer(db: Session, data: ConcertPerformerAssign, current_user: Us
     db.refresh(db_link)
     return db_link
 
-def get_performers(db: Session, concert_id: int):
+def get_performers(db: Session, concert_id: uuid.UUID):
     result = db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
     if not result:
         return False
     return result
 
-def remove_performer(db: Session, id: int, current_user: Users):
+def remove_performer(db: Session, id: uuid.UUID, current_user: Users):
     link = db.get(ConcertPerformer, id)
     if not link:
         return "not_found"

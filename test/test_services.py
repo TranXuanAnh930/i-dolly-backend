@@ -1,12 +1,24 @@
 import pytest
+import uuid
 from unittest.mock import MagicMock, patch, PropertyMock
 from datetime import datetime, timedelta, timezone
+
+# ─────────────────────────────────────────────────────────────
+# Id sentinels — ids are UUIDs now, not autoincrementing ints.
+# These are plain MagicMock-based unit tests (no real DB), so any three
+# distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
+# OTHER_ID for "a second, different row", MISSING_ID for "doesn't exist".
+# ─────────────────────────────────────────────────────────────
+
+DEFAULT_ID = uuid.uuid4()
+OTHER_ID = uuid.uuid4()
+MISSING_ID = uuid.uuid4()
 
 # ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────
 
-def make_mock_user(id=1, name="Test", email="test@example.com", is_admin=False, is_verified=True):
+def make_mock_user(id=DEFAULT_ID, name="Test", email="test@example.com", is_admin=False, is_verified=True):
     user = MagicMock()
     user.id = id
     user.name = name
@@ -16,7 +28,7 @@ def make_mock_user(id=1, name="Test", email="test@example.com", is_admin=False, 
     user.hashed_password = "$2b$12$hashedpassword"
     return user
 
-def make_mock_product(id=1, name="Phone", price=999.0, description="A phone", quantity=10, category_id=1):
+def make_mock_product(id=DEFAULT_ID, name="Phone", price=999.0, description="A phone", quantity=10, category_id=DEFAULT_ID):
     product = MagicMock()
     product.id = id
     product.name = name
@@ -29,7 +41,7 @@ def make_mock_product(id=1, name="Phone", price=999.0, description="A phone", qu
     product.category = cat
     return product
 
-def make_mock_cart_item(id=1, user_id=1, product_id=1, quantity=2, price=500.0, total_price=1000.0):
+def make_mock_cart_item(id=DEFAULT_ID, user_id=DEFAULT_ID, product_id=DEFAULT_ID, quantity=2, price=500.0, total_price=1000.0):
     item = MagicMock()
     item.id = id
     item.user_id = user_id
@@ -53,9 +65,9 @@ class TestAuthService:
         db = MagicMock()
         db.query().filter().first.return_value = None
         mock_user = MagicMock()
-        mock_user.id = 1
+        mock_user.id = DEFAULT_ID
         db.add.return_value = None
-        db.refresh.side_effect = lambda x: setattr(x, 'id', 1)
+        db.refresh.side_effect = lambda x: setattr(x, 'id', DEFAULT_ID)
         user_data = UserCreate(name="John", email="john@example.com", password="pass123")
 
         with patch("app.services.auth_service.hash_password", return_value="hashed"):
@@ -131,7 +143,7 @@ class TestAuthService:
         mock_token = MagicMock()
         mock_token.revoked = False
         mock_token.expires_at = datetime.now(timezone.utc) + timedelta(days=1)
-        mock_token.user_id = 1
+        mock_token.user_id = DEFAULT_ID
         db.query().filter().first.return_value = mock_token
 
         mock_user = make_mock_user()
@@ -161,7 +173,7 @@ class TestAuthService:
         mock_user.is_verified = False
         db.query().filter().first.return_value = mock_user
 
-        with patch("app.services.auth_service.verify_token_and_get_user_id", return_value=1):
+        with patch("app.services.auth_service.verify_token_and_get_user_id", return_value=DEFAULT_ID):
             result = verify_email_token(db, "valid-email-token")
 
         assert result is True
@@ -209,7 +221,7 @@ class TestProductService:
         from app.services.product_service import List_of_products
 
         db = MagicMock()
-        mock_products = [make_mock_product(), make_mock_product(id=2)]
+        mock_products = [make_mock_product(), make_mock_product(id=OTHER_ID)]
         db.query().options().all.return_value = mock_products
 
         result = List_of_products(db)
@@ -231,7 +243,7 @@ class TestProductService:
         mock_prod = make_mock_product()
         db.query().options().filter().first.return_value = mock_prod
 
-        result = search_product(db, 1)
+        result = search_product(db, DEFAULT_ID)
         assert result["name"] == "Phone"
 
     def test_search_product_not_found(self):
@@ -240,7 +252,7 @@ class TestProductService:
         db = MagicMock()
         db.query().options().filter().first.return_value = None
 
-        result = search_product(db, 999)
+        result = search_product(db, MISSING_ID)
         assert result is False
 
     def test_add_product(self):
@@ -248,7 +260,7 @@ class TestProductService:
         from app.schema.products import ProductCreate
 
         db = MagicMock()
-        product_data = ProductCreate(name="Laptop", price=1500.0, description="A laptop", quantity=5, category_id=1)
+        product_data = ProductCreate(name="Laptop", price=1500.0, description="A laptop", quantity=5, category_id=DEFAULT_ID)
 
         result = add_product(db, product_data)
         db.add.assert_called_once()
@@ -261,9 +273,9 @@ class TestProductService:
         db = MagicMock()
         mock_prod = make_mock_product()
         db.get.return_value = mock_prod
-        update_data = ProductCreate(name="Updated", price=100.0, description="Updated", quantity=5, category_id=1)
+        update_data = ProductCreate(name="Updated", price=100.0, description="Updated", quantity=5, category_id=DEFAULT_ID)
 
-        result = update_product(db, 1, update_data)
+        result = update_product(db, DEFAULT_ID, update_data)
         db.commit.assert_called_once()
         assert result is not False
 
@@ -273,9 +285,9 @@ class TestProductService:
 
         db = MagicMock()
         db.get.return_value = None
-        update_data = ProductCreate(name="Updated", price=100.0, description="Updated", quantity=5, category_id=1)
+        update_data = ProductCreate(name="Updated", price=100.0, description="Updated", quantity=5, category_id=DEFAULT_ID)
 
-        result = update_product(db, 999, update_data)
+        result = update_product(db, MISSING_ID, update_data)
         assert result is False
 
     def test_delete_product_found(self):
@@ -285,7 +297,7 @@ class TestProductService:
         mock_prod = make_mock_product()
         db.get.return_value = mock_prod
 
-        result = delete_product(db, 1)
+        result = delete_product(db, DEFAULT_ID)
         db.delete.assert_called_once_with(mock_prod)
         db.commit.assert_called_once()
 
@@ -295,7 +307,7 @@ class TestProductService:
         db = MagicMock()
         db.get.return_value = None
 
-        result = delete_product(db, 999)
+        result = delete_product(db, MISSING_ID)
         assert result is False
 
     def test_pagination_process(self):
@@ -326,8 +338,8 @@ class TestCartService:
         mock_prod = make_mock_product(quantity=10)
         db.query().filter().first.side_effect = [mock_prod, None]  # product found, no existing cart
 
-        cart_data = CartItem(quantity=2, product_id=1)
-        result = add_to_cart(db, cart_data, 1)
+        cart_data = CartItem(quantity=2, product_id=DEFAULT_ID)
+        result = add_to_cart(db, cart_data, DEFAULT_ID)
 
         db.add.assert_called_once()
         db.commit.assert_called_once()
@@ -341,8 +353,8 @@ class TestCartService:
         mock_prod = make_mock_product(quantity=0)
         db.query().filter().first.return_value = mock_prod
 
-        cart_data = CartItem(quantity=5, product_id=1)
-        result = add_to_cart(db, cart_data, 1)
+        cart_data = CartItem(quantity=5, product_id=DEFAULT_ID)
+        result = add_to_cart(db, cart_data, DEFAULT_ID)
         assert result is None
 
     def test_add_to_cart_user_not_found(self):
@@ -352,18 +364,18 @@ class TestCartService:
         db = MagicMock()
         db.get.return_value = None
 
-        cart_data = CartItem(quantity=1, product_id=1)
-        result = add_to_cart(db, cart_data, 999)
+        cart_data = CartItem(quantity=1, product_id=DEFAULT_ID)
+        result = add_to_cart(db, cart_data, MISSING_ID)
         assert result is False
 
     def test_see_cart_with_items(self):
         from app.services.cart_service import see_cart
 
         db = MagicMock()
-        mock_items = [make_mock_cart_item(), make_mock_cart_item(id=2)]
+        mock_items = [make_mock_cart_item(), make_mock_cart_item(id=OTHER_ID)]
         db.query().filter().all.return_value = mock_items
 
-        result = see_cart(db, 1)
+        result = see_cart(db, DEFAULT_ID)
         assert "items" in result
         assert "total_price" in result
 
@@ -373,7 +385,7 @@ class TestCartService:
         db = MagicMock()
         db.query().filter().all.return_value = []
 
-        result = see_cart(db, 1)
+        result = see_cart(db, DEFAULT_ID)
         assert result is None
 
     def test_remove_cart_success(self):
@@ -383,7 +395,7 @@ class TestCartService:
         mock_cart = make_mock_cart_item()
         db.query().filter().first.return_value = mock_cart
 
-        result = remove_cart(db, 1, 1)
+        result = remove_cart(db, DEFAULT_ID, DEFAULT_ID)
         assert result is True
         db.delete.assert_called_once_with(mock_cart)
 
@@ -393,7 +405,7 @@ class TestCartService:
         db = MagicMock()
         db.query().filter().first.return_value = None
 
-        result = remove_cart(db, 1, 999)
+        result = remove_cart(db, DEFAULT_ID, MISSING_ID)
         assert result is None
 
 
@@ -434,7 +446,7 @@ class TestUserService:
         mock_user = make_mock_user(is_admin=False)
         db.get.return_value = mock_user
 
-        result = promote_admin(db, 1)
+        result = promote_admin(db, DEFAULT_ID)
         assert result is True
         assert mock_user.is_admin is True
 
@@ -445,7 +457,7 @@ class TestUserService:
         mock_user = make_mock_user(is_admin=True)
         db.get.return_value = mock_user
 
-        result = promote_admin(db, 1)
+        result = promote_admin(db, DEFAULT_ID)
         assert result is False
 
     def test_promote_admin_user_not_found(self):
@@ -454,7 +466,7 @@ class TestUserService:
         db = MagicMock()
         db.get.return_value = None
 
-        result = promote_admin(db, 999)
+        result = promote_admin(db, MISSING_ID)
         assert result is None
 
     def test_revoke_token_success(self):
@@ -485,7 +497,7 @@ class TestUserService:
         mock_user = make_mock_user()
         db.get.return_value = mock_user
 
-        result = delete_user(db, 1)
+        result = delete_user(db, DEFAULT_ID)
         assert result is True
         db.delete.assert_called_once_with(mock_user)
 
@@ -495,7 +507,7 @@ class TestUserService:
         db = MagicMock()
         db.get.return_value = None
 
-        result = delete_user(db, 999)
+        result = delete_user(db, MISSING_ID)
         assert result is None
 
     def test_reset_password_process_success(self):
@@ -544,7 +556,7 @@ class TestCategoryService:
         from app.services.category_service import get_categories
 
         db = MagicMock()
-        db.query().all.return_value = [MagicMock(id=1, name="Electronics")]
+        db.query().all.return_value = [MagicMock(id=DEFAULT_ID, name="Electronics")]
 
         result = get_categories(db)
         assert len(result) == 1
@@ -566,7 +578,7 @@ class TestCategoryService:
         mock_cat = MagicMock()
         db.get.return_value = mock_cat
 
-        result = update_category(db, 1, CategoryBase(name="Updated"))
+        result = update_category(db, DEFAULT_ID, CategoryBase(name="Updated"))
         assert result is not False
         db.commit.assert_called_once()
 
@@ -577,7 +589,7 @@ class TestCategoryService:
         db = MagicMock()
         db.get.return_value = None
 
-        result = update_category(db, 999, CategoryBase(name="Nope"))
+        result = update_category(db, MISSING_ID, CategoryBase(name="Nope"))
         assert result is False
 
     def test_delete_category_success(self):
@@ -587,7 +599,7 @@ class TestCategoryService:
         mock_cat = MagicMock()
         db.get.return_value = mock_cat
 
-        result = delete_category(db, 1)
+        result = delete_category(db, DEFAULT_ID)
         assert result is True
         db.delete.assert_called_once()
 
@@ -597,7 +609,7 @@ class TestCategoryService:
         db = MagicMock()
         db.get.return_value = None
 
-        result = delete_category(db, 999)
+        result = delete_category(db, MISSING_ID)
         assert result is False
 
 
@@ -617,7 +629,7 @@ class TestShippingService:
             postal_code=400001, state="MH", country="India"
         )
 
-        result = create_shipping_address(db, 1, data)
+        result = create_shipping_address(db, DEFAULT_ID, data)
         db.add.assert_called_once()
         db.commit.assert_called_once()
 
@@ -627,7 +639,7 @@ class TestShippingService:
         db = MagicMock()
         db.query().filter().all.return_value = [MagicMock()]
 
-        result = fetch_address(db, 1)
+        result = fetch_address(db, DEFAULT_ID)
         assert result is not None
 
     def test_fetch_address_empty(self):
@@ -636,7 +648,7 @@ class TestShippingService:
         db = MagicMock()
         db.query().filter().all.return_value = []
 
-        result = fetch_address(db, 1)
+        result = fetch_address(db, DEFAULT_ID)
         assert result is None
 
     def test_delete_address_success(self):
@@ -646,7 +658,7 @@ class TestShippingService:
         mock_addr = MagicMock()
         db.query().filter().first.return_value = mock_addr
 
-        result = delete_address(db, 1, 1)
+        result = delete_address(db, DEFAULT_ID, DEFAULT_ID)
         assert result is True
         db.delete.assert_called_once()
 
@@ -656,7 +668,7 @@ class TestShippingService:
         db = MagicMock()
         db.query().filter().first.return_value = None
 
-        result = delete_address(db, 1, 999)
+        result = delete_address(db, DEFAULT_ID, MISSING_ID)
         assert result is None
 
 
@@ -672,17 +684,17 @@ class TestPaymentService:
 
         db = MagicMock()
         def _refresh(obj):
-            obj.id = 1
+            obj.id = DEFAULT_ID
             obj.created_at = datetime.now(timezone.utc)
             obj.updated_at = datetime.now(timezone.utc)
         db.refresh.side_effect = _refresh
         order = MagicMock()
-        order.id = 1
-        order.user_id = 1
-        order.total_price = 1000  
-        data = PaymentCreate(amount=1000, shipping_address_id=1, gateway=PaymentGateway.mock, simulate_succ=True)
+        order.id = DEFAULT_ID
+        order.user_id = DEFAULT_ID
+        order.total_price = 1000
+        data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.mock, simulate_succ=True)
 
-        result = create_payment(db, 1, order, data)
+        result = create_payment(db, DEFAULT_ID, order, data)
         assert result is not None
         assert result.payment is not None
         db.add.assert_called()
@@ -694,15 +706,15 @@ class TestPaymentService:
 
         db = MagicMock()
         def _refresh(obj):
-            obj.id = 1
+            obj.id = DEFAULT_ID
             obj.created_at = datetime.now(timezone.utc)
             obj.updated_at = datetime.now(timezone.utc)
         db.refresh.side_effect = _refresh
         order = MagicMock()
-        order.id = 1
-        data = PaymentCreate(amount=1000, shipping_address_id=1, gateway=PaymentGateway.mock, simulate_succ=False)
+        order.id = DEFAULT_ID
+        data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.mock, simulate_succ=False)
 
-        result = create_payment(db, 1, order, data)
+        result = create_payment(db, DEFAULT_ID, order, data)
         assert result is not None
         # Payment should be failed
         assert result.payment is not None
@@ -716,15 +728,15 @@ class TestPaymentService:
 
         db = MagicMock()
         def _refresh(obj):
-            obj.id = 1
+            obj.id = DEFAULT_ID
             obj.created_at = datetime.now(timezone.utc)
             obj.updated_at = datetime.now(timezone.utc)
         db.refresh.side_effect = _refresh
         order = MagicMock()
-        order.id = 1
-        data = PaymentCreate(amount=1000, shipping_address_id=1, gateway=PaymentGateway.razorpay)
+        order.id = DEFAULT_ID
+        data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.razorpay)
 
-        result = create_payment(db, 1, order, data)
+        result = create_payment(db, DEFAULT_ID, order, data)
         assert result is not None
         assert result.rz_data is not None
         assert result.rz_data["pg_order_id"] == "order_123"
@@ -739,11 +751,11 @@ class TestPaymentService:
 
         db = MagicMock()
         order = MagicMock()
-        order.id = 1
-        data = PaymentCreate(amount=1000, shipping_address_id=1, gateway=PaymentGateway.razorpay)
+        order.id = DEFAULT_ID
+        data = PaymentCreate(amount=1000, shipping_address_id=DEFAULT_ID, gateway=PaymentGateway.razorpay)
 
         with pytest.raises(RazorpayPaymentFailed):
-            create_payment(db, 1, order, data)
+            create_payment(db, DEFAULT_ID, order, data)
 
     def test_fetch_payment_status_found(self):
         from app.services.payment_service import fetch_payment_status
@@ -752,7 +764,7 @@ class TestPaymentService:
         mock_payment = MagicMock()
         db.query().filter().first.return_value = mock_payment
 
-        result = fetch_payment_status(db, 1, 1)
+        result = fetch_payment_status(db, DEFAULT_ID, DEFAULT_ID)
         assert result == mock_payment
 
     def test_fetch_payment_status_not_found(self):
@@ -761,7 +773,7 @@ class TestPaymentService:
         db = MagicMock()
         db.query().filter().first.return_value = None
 
-        result = fetch_payment_status(db, 1, 999)
+        result = fetch_payment_status(db, DEFAULT_ID, MISSING_ID)
         assert result is None
 
     def test_fetch_all_payments(self):
@@ -770,7 +782,7 @@ class TestPaymentService:
         db = MagicMock()
         db.query().filter().all.return_value = [MagicMock(), MagicMock()]
 
-        result = fetch_all_payments(db, 1)
+        result = fetch_all_payments(db, DEFAULT_ID)
         assert len(result) == 2
 
     def test_fetch_all_payments_empty(self):
@@ -779,5 +791,5 @@ class TestPaymentService:
         db = MagicMock()
         db.query().filter().all.return_value = []
 
-        result = fetch_all_payments(db, 1)
+        result = fetch_all_payments(db, DEFAULT_ID)
         assert result is None

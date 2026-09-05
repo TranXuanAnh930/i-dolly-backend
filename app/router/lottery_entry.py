@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -38,7 +39,7 @@ async def list_my_entries(current_user: Users = Depends(get_current_user), db: S
     return result
 
 @router.get("/campaign/{campaign_id}", response_model=List[LotteryEntryRead])
-async def list_campaign_entries(campaign_id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def list_campaign_entries(campaign_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = get_entries_for_campaign(db, campaign_id, current_user)
     if isinstance(result, str):
         _raise_for(result)

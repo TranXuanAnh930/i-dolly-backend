@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -16,7 +17,7 @@ class VenueUpdate(VenueBase):
     pass
 
 class VenueRead(VenueBase):
-    id: int
+    id: uuid.UUID
     # Derived by Postgres (GENERATED ALWAYS), never client-settable.
     size: str
     created_at: datetime

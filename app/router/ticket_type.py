@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -35,21 +36,21 @@ async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depe
     return result
 
 @router.get("/concert/{concert_id}", response_model=List[TicketTypeRead])
-async def list_ticket_types(concert_id: int, db: Session = Depends(get_db)):
+async def list_ticket_types(concert_id: uuid.UUID, db: Session = Depends(get_db)):
     result = get_ticket_types(db, concert_id)
     if not result:
         raise HTTPException(status_code=404, detail="No ticket types found for this concert")
     return result
 
 @router.get("/{id}", response_model=TicketTypeRead)
-async def get_ticket_type_by_id(id: int, db: Session = Depends(get_db)):
+async def get_ticket_type_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
     ticket_type = get_ticket_type(db, id)
     if not ticket_type:
         raise HTTPException(status_code=404, detail="Ticket type not found")
     return ticket_type
 
 @router.put("/update/{id}", response_model=TicketTypeRead)
-async def update_existing_ticket_type(id: int, data: TicketTypeUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     try:
         result = update_ticket_type(db, id, data, current_user)
     except TriggerViolationError as e:
@@ -59,7 +60,7 @@ async def update_existing_ticket_type(id: int, data: TicketTypeUpdate, current_u
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_ticket_type(id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = delete_ticket_type(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Ticket type not found")

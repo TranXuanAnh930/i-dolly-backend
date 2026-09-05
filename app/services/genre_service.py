@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.genre import GenreCreate, AlbumGenreAssign
 from app.db.models.genre import Genre, AlbumGenre
@@ -24,7 +25,7 @@ def get_genres(db: Session):
         return False
     return result
 
-def delete_genre(db: Session, id: int):
+def delete_genre(db: Session, id: uuid.UUID):
     db_genre = db.get(Genre, id)
     if not db_genre:
         return False
@@ -36,10 +37,10 @@ def delete_genre(db: Session, id: int):
 # --- album_genres (join table) — scoped via the parent album_details row's
 # idol/group company, same pattern as album_detail_service.
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
-def _company_id_for_album(db: Session, product_id: int):
+def _company_id_for_album(db: Session, product_id: uuid.UUID):
     album = db.get(AlbumDetail, product_id)
     if not album:
         return None, None
@@ -65,13 +66,13 @@ def assign_genre(db: Session, data: AlbumGenreAssign, current_user: Users):
     db.refresh(db_link)
     return db_link
 
-def get_album_genres(db: Session, product_id: int):
+def get_album_genres(db: Session, product_id: uuid.UUID):
     result = db.query(AlbumGenre).filter(AlbumGenre.product_id == product_id).all()
     if not result:
         return False
     return result
 
-def remove_genre(db: Session, product_id: int, genre_id: int, current_user: Users):
+def remove_genre(db: Session, product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users):
     link = db.get(AlbumGenre, (product_id, genre_id))
     if not link:
         return "not_found"

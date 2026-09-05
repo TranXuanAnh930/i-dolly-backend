@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -21,10 +22,16 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "idols",
-        sa.Column("id", sa.Integer(), primary_key=True, index=True),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            index=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column(
             "company_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey(
                 "management_companies.id", onupdate="CASCADE", ondelete="CASCADE"
             ),
@@ -35,7 +42,7 @@ def upgrade() -> None:
         # just detach them (database-design.md §3.4).
         sa.Column(
             "group_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),
@@ -49,7 +56,7 @@ def upgrade() -> None:
         # the dropped `talent` field.
         sa.Column(
             "color_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("idol_colors.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),

@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.lottery_preference import LotteryPreferenceSet
 from app.db.models.lottery_preference import LotteryPreference
@@ -47,7 +48,7 @@ def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users
         db.refresh(row)
     return rows
 
-def get_my_preferences(db: Session, concert_id: int, current_user: Users):
+def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users):
     result = (
         db.query(LotteryPreference)
         .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)
@@ -58,7 +59,7 @@ def get_my_preferences(db: Session, concert_id: int, current_user: Users):
         return False
     return result
 
-def clear_my_preferences(db: Session, concert_id: int, current_user: Users):
+def clear_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users):
     deleted = (
         db.query(LotteryPreference)
         .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)

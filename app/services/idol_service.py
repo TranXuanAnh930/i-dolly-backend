@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.idol import IdolCreate, IdolUpdate
 from app.db.models.idol import Idol
@@ -14,10 +15,10 @@ from app.db.models.user import Users
 # outside their own company_id (-> 403, database-design.md §4's "Not yet
 # done" note — now done). A plain admin never hits "forbidden".
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
-def _validate_refs(db: Session, company_id: int, group_id: int | None, color_id: int | None):
+def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None):
     company = db.get(ManagementCompany, company_id)
     if not company:
         return "company_not_found"
@@ -57,10 +58,10 @@ def get_idols(db: Session):
         return False
     return result
 
-def get_idol(db: Session, id: int):
+def get_idol(db: Session, id: uuid.UUID):
     return db.get(Idol, id)
 
-def update_idol(db: Session, id: int, data: IdolUpdate, current_user: Users):
+def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users):
     db_idol = db.get(Idol, id)
     if not db_idol:
         return "not_found"
@@ -86,7 +87,7 @@ def update_idol(db: Session, id: int, data: IdolUpdate, current_user: Users):
     db.refresh(db_idol)
     return db_idol
 
-def delete_idol(db: Session, id: int, current_user: Users):
+def delete_idol(db: Session, id: uuid.UUID, current_user: Users):
     db_idol = db.get(Idol, id)
     if not db_idol:
         return "not_found"
@@ -96,7 +97,7 @@ def delete_idol(db: Session, id: int, current_user: Users):
     db.commit()
     return True
 
-def set_idol_image(db: Session, id: int, image_url: str, current_user: Users):
+def set_idol_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users):
     """Used by POST /idols/{id}/image — updates only profile_image_url,
     leaving every other field untouched (update_idol replaces the whole
     profile from an IdolUpdate, which isn't what a plain image swap wants)."""

@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 
@@ -9,7 +10,7 @@ class UserCreate(User):
     password : str = Field(..., min_length=6, max_length=128)
 
 class UserOut(User):
-    id : int
+    id : uuid.UUID
     is_active : bool = True
     is_admin : bool = False
     is_verified : bool = False
@@ -28,4 +29,4 @@ class SetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=128)
 
 class MakeAdminRequest(BaseModel):
-    user_id: int
+    user_id: uuid.UUID

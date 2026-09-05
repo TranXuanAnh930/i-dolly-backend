@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.group import GroupCreate, GroupUpdate
 from app.db.models.group import Group
@@ -10,7 +11,7 @@ from app.db.models.user import Users
 # is never scoped — only `role == "manager"` triggers the company check
 # (database-design.md §4: "Not yet done" note, now done for groups/idols).
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def add_group(db: Session, group: GroupCreate, current_user: Users):
@@ -31,10 +32,10 @@ def get_groups(db: Session):
         return False
     return result
 
-def get_group(db: Session, id: int):
+def get_group(db: Session, id: uuid.UUID):
     return db.get(Group, id)
 
-def update_group(db: Session, id: int, data: GroupUpdate, current_user: Users):
+def update_group(db: Session, id: uuid.UUID, data: GroupUpdate, current_user: Users):
     db_group = db.get(Group, id)
     if not db_group:
         return "not_found"
@@ -47,7 +48,7 @@ def update_group(db: Session, id: int, data: GroupUpdate, current_user: Users):
     db.refresh(db_group)
     return db_group
 
-def delete_group(db: Session, id: int, current_user: Users):
+def delete_group(db: Session, id: uuid.UUID, current_user: Users):
     db_group = db.get(Group, id)
     if not db_group:
         return "not_found"

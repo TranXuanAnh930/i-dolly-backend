@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.venue import VenueCreate, VenueUpdate
 from app.db.models.venue import Venue
@@ -19,10 +20,10 @@ def get_venues(db: Session):
         return False
     return result
 
-def get_venue(db: Session, id: int):
+def get_venue(db: Session, id: uuid.UUID):
     return db.get(Venue, id)
 
-def update_venue(db: Session, id: int, data: VenueUpdate):
+def update_venue(db: Session, id: uuid.UUID, data: VenueUpdate):
     db_venue = db.get(Venue, id)
     if not db_venue:
         return False
@@ -36,7 +37,7 @@ def update_venue(db: Session, id: int, data: VenueUpdate):
     db.refresh(db_venue)
     return db_venue
 
-def delete_venue(db: Session, id: int):
+def delete_venue(db: Session, id: uuid.UUID):
     db_venue = db.get(Venue, id)
     if not db_venue:
         return False

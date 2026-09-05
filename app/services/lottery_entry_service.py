@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.lottery_entry import LotteryEntryApply
 from app.db.models.lottery_entry import LotteryEntry
@@ -14,7 +15,7 @@ from app.exception.db_triggers import commit_or_raise
 # service layer so a bad apply() returns a clean 400/403 instead of a raw
 # IntegrityError from Postgres.
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users):
@@ -60,7 +61,7 @@ def get_my_entries(db: Session, current_user: Users):
         return False
     return result
 
-def get_entries_for_campaign(db: Session, campaign_id: int, current_user: Users):
+def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users):
     """Manager/admin view of who has entered a campaign under their own
     company (company_id resolved the same way as lottery_campaign_service:
     campaign -> ticket_type -> concert.company_id)."""

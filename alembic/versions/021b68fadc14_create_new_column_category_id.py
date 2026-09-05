@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -22,9 +23,9 @@ def upgrade() -> None:
     op.add_column(
         "products",
         sa.Column(
-            "category_id", 
-            sa.Integer, 
-            sa.ForeignKey("categories.id", onupdate="CASCADE", ondelete="CASCADE"), 
+            "category_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("categories.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=True)
  )
 

@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -33,14 +34,14 @@ async def list_positions(_: None = Depends(rate_limit(10, 60, ip_key)), db: Sess
     return result
 
 @router.put("/update/{id}", response_model=PositionRead)
-async def update_existing_position(id: int, data: PositionBase, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_position(id: uuid.UUID, data: PositionBase, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     db_position = update_position(db, id, data)
     if not db_position:
         raise HTTPException(status_code=404, detail="Position not found")
     return db_position
 
 @router.delete("/delete/{id}")
-async def delete_existing_position(id: int, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
+async def delete_existing_position(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
     result = delete_position(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Position not found")
@@ -69,21 +70,21 @@ async def assign_position_to_idol(data: IdolPositionAssign, current_user: Users 
     return result
 
 @router.get("/idol_positions/idol/{idol_id}", response_model=List[IdolPositionRead])
-async def list_idol_positions(idol_id: int, db: Session = Depends(get_db)):
+async def list_idol_positions(idol_id: uuid.UUID, db: Session = Depends(get_db)):
     result = get_idol_positions(db, idol_id)
     if not result:
         raise HTTPException(status_code=404, detail="This idol has no positions assigned")
     return result
 
 @router.put("/idol_positions/{idol_id}/{position_id}", response_model=IdolPositionRead)
-async def set_idol_position_primary(idol_id: int, position_id: int, is_primary: bool, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def set_idol_position_primary(idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = update_idol_position_primary(db, idol_id, position_id, is_primary, current_user)
     if isinstance(result, str):
         _raise_for_link(result, "This idol/position assignment doesn't exist")
     return result
 
 @router.delete("/idol_positions/{idol_id}/{position_id}")
-async def unassign_position_from_idol(idol_id: int, position_id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def unassign_position_from_idol(idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = remove_idol_position(db, idol_id, position_id, current_user)
     if isinstance(result, str):
         _raise_for_link(result, "This idol/position assignment doesn't exist")

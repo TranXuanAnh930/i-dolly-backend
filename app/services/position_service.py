@@ -1,10 +1,11 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.position import PositionBase, PositionCreate, IdolPositionAssign
 from app.db.models.position import Position, IdolPosition
 from app.db.models.idol import Idol
 from app.db.models.user import Users
 
-def _manager_scope_violation(current_user: Users, company_id: int) -> bool:
+def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def add_position(db: Session, position: PositionCreate):
@@ -22,7 +23,7 @@ def get_positions(db: Session):
         return False
     return result
 
-def update_position(db: Session, id: int, data: PositionBase):
+def update_position(db: Session, id: uuid.UUID, data: PositionBase):
     db_position = db.get(Position, id)
     if not db_position:
         return False
@@ -31,7 +32,7 @@ def update_position(db: Session, id: int, data: PositionBase):
     db.refresh(db_position)
     return db_position
 
-def delete_position(db: Session, id: int):
+def delete_position(db: Session, id: uuid.UUID):
     db_position = db.get(Position, id)
     if not db_position:
         return False
@@ -66,13 +67,13 @@ def assign_idol_position(db: Session, data: IdolPositionAssign, current_user: Us
     db.refresh(db_link)
     return db_link
 
-def get_idol_positions(db: Session, idol_id: int):
+def get_idol_positions(db: Session, idol_id: uuid.UUID):
     result = db.query(IdolPosition).filter(IdolPosition.idol_id == idol_id).all()
     if not result:
         return False
     return result
 
-def update_idol_position_primary(db: Session, idol_id: int, position_id: int, is_primary: bool, current_user: Users):
+def update_idol_position_primary(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users):
     link = db.get(IdolPosition, (idol_id, position_id))
     if not link:
         return "not_found"
@@ -83,7 +84,7 @@ def update_idol_position_primary(db: Session, idol_id: int, position_id: int, is
     db.refresh(link)
     return link
 
-def remove_idol_position(db: Session, idol_id: int, position_id: int, current_user: Users):
+def remove_idol_position(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users):
     link = db.get(IdolPosition, (idol_id, position_id))
     if not link:
         return "not_found"

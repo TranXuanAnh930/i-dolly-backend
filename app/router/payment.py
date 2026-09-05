@@ -1,4 +1,5 @@
 import json
+import uuid
 from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit, user_key
@@ -34,7 +35,7 @@ async def razorpay_webhook(request:Request, x_razorpay_signature:str=Header(None
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.patch("/status/{order_id}", response_model=PaymentResponse)
-async def check_payment_status(order_id:int, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
+async def check_payment_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
     payment = fetch_payment_status(db, user.id, order_id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found!")

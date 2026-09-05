@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from sqlalchemy.orm import Session
@@ -25,21 +26,21 @@ async def see_address(user:Users=Depends(get_current_user), _:None=Depends(rate_
     return address
 
 @router.get("/fetch_byid/{address_id}", response_model=ShippingAddress)
-async def get_user_address_byid(address_id:int, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
+async def get_user_address_byid(address_id:uuid.UUID, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
     address = get_address_by_id(db, address_id)
     if not address:
         raise HTTPException(status_code=404, detail="address not found")
     return address
 
 @router.put("/update/{address_id}")
-async def update_existing_address(data:ShippingBase, address_id:int, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
+async def update_existing_address(data:ShippingBase, address_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
     address = update_address(db, user.id, data, address_id)
     if not address:
         raise HTTPException(status_code=404, detail="Address not found")
     return {"msg" : "Address updated successfully"}
 
 @router.delete("/delete/{address_id}")
-async def delete_existing_address(address_id:int, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
+async def delete_existing_address(address_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
     address = delete_address(db, user.id, address_id)
     if not address:
         raise HTTPException(status_code=404, detail="Address not found")

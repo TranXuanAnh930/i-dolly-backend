@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -38,21 +39,21 @@ async def list_album_details(db: Session = Depends(get_db)):
     return result
 
 @router.get("/{product_id}", response_model=AlbumDetailRead)
-async def get_album_detail_by_id(product_id: int, db: Session = Depends(get_db)):
+async def get_album_detail_by_id(product_id: uuid.UUID, db: Session = Depends(get_db)):
     album = get_album_detail(db, product_id)
     if not album:
         raise HTTPException(status_code=404, detail="Album details not found")
     return album
 
 @router.put("/update/{product_id}", response_model=AlbumDetailRead)
-async def update_existing_album_detail(product_id: int, data: AlbumDetailUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_album_detail(product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = update_album_detail(db, product_id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Album details not found")
     return result
 
 @router.delete("/delete/{product_id}")
-async def delete_existing_album_detail(product_id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_album_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = delete_album_detail(db, product_id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Album details not found")

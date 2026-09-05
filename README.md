@@ -52,6 +52,8 @@ Full detail and reasoning: [`docs/architecture.md`](docs/architecture.md) §1.
 
 ## What's actually built
 
+- **UUID primary keys everywhere** — no sequential integer ids, so resources can't be enumerated
+  by guessing `/products/search/2`, `/products/search/3`, etc.
 - Identity/RBAC, company-scoped managers
 - Full CRUD (ORM + schema + service + router) for groups, idols, idol colors, positions, venues,
   concerts, ticket types, lottery preferences/campaigns/entries, tickets, album details, genres,

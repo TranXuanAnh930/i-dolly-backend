@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, datetime
 from pydantic import BaseModel, Field
 
@@ -7,14 +8,14 @@ class GroupBase(BaseModel):
     description: str | None = Field(None, max_length=2000)
 
 class GroupCreate(GroupBase):
-    company_id: int
+    company_id: uuid.UUID
 
 class GroupUpdate(GroupBase):
     pass
 
 class GroupRead(GroupBase):
-    id: int
-    company_id: int
+    id: uuid.UUID
+    company_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
 

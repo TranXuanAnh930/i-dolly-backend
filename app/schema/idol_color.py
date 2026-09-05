@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, Field
 
 class IdolColorBase(BaseModel):
@@ -8,6 +9,6 @@ class IdolColorCreate(IdolColorBase):
     pass
 
 class IdolColorRead(IdolColorBase):
-    id: int
+    id: uuid.UUID
 
     model_config = {"from_attributes": True}

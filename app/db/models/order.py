@@ -1,5 +1,7 @@
+import uuid
 from sqlalchemy.orm import relationship
 from sqlalchemy import DateTime, Enum, Column, Integer, ForeignKey, Float, func
+from sqlalchemy.dialects.postgresql import UUID
 from app.db.base_class import Base
 from app.schema.order import OrderStatus
 
@@ -7,9 +9,9 @@ class Order(Base):
 
     __tablename__ = "orders"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    shipping_address_id = Column(Integer, ForeignKey("shipping_addresses.id", ondelete="CASCADE"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    shipping_address_id = Column(UUID(as_uuid=True), ForeignKey("shipping_addresses.id", ondelete="CASCADE"), nullable=False)
     total_price = Column(Float, nullable=False)
     status = Column(Enum(OrderStatus, name="order_status_enum"), default=OrderStatus.pending)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -24,9 +26,9 @@ class OrderItem(Base):
 
     __tablename__ = "orders_items"
 
-    id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
-    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False)
     price = Column(Integer, nullable=False)
 

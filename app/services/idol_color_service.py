@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from app.schema.idol_color import IdolColorBase, IdolColorCreate
 from app.db.models.idol_color import IdolColor
@@ -17,7 +18,7 @@ def get_idol_colors(db: Session):
         return False
     return result
 
-def update_idol_color(db: Session, id: int, data: IdolColorBase):
+def update_idol_color(db: Session, id: uuid.UUID, data: IdolColorBase):
     db_color = db.get(IdolColor, id)
     if not db_color:
         return False
@@ -27,7 +28,7 @@ def update_idol_color(db: Session, id: int, data: IdolColorBase):
     db.refresh(db_color)
     return db_color
 
-def delete_idol_color(db: Session, id: int):
+def delete_idol_color(db: Session, id: uuid.UUID):
     db_color = db.get(IdolColor, id)
     if not db_color:
         return False

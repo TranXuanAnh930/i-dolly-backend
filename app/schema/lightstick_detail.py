@@ -1,14 +1,15 @@
+import uuid
 from datetime import datetime
 from pydantic import BaseModel, model_validator
 
 class LightstickDetailBase(BaseModel):
     edition: str | None = None
-    color_id: int | None = None
+    color_id: uuid.UUID | None = None
 
 class LightstickDetailCreate(LightstickDetailBase):
-    product_id: int  # must reference an existing products row
-    idol_id: int | None = None
-    group_id: int | None = None
+    product_id: uuid.UUID  # must reference an existing products row
+    idol_id: uuid.UUID | None = None
+    group_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _check_owner_xor(self):
@@ -22,9 +23,9 @@ class LightstickDetailUpdate(LightstickDetailBase):
     pass
 
 class LightstickDetailRead(LightstickDetailBase):
-    product_id: int
-    idol_id: int | None
-    group_id: int | None
+    product_id: uuid.UUID
+    idol_id: uuid.UUID | None
+    group_id: uuid.UUID | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

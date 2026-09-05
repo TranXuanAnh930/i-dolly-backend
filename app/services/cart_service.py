@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.db.models.user import Users
@@ -6,7 +7,7 @@ from app.db.models.cart import Cart
 from app.db.models.products import Product
 from app.exception.db_triggers import commit_or_raise
 
-def add_to_cart(db:Session, cart_item:CartItem, user_id:int):
+def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID):
     user = db.get(Users, user_id)
     if not user:
         return False
@@ -25,14 +26,14 @@ def add_to_cart(db:Session, cart_item:CartItem, user_id:int):
     db.refresh(stmt)
     return stmt
 
-def see_cart(db:Session, user_id:int):
+def see_cart(db:Session, user_id:uuid.UUID):
     items = db.query(Cart).filter(Cart.user_id==user_id).all()
     if not items:
         return None
     total_price = sum(item.total_price for item in items)
     return {"items" : items, "total_price" : total_price}
 
-def remove_cart(db:Session, user_id:int, cart_id:int):
+def remove_cart(db:Session, user_id:uuid.UUID, cart_id:uuid.UUID):
     cart = db.query(Cart).filter(Cart.id==cart_id).first()
     if not cart:
         return None

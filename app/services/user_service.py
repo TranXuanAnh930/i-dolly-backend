@@ -1,3 +1,4 @@
+import uuid
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 from app.db.models.user import Users
@@ -44,7 +45,7 @@ def verify_rtoken(db: Session, token: str, new_password: str):
     db.refresh(user)
     return True
 
-def promote_admin(db: Session, user_id: int):
+def promote_admin(db: Session, user_id: uuid.UUID):
     user = db.get(Users, user_id)
     if not user:
         return None
@@ -64,7 +65,7 @@ def revoke_token(db:Session, token: str):
     db.refresh(db_token)
     return True
 
-def delete_user(db:Session, user_id:int):
+def delete_user(db:Session, user_id:uuid.UUID):
     db_user = db.get(Users, user_id)
     if not db_user:
         return None

@@ -47,16 +47,16 @@ def upgrade() -> None:
     # instead of a hard structural constraint.
     op.create_table(
         "lottery_entries",
-        sa.Column("id", sa.Integer(), primary_key=True, index=True),
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, index=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column(
             "campaign_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("lottery_campaigns.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
             "user_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("users.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),
@@ -118,8 +118,8 @@ def upgrade() -> None:
         """
         CREATE OR REPLACE FUNCTION fn_require_lottery_preference() RETURNS TRIGGER AS $$
         DECLARE
-            target_ticket_type_id INTEGER;
-            target_concert_id INTEGER;
+            target_ticket_type_id UUID;
+            target_concert_id UUID;
             has_preference BOOLEAN;
         BEGIN
             SELECT lc.ticket_type_id, tt.concert_id

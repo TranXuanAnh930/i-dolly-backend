@@ -1,4 +1,5 @@
 from sqlalchemy import Integer, Column, Date, String, ForeignKey, Enum, CheckConstraint
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -9,9 +10,9 @@ class AlbumDetail(Base):
 
     __tablename__ = "album_details"
 
-    product_id = Column(Integer, ForeignKey("products.id", onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
-    idol_id = Column(Integer, ForeignKey("idols.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
-    group_id = Column(Integer, ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
+    idol_id = Column(UUID(as_uuid=True), ForeignKey("idols.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
     release_date = Column(Date, nullable=True)
     track_count = Column(Integer, nullable=True)
     format = Column(release_format_enum, nullable=False, server_default="physical")

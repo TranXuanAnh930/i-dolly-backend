@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from sqlalchemy.orm import Session
 from app.deps.db import get_db
@@ -29,7 +30,7 @@ async def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(ge
     return cart
 
 @router.delete("/delete_cart/{cart_id}")
-async def delete_cart(cart_id:int, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
+async def delete_cart(cart_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
     cart = remove_cart(db, user.id, cart_id)
     if not cart:
         raise HTTPException(status_code=404, detail="Cart item not found")

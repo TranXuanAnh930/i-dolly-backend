@@ -1,4 +1,6 @@
+import uuid
 from sqlalchemy import String, Integer, Column, DateTime, ForeignKey, Enum, Numeric, CheckConstraint, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -10,8 +12,8 @@ class TicketType(Base):
 
     __tablename__ = "ticket_types"
 
-    id = Column(Integer, primary_key=True, index=True)
-    concert_id = Column(Integer, ForeignKey("concerts.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
     tier = Column(ticket_tier_enum, nullable=False)
     price = Column(Numeric(10, 2), nullable=False)
     total_quantity = Column(Integer, nullable=False)

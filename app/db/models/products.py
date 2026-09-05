@@ -1,17 +1,19 @@
+import uuid
 from sqlalchemy import Column, Integer, Float, String, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
 class Product(Base):
-   
+
     __tablename__ = "products"
-   
-    id = Column(Integer, primary_key=True, index= True)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, index= True, default=uuid.uuid4)
     name = Column(String)
     price = Column(Float)
     description = Column(String)
     quantity = Column(Integer)
-    category_id = Column(Integer, ForeignKey("categories.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("categories.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
     image_url = Column(String, nullable=True)  # local path or S3/CDN URL — see app/utils/storage.py
 
     cart_items = relationship("Cart", back_populates="product")

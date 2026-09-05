@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -37,7 +38,7 @@ async def list_my_tickets(current_user: Users = Depends(get_current_user), db: S
     return result
 
 @router.get("/{id}", response_model=TicketRead)
-async def get_ticket_by_id(id: int, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)):
     ticket = get_ticket(db, id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
@@ -46,14 +47,14 @@ async def get_ticket_by_id(id: int, current_user: Users = Depends(get_current_us
     return ticket
 
 @router.put("/update/{id}", response_model=TicketRead)
-async def update_existing_ticket(id: int, data: TicketUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
+async def update_existing_ticket(id: uuid.UUID, data: TicketUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
     result = update_ticket(db, id, data)
     if isinstance(result, str):
         _raise_for(result, "Ticket not found")
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_ticket(id: int, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
+async def delete_existing_ticket(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
     result = delete_ticket(db, id)
     if isinstance(result, str):
         _raise_for(result, "Ticket not found")

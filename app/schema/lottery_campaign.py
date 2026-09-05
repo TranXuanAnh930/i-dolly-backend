@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 
@@ -17,14 +18,14 @@ class LotteryCampaignBase(BaseModel):
         return self
 
 class LotteryCampaignCreate(LotteryCampaignBase):
-    ticket_type_id: int
+    ticket_type_id: uuid.UUID
 
 class LotteryCampaignUpdate(LotteryCampaignBase):
     status: str | None = None  # 'open' | 'drawn' | 'completed' | 'cancelled'
 
 class LotteryCampaignRead(LotteryCampaignBase):
-    id: int
-    ticket_type_id: int
+    id: uuid.UUID
+    ticket_type_id: uuid.UUID
     status: str
     created_at: datetime
 

@@ -1,3 +1,4 @@
+import uuid
 from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
@@ -43,21 +44,21 @@ async def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Sessi
     return result
 
 @router.get("/{id}", response_model=ConcertRead)
-async def get_concert_by_id(id: int, db: Session = Depends(get_db)):
+async def get_concert_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
     concert = get_concert(db, id)
     if not concert:
         raise HTTPException(status_code=404, detail="Concert not found")
     return concert
 
 @router.put("/update/{id}", response_model=ConcertRead)
-async def update_existing_concert(id: int, data: ConcertUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = update_concert(db, id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Concert or venue not found")
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_concert(id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = delete_concert(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Concert not found")
@@ -77,14 +78,14 @@ async def assign_concert_performer(data: ConcertPerformerAssign, current_user: U
     return result
 
 @router.get("/performers/concert/{concert_id}", response_model=List[ConcertPerformerRead])
-async def list_concert_performers(concert_id: int, db: Session = Depends(get_db)):
+async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)):
     result = get_performers(db, concert_id)
     if not result:
         raise HTTPException(status_code=404, detail="This concert has no performers assigned")
     return result
 
 @router.delete("/performers/{id}")
-async def unassign_concert_performer(id: int, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     result = remove_performer(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Performer assignment not found")

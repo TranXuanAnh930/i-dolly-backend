@@ -1,3 +1,4 @@
+import uuid
 from pydantic import BaseModel, Field
 
 class ManagementCompanyBase(BaseModel):
@@ -9,6 +10,6 @@ class ManagementCompanyCreate(ManagementCompanyBase):
     pass
 
 class ManagementCompanyRead(ManagementCompanyBase):
-    id: int
+    id: uuid.UUID
 
     model_config = {"from_attributes": True}

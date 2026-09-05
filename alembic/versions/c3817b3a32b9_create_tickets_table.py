@@ -47,29 +47,29 @@ def upgrade() -> None:
 
     op.create_table(
         "tickets",
-        sa.Column("id", sa.Integer(), primary_key=True, index=True),
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, index=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column(
             "ticket_type_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
             "user_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("users.id", onupdate="CASCADE", ondelete="CASCADE"),
             nullable=False,
         ),
         # null = directly purchased, no lottery involved.
         sa.Column(
             "lottery_entry_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("lottery_entries.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),
         sa.Column(
             "payment_id",
-            sa.Integer(),
+            postgresql.UUID(as_uuid=True),
             sa.ForeignKey("payment.id", onupdate="CASCADE", ondelete="SET NULL"),
             nullable=True,
         ),
@@ -110,7 +110,7 @@ def upgrade() -> None:
         """
         CREATE OR REPLACE FUNCTION fn_enforce_one_ticket_per_concert() RETURNS TRIGGER AS $$
         DECLARE
-            target_concert_id INTEGER;
+            target_concert_id UUID;
             existing_live_tickets INTEGER;
         BEGIN
             SELECT c.id INTO target_concert_id
