@@ -23,6 +23,7 @@ from app.router.ticket import router as ticket_router
 from app.router.album_detail import router as album_detail_router
 from app.router.genre import router as genre_router
 from app.router.lightstick_detail import router as lightstick_detail_router
+from app.router.notification import router as notification_router
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from app.db.session import session as SessionLocal
@@ -91,3 +92,4 @@ app.include_router(ticket_router)
 app.include_router(album_detail_router)
 app.include_router(genre_router)
 app.include_router(lightstick_detail_router)
+app.include_router(notification_router)

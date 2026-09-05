@@ -88,7 +88,22 @@ ephemeral. Since durability was the chosen option here:
 3. Set `REDIS_HOST` to the internal hostname, `REDIS_PORT` to its port (usually `6379`), `REDIS_DB`
    to `0`.
 
-## 5. Render — the web service
+## 5. Render — the Celery worker (optional — only if you need background tasks running)
+
+`app/celery_app.py` is currently a bare skeleton (one placeholder task, see
+`docs/architecture.md` §1) — skip this section for a portfolio deploy unless something actually
+needs to run through Celery. When it does:
+
+1. **New → Background Worker** (not Web Service), same repo, same `Dockerfile`.
+2. **Start Command**: `/start-worker.sh` (overrides the image's default `CMD`, which is the web
+   service's `/start.sh`).
+3. Same region as the Key Value instance from §4, for the internal Redis connection.
+4. Env vars: the same `DATABASE_URL`/`REDIS_HOST`/`REDIS_PORT`/`REDIS_DB` as the web service (§6)
+   — `CELERY_BROKER_DB` defaults to `1` and doesn't need to be set unless you want a different
+   index. No migration step here; the web service's boot already runs `alembic upgrade head`
+   against the same database.
+
+## 6. Render — the web service
 
 1. **New → Web Service**, connect the `TranXuanAnh930/i-dolly-backend` GitHub repo.
 2. **Runtime: Docker.** Render will build from the repo's `Dockerfile` directly — no build/start
@@ -99,11 +114,11 @@ ephemeral. Since durability was the chosen option here:
 4. Instance type: the free tier works for a portfolio demo, but note Render's free web services
    spin down after inactivity and cold-start slowly — fine for a resume link, mention it if anyone
    is timing first-load latency.
-5. Add every env var from the table in §6, then create the service. The first deploy will build
+5. Add every env var from the table in §7, then create the service. The first deploy will build
    the image, run migrations, and start the app — watch the deploy logs for the migration step
-   specifically (§7).
+   specifically (§8).
 
-## 6. Environment variables — full checklist
+## 7. Environment variables — full checklist
 
 | Variable | Value | Notes |
 |---|---|---|
@@ -114,6 +129,7 @@ ephemeral. Since durability was the chosen option here:
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | |
 | `EMAIL_TOKEN_EXPIRE_MINUTES` | `60` | |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | from §4 | internal hostname, usually `6379`, `0` |
+| `CELERY_BROKER_DB` | `1` (default, can be omitted) | only relevant if the Celery worker (§5) is deployed too |
 | `SENDGRID_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | only exercised by the email-verification/password-reset flows |
 | `BASE_URL` | `https://<your-render-service>.onrender.com` | used to build the email verification link |
 | `CORS_ORIGINS` | your frontend's real origin(s), comma-separated | e.g. `https://your-frontend.vercel.app` |
@@ -122,7 +138,7 @@ ephemeral. Since durability was the chosen option here:
 | `S3_ENDPOINT_URL` | your provider's endpoint | **omit for real AWS S3**, required for R2/Spaces |
 | `S3_PUBLIC_URL_BASE` | optional CDN/custom domain | falls back to a computed bucket URL if unset |
 
-## 7. First deploy — migrations are the real risk here
+## 8. First deploy — migrations are the real risk here
 
 Watch the Render deploy log for the `Running Alembic migrations...` line the Dockerfile prints.
 This is the very first time these 40 migrations — including the UUID primary-key rewrite and all
@@ -138,7 +154,7 @@ This is the very first time these 40 migrations — including the UUID primary-k
   `op.execute()` calls in one `upgrade()` aren't automatically one atomic unit either. Cross this
   bridge only if it actually happens; don't pre-solve it speculatively.
 
-## 8. Wire up CI/CD auto-deploy (optional, already scaffolded)
+## 9. Wire up CI/CD auto-deploy (optional, already scaffolded)
 
 `.github/workflows/test.yml` already has a `deploy` job that `curl`s a `RENDER_DEPLOY_HOOK` secret
 on every push to `main` after tests pass — this was set up for the original fork's Render service,
@@ -150,7 +166,7 @@ so the secret needs to be re-added for this repo:
    are only used by the *test* job against the CI Postgres/Redis services, not the real deploy —
    they don't need to match your Render env vars.
 
-## 9. Post-deploy smoke test
+## 10. Post-deploy smoke test
 
 1. `https://<your-service>.onrender.com/docs` — Swagger UI should load.
 2. `POST /account/register` → `POST /account/login` — confirms the DB connection and JWT flow.
@@ -158,10 +174,12 @@ so the secret needs to be re-added for this repo:
 4. If you seed data: `render shell` into the service (or a one-off Render job) and run
    `python scripts/seed.py` — it's idempotent, safe to run once against the fresh Supabase DB.
 
-## 10. Known limitations carried into this deploy
+## 11. Known limitations carried into this deploy
 
-- No live-DB verification has happened before this deploy (§7) — treat the first deploy as a real
+- No live-DB verification has happened before this deploy (§8) — treat the first deploy as a real
   test, not a formality.
+- The Celery worker (§5) is a bare skeleton — no real task exists yet, so there's nothing lost by
+  skipping that service entirely for a portfolio deploy.
 - The checkout/ticket-inventory race and non-idempotent webhook handling
   (`docs/project_status.md` §4 items 1 and 4) are unchanged by deploying — they're app-logic bugs,
   not deploy-environment issues.

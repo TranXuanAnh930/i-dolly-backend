@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     REDIS_HOST : str
     REDIS_PORT : int
     REDIS_DB : int
+
+    # Celery broker/result backend — same Redis instance as REDIS_HOST/PORT
+    # above, but a different DB index so task/result keys never collide with
+    # the product-list cache or rate-limiter counters living in REDIS_DB.
+    CELERY_BROKER_DB: int = 1
     DATABASE_NAME : str
     DATABASE_USER : str
     DATABASE_PWD : str

@@ -27,4 +27,15 @@ echo "Starting FastAPI..."\n\
 exec python -m uvicorn main:app --host 0.0.0.0 --port $PORT\n' > /start.sh \
  && chmod +x /start.sh
 
+# Same image, no migrations (the web service's /start.sh already runs them
+# on boot) — just starts a Celery worker against app/celery_app.py. Used as
+# the start command for a separate process (docker-compose's `worker`
+# service locally, a Render Background Worker in prod), never as this
+# image's default CMD.
+RUN printf '#!/bin/sh\n\
+set -e\n\
+echo "Starting Celery worker..."\n\
+exec python -m celery -A app.celery_app worker --loglevel=info\n' > /start-worker.sh \
+ && chmod +x /start-worker.sh
+
 CMD ["/start.sh"]

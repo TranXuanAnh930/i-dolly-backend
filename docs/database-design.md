@@ -590,6 +590,35 @@ distinction, so it was always shared by album/single/EP alike — singles alread
 genre tagging before this round; what's new is that "Single" is now a first-class `categories` row
 rather than only an enum value buried inside `album_details`.
 
+### 3.19 `notifications` (new, added after this doc's original rounds)
+
+One row per notification event for one fan: `id`, `user_id` (FK, required), `type`
+(`notification_type_enum`: `order_confirmation` / `ticket_confirmation` / `lottery_registered` /
+`lottery_result` / `lottery_payment_reminder` / `lottery_payment_confirmation` / `event_reminder`),
+`status` (`notification_status_enum`: `pending` / `sent` / `failed` — the send-log side, updated by
+whichever job eventually emails it), `sent_at`, `is_read`/`read_at` (the in-app-feed side — a fan
+viewing/dismissing their notification list), `created_at`.
+
+Each `type` refers back to exactly one existing entity, but the entities are different shapes
+(an order, a ticket, a lottery entry, a concert), so rather than one polymorphic
+`(related_type, related_id)` pair (which can't carry a real FK constraint), this table has **one
+nullable FK per entity kind** — `order_id`, `ticket_id`, `lottery_entry_id`, `concert_id` — with
+only the one matching `type` ever populated on a given row (e.g. `event_reminder` → `concert_id`
+set, the other three null). "Exactly one of these four is set, and it's the right one for this
+`type`" is **not** DB-enforced — same call as the idol/group company match (§3.4) and the
+category ↔ details-table agreement (§3.15): ordinary cross-table validation, not a money/fairness
+invariant, so it stays a service-layer check rather than earning a trigger (§4.1's criteria).
+
+**Nothing writes to this table yet.** The ORM model and a fan-facing read/mark-read API exist
+(`GET /notifications/mine`, `POST /notifications/{id}/read`, `POST /notifications/read-all`,
+self-scoped to `current_user.id` via `get_current_user`, same shape as `lottery_entries`' `/mine`
+endpoint), but no service or job actually inserts a notification row on a purchase, a lottery
+result, a payment reminder, etc. — that wiring is deferred until the Celery skeleton
+(`docs/architecture.md` §1) has a real task, since a notification without a producer is just an
+empty table. Migration `df79d71c6a2c`, chained onto `10f9dfa05636`, has **not** been run against a
+live Postgres yet (`docs/project_status.md` §1) — same standing verification gap as every other
+migration in this repo.
+
 ## 4. Role-based access
 
 | Action | admin | manager | fan |
@@ -604,6 +633,7 @@ rather than only an enum value buried inside `album_details`.
 | Buy albums/singles/EPs/lightsticks/merch (cart → checkout) | ❌ | ❌ | ✅ |
 | Apply to a lottery directly (no purchase required) | ❌ | ❌ | ✅ |
 | Pay for a won ticket slot | ❌ | ❌ | ✅ |
+| View/mark-read own notifications | ❌ | ❌ | ✅ |
 
 **`require_manager_or_admin` is now built** (`app/deps/auth.py`, alongside a matching
 `require_admin`) — replaces the inline `if not current_user.is_admin: raise HTTPException(...)`

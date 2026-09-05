@@ -36,5 +36,19 @@ services:
       - redis
     volumes:
       - .:/app
+  worker:
+    build: .
+    container_name: i-dolly-worker
+    restart: unless-stopped
+    command: /start-worker.sh
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - .:/app
 volumes:
   postgres_data:

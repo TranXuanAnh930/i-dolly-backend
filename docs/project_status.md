@@ -8,7 +8,12 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-40 migrations, one linear chain, no branches. Current head: **`10f9dfa05636`**
+41 migrations, one linear chain, no branches. Chain head: **`df79d71c6a2c`**
+(`create_notifications_table`, chained onto `10f9dfa05636`) — **written and verified via a real
+mapper-configuration/import test (§3), but not yet run with `alembic upgrade head` against any
+Postgres instance**, live or otherwise; the DB itself (including this project's own local Docker
+Compose Postgres, which happens to be reachable this session) is still sitting at `10f9dfa05636`
+pending an explicit decision to apply it. Previous head: **`10f9dfa05636`**
 (`extend_idol_colors_and_genres` — adds 17 more `idol_colors` rows and 5 more `genres` rows
 needed for the expanded seed roster below; previous head was `019b674bf0c1`,
 `add_image_url_to_products`). All 18 domain tables from `database-design.md` §1–§3 plus the
@@ -65,6 +70,22 @@ ORM-returned `.id`/name lookups, never a literal integer.
   `get_storage().save()` pipeline from `tests/fixtures/{idols,products}/` — procedural
   placeholder art (Pillow gradients/patterns/monograms, no AI image generation was available in
   this environment), not real character art; see `tests/fixtures/README.md`.
+- **Notifications** (`app/db/models/notification.py`, migration `df79d71c6a2c` — **not yet
+  applied**, see §1): a `notifications` table (`database-design.md` §3.19) covering 7 event types
+  (order/ticket/lottery confirmations, lottery result, payment reminder/confirmation, event
+  reminder), one nullable FK per referenced entity kind. Fan-facing read API only:
+  `GET /notifications/mine` (`?unread_only=true` filter), `POST /notifications/{id}/read`,
+  `POST /notifications/read-all` — self-scoped to `current_user.id`
+  (`app/services/notification_service.py`, `app/router/notification.py`). **Nothing writes a
+  notification row yet** — no purchase/lottery/payment flow creates one, and the Celery skeleton
+  (below) has no task that would email one either; this is read/mark-read plumbing only, waiting
+  on a producer.
+- **Celery skeleton** (`app/celery_app.py`, `app/tasks/`): broker + result backend on the
+  existing Redis instance (`CELERY_BROKER_DB`, separate from the cache/rate-limiter's `REDIS_DB`),
+  a `worker` service in `docker-compose.yaml`, and a `/start-worker.sh` in the `Dockerfile` for a
+  Render Background Worker (`docs/deployment.md` §5). One placeholder task
+  (`app/tasks/example.py`'s `ping`) proves the wiring — **no real task exists yet**; which
+  background job(s) actually need it (the lottery draw, async email, ETL) is still open, see §5.
 - **12 DB triggers / 8 trigger functions** enforcing the money/fairness invariants
   `database-design.md` §4 lists deliberately (fan-only purchasing, the anti-resale cap, concert
   ticket-capacity, the lottery entry cap, the preference-required check, the lottery
@@ -97,6 +118,17 @@ Postgres, followed by hitting each endpoint (ideally via `scripts/seed.py`'s dat
 outstanding step before any of this should be treated as production-verified — it has not been
 done yet for anything built so far, including the ticketing/lottery/marketplace tables and the
 image-upload feature.
+
+**Another session with real network/import access, used for the notifications feature**: `import
+main` succeeded end to end (129 routes registered, up from 126 — the 3 new `/notifications/*`
+routes), and `sqlalchemy.orm.configure_mappers()` was run directly against `app.db.base.Base`
+(29 model classes now, up from 28), confirming every FK on the new `notifications` table resolves
+to a real target table/column. This project's own local Docker Compose stack
+(`postgres`/`redis`/`app`/`worker`) was also found already running and reachable from this
+environment — its Postgres is confirmed still at the documented `10f9dfa05636` head — but running
+`alembic upgrade head` against it was explicitly not done (user chose to hold off applying the
+migration), so **the notifications migration itself is still unverified against a real database**,
+same standing gap as everything else in this section.
 
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
@@ -226,7 +258,10 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
   (`ticket_types.sale_method = 'direct'`), but only the lottery path has a sequence diagram
   (`database-design.md` §5.2) and only `tickets`' admin-only manual-issue endpoint exists so far.
 - **The draw job's actual runtime** — scheduled task, queue worker, or admin-triggered action;
-  nothing has been chosen. The schema only commits to `lottery_campaigns.draw_at`/`status`.
+  nothing has been chosen. The schema only commits to `lottery_campaigns.draw_at`/`status`. A
+  Celery skeleton now exists (`app/celery_app.py`, broker on Redis) if "queue worker" is the
+  direction chosen, but nothing wires the draw logic to it yet — and Celery Beat (for a
+  time-based `draw_at` trigger, vs. an admin-triggered task) isn't set up either.
 - **UI messaging** for "you can't apply to this lottery because you haven't ranked that tier yet"
   — the application is correctly rejected server-side; there's no client-facing nudge designed.
 - **`idols.real_name`** — deliberately left unmodeled.

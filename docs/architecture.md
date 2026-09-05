@@ -13,6 +13,12 @@ this same folder. For *what's built vs. still open*, see `project_status.md`.
 - **Redis** for caching (`app/cache/cache_service.py`, msgpack-serialized, 5 min TTL on the
   product list) and rate limiting (`app/cache/rate_limit.py`, fixed-window counters — see
   `project_status.md`'s known-issues list for a real bug in this).
+- **Celery** (`app/celery_app.py`), broker + result backend on the same Redis instance but
+  `CELERY_BROKER_DB` (default `1`) instead of `REDIS_DB` (default `0`), so task/result keys never
+  collide with the cache or rate-limiter keyspace. Currently a bare skeleton — one placeholder
+  task (`app/tasks/example.py`'s `ping`) proves the worker/broker/backend wiring, nothing else
+  runs through it yet. See `project_status.md` §5 for which background jobs (the lottery draw,
+  async email, the ETL pipeline) are still undecided/unbuilt on top of this.
 - **JWT** (python-jose, HS256): short-lived access tokens (`sub` = user id) + opaque UUID refresh
   tokens persisted in a `refresh_tokens` table, rotated on every login/refresh, delivered as an
   httponly/secure/samesite=lax cookie. A *separate* JWT secret (`JWT_EMAIL_SECRET_KEY`) signs
@@ -116,6 +122,11 @@ cp .env.example .env   # fill in real secrets
 docker compose up --build
 # API docs: http://localhost:8000/docs
 ```
+
+`docker compose up` also starts a `worker` service (same image, `celery -A app.celery_app worker`)
+alongside `app`/`postgres`/`redis` — see §1's Celery entry. New tasks go in `app/tasks/`, added to
+`app/celery_app.py`'s `include=[...]` list so the worker picks them up (no autodiscovery is
+configured).
 
 New tables/columns always go through an Alembic migration (`alembic revision --autogenerate -m
 "..."`, then review the generated file), never `Base.metadata.create_all()`. Enum types are
