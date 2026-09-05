@@ -11,7 +11,8 @@ from app.schema.position import (
 )
 from app.services.position_service import (
     add_position, get_positions, update_position, delete_position,
-    assign_idol_position, get_idol_positions, update_idol_position_primary, remove_idol_position,
+    assign_idol_position, get_idol_positions, get_all_idol_positions,
+    update_idol_position_primary, remove_idol_position,
 )
 
 # Same rationale as idol_colors: a lookup table, manager/admin-extensible
@@ -74,6 +75,16 @@ async def list_idol_positions(idol_id: uuid.UUID, db: Session = Depends(get_db))
     result = get_idol_positions(db, idol_id)
     if not result:
         raise HTTPException(status_code=404, detail="This idol has no positions assigned")
+    return result
+
+# Bulk read — lets a client building a members grid (or any other view
+# needing every idol's positions) fetch them in one request instead of one
+# per idol.
+@router.get("/idol_positions/all", response_model=List[IdolPositionRead])
+async def list_all_idol_positions(db: Session = Depends(get_db)):
+    result = get_all_idol_positions(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No idol positions found")
     return result
 
 @router.put("/idol_positions/{idol_id}/{position_id}", response_model=IdolPositionRead)

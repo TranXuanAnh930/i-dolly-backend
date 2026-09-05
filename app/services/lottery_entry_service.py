@@ -19,6 +19,8 @@ def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool
     return current_user.role == "manager" and current_user.company_id != company_id
 
 def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users):
+    if current_user.role != "fan":
+        return "fan_only"  # primary check for trg_lottery_entries_fan_only
     campaign = db.get(LotteryCampaign, data.campaign_id)
     if not campaign:
         return "not_found"

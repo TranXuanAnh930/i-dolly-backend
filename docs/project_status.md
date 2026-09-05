@@ -292,14 +292,33 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
    Postgres error text, not just AST/compile checks.
 2. Fix the checkout/ticket-inventory race (§4 item 1) before building the draw job or direct
    purchase flow on top of it — it's much cheaper to fix before other code depends on its current
-   (broken) behavior than after.
+   (broken) behavior than after. **Design finalized, not yet implemented**: single query locking
+   every needed `Product` row `ORDER BY id FOR UPDATE` (UUID-sorted — deadlock-safe, and a real
+   deadlock risk exists today since the cart-items query has no `ORDER BY`), check-then-decrement
+   on the same locked rows in one pass (all-or-nothing, collecting every insufficient item rather
+   than failing on the first), one commit at the very end owned by `checkout()` itself rather than
+   split across `payment_service.create_payment()`'s internal commit + the router's
+   `commit_or_raise()` — `create_payment` demotes to a non-committing internal step
+   (`_create_payment`), matching this codebase's actual house style: every other service file's
+   public functions already own their own commit *and* rollback, and `order.py`'s router is the
+   only router in the whole codebase that touches `db.commit()`/`db.rollback()` at all. Deliberately
+   left for hand-implementation (interview-defensibility reasons) rather than done by Claude.
 3. Build the draw job (§5), with its concurrency guard designed in from the start.
-4. Fill in the missing *primary* fan-only-purchase check at the service layer
-   (`cart_service.add_to_cart`, `order_service.checkout`, `lottery_entry_service.
-   apply_to_lottery`, `ticket_service.add_ticket` currently have no `current_user.role == "fan"`
-   check at all — `database-design.md` §4.1 calls the DB trigger a *backstop* to a service-layer
-   check, but today the trigger is the *only* thing stopping an admin/manager from buying
-   something or entering a lottery). Found while fixing §4 item 9; deliberately left as a
-   separate follow-up rather than folded into that fix, since it's a distinct gap (missing
-   authorization logic) from what item 9 was about (clean error translation for the trigger that
-   already exists as the backstop).
+4. ~~Fill in the missing *primary* fan-only-purchase check at the service layer~~ — **FIXED**.
+   `cart_service.add_to_cart`, `order_service.checkout`, `lottery_entry_service.apply_to_lottery`,
+   and `ticket_service.add_ticket` each now check the buyer's (or, for `add_ticket` — admin-only,
+   see §2 — the ticket's intended owner's) `role == "fan"` before doing anything else.
+   `add_to_cart`/`checkout` raise `FanOnlyPurchaseError` directly (already existed for the trigger
+   backstop, `app/exception/db_triggers.py` — reused rather than adding a new exception, since both
+   files are already exception-based and both routers already catch `TriggerViolationError`
+   generically, so **no router change was needed for either**). `apply_to_lottery`/`add_ticket`
+   return a new `"fan_only"` sentinel instead, matching each function's existing string-sentinel
+   convention for its other pre-checks — `lottery_entry.py`/`ticket.py`'s routers each gained one
+   new branch mapping it to 403. Verified for real (not just `py_compile`): mocked-session
+   behavioral checks confirmed all four reject a non-fan before touching any other table and let a
+   fan fall through unaffected, and the existing `tests/unit` suite was actually run —
+   56/61 passing, the 5 failures are the pre-existing, already-documented item 11 tests, unrelated
+   to this change. One test-fixture gap found and fixed along the way: `make_mock_user()`
+   (`tests/unit/test_services.py`) never set `.role` at all, which would have broken
+   `add_to_cart`'s two existing tests once a real role check existed — given a `role="fan"` default,
+   matching `Users.role`'s actual DB default.

@@ -5,12 +5,15 @@ from app.db.models.user import Users
 from app.schema.cart import CartItem
 from app.db.models.cart import Cart
 from app.db.models.products import Product
-from app.exception.db_triggers import commit_or_raise
+from app.exception.db_triggers import commit_or_raise, FanOnlyPurchaseError
 
 def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID):
     user = db.get(Users, user_id)
     if not user:
         return False
+    if user.role != "fan":
+        # Primary check for trg_cart_fan_only — see FanOnlyPurchaseError's docstring.
+        raise FanOnlyPurchaseError("Only fan accounts can add items to a cart")
     product = db.query(Product).filter(Product.id==cart_item.product_id).first()
     if not product or product.quantity<cart_item.quantity:
         return None

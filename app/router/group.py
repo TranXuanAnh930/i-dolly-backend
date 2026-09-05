@@ -6,8 +6,11 @@ from app.cache.rate_limit import ip_key, rate_limit
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.db.models.user import Users
-from app.schema.group import GroupCreate, GroupUpdate, GroupRead
-from app.services.group_service import add_group, get_groups, get_group, update_group, delete_group
+from app.schema.group import GroupCreate, GroupUpdate, GroupRead, GroupsPageRead, GroupDetailRead
+from app.services.group_service import (
+    add_group, get_groups, get_group, update_group, delete_group,
+    get_groups_page, get_group_detail,
+)
 
 # require_manager_or_admin per database-design.md §4's role table ("CRUD own
 # company's idols/groups"). Company-scoped: a manager may only create/edit/
@@ -35,6 +38,20 @@ async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session
     result = get_groups(db)
     if not result:
         raise HTTPException(status_code=404, detail="No groups found")
+    return result
+
+@router.get("/groups-page", response_model=GroupsPageRead)
+async def get_groups_page_data(db: Session = Depends(get_db)):
+    result = get_groups_page(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No groups found")
+    return result
+
+@router.get("/{id}/detail", response_model=GroupDetailRead)
+async def get_group_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
+    result = get_group_detail(db, id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Group not found")
     return result
 
 @router.get("/{id}", response_model=GroupRead)

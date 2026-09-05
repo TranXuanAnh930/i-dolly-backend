@@ -5,10 +5,11 @@ from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.deps.db import get_db
 from app.deps.auth import require_manager_or_admin
-from app.schema.products import ProductRead, ProductCreate
+from app.schema.products import ProductRead, ProductCreate, StorePageRead, ProductDetailRead
 from app.db.models.user import Users
 from app.services.product_service import (
-    add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products, set_product_image
+    add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products, set_product_image,
+    get_store_page, get_product_detail,
 )
 from app.cache.cache_service import get_cached_products, delete_cached_product
 from app.cache.redis_client import redis_client
@@ -22,6 +23,20 @@ async def List_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:
     if not db_products:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
+
+@router.get("/store-page", response_model=StorePageRead)
+async def get_store_page_data(db: Session = Depends(get_db)):
+    result = get_store_page(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No products found")
+    return result
+
+@router.get("/{id}/detail", response_model=ProductDetailRead)
+async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
+    result = get_product_detail(db, id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return result
 
 @router.get("/search/{id:uuid}")
 async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)):

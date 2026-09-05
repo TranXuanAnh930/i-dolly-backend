@@ -1,11 +1,27 @@
 import uuid
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload, joinedload
 from app.schema.idol import IdolCreate, IdolUpdate
 from app.db.models.idol import Idol
 from app.db.models.group import Group
 from app.db.models.management_company import ManagementCompany
 from app.db.models.idol_color import IdolColor
+from app.db.models.position import IdolPosition
 from app.db.models.user import Users
+
+# Eager-loads exactly what IdolWithPositions needs (idol.py schema) so a
+# page-shaped endpoint returns fully-formed idols in one query instead of
+# the client resolving positions/color via separate lookups. Built lazily
+# (called, not evaluated at import time) — selectinload()/joinedload()
+# force SQLAlchemy to configure every mapper right then, and this module
+# loads early in main.py's router import chain, before routers that
+# register unrelated models (e.g. genre.py's AlbumGenre, referenced by a
+# relationship() on AlbumDetail) have run.
+def _with_positions_and_color():
+    return (
+        selectinload(Idol.idol_positions).joinedload(IdolPosition.position),
+        selectinload(Idol.color),
+        joinedload(Idol.group),
+    )
 
 # Sentinel convention for this module (all mutating functions): "not_found" =
 # a referenced row (company/group/color/idol) doesn't exist at all (-> 404 in
@@ -60,6 +76,30 @@ def get_idols(db: Session):
 
 def get_idol(db: Session, id: uuid.UUID):
     return db.get(Idol, id)
+
+# --- page-shaped reads (see idol.py schema's equivalent comment) ---
+
+def get_members_page(db: Session):
+    idols = db.query(Idol).options(*_with_positions_and_color()).all()
+    if not idols:
+        return False
+    groups = db.query(Group).all()
+    return {"idols": idols, "groups": groups}
+
+def get_idol_detail(db: Session, id: uuid.UUID):
+    idol = (
+        db.query(Idol)
+        .options(*_with_positions_and_color())
+        .filter(Idol.id == id)
+        .first()
+    )
+    if not idol:
+        return False
+    group = db.get(Group, idol.group_id) if idol.group_id else None
+    siblings_query = db.query(Idol).filter(Idol.id != id)
+    siblings_query = siblings_query.filter(Idol.group_id == idol.group_id) if idol.group_id else siblings_query.filter(Idol.group_id.is_(None))
+    siblings = siblings_query.options(*_with_positions_and_color()).all()
+    return {"idol": idol, "group": group, "siblings": siblings}
 
 def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users):
     db_idol = db.get(Idol, id)

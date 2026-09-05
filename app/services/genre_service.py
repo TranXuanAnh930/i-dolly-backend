@@ -72,6 +72,12 @@ def get_album_genres(db: Session, product_id: uuid.UUID):
         return False
     return result
 
+def get_all_album_genres(db: Session):
+    result = db.query(AlbumGenre).all()
+    if not result:
+        return False
+    return result
+
 def remove_genre(db: Session, product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users):
     link = db.get(AlbumGenre, (product_id, genre_id))
     if not link:

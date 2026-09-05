@@ -7,8 +7,11 @@ from app.cache.rate_limit import ip_key, rate_limit
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.db.models.user import Users
-from app.schema.idol import IdolCreate, IdolUpdate, IdolRead
-from app.services.idol_service import add_idol, get_idols, get_idol, update_idol, delete_idol, set_idol_image
+from app.schema.idol import IdolCreate, IdolUpdate, IdolRead, MembersPageRead, IdolDetailRead
+from app.services.idol_service import (
+    add_idol, get_idols, get_idol, update_idol, delete_idol, set_idol_image,
+    get_members_page, get_idol_detail,
+)
 from app.utils.storage import get_storage, StorageError
 
 # Same company-scoping as groups.py — see the comment there. add_idol/
@@ -67,6 +70,22 @@ async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session 
     result = get_idols(db)
     if not result:
         raise HTTPException(status_code=404, detail="No idols found")
+    return result
+
+# Page-shaped reads — registered before /{id} so the literal "members-page"
+# segment isn't swallowed by the {id}: uuid.UUID route.
+@router.get("/members-page", response_model=MembersPageRead)
+async def get_members_page_data(db: Session = Depends(get_db)):
+    result = get_members_page(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No idols found")
+    return result
+
+@router.get("/{id}/detail", response_model=IdolDetailRead)
+async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
+    result = get_idol_detail(db, id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Idol not found")
     return result
 
 @router.get("/{id}", response_model=IdolRead)

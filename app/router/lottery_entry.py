@@ -12,6 +12,8 @@ from app.exception.db_triggers import TriggerViolationError
 router = APIRouter(prefix="/lottery_entries", tags=["Lottery Entries"])
 
 def _raise_for(result):
+    if result == "fan_only":
+        raise HTTPException(status_code=403, detail="Only fan accounts can apply to a lottery")
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only view entries for their own company's campaigns")
     if result == "not_found":

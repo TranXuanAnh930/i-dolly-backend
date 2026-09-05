@@ -19,6 +19,8 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=404, detail=not_found_detail)
     if result == "conflict":
         raise HTTPException(status_code=400, detail="This user already holds a live ticket for this concert")
+    if result == "fan_only":
+        raise HTTPException(status_code=403, detail="Tickets can only be issued to fan accounts")
 
 @router.post("/add", response_model=TicketRead)
 async def add_new_ticket(data: TicketCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):

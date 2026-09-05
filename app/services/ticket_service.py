@@ -17,8 +17,14 @@ def add_ticket(db: Session, data: TicketCreate):
     ticket_type = db.get(TicketType, data.ticket_type_id)
     if not ticket_type:
         return "not_found"
-    if not db.get(Users, data.user_id):
+    target_user = db.get(Users, data.user_id)
+    if not target_user:
         return "not_found"
+    if target_user.role != "fan":
+        # Primary check for trg_tickets_fan_only — checks the ticket's
+        # intended owner (data.user_id), not the caller, since this
+        # endpoint is admin-only (an admin issuing a ticket to a fan).
+        return "fan_only"
     if data.lottery_entry_id is not None and not db.get(LotteryEntry, data.lottery_entry_id):
         return "not_found"
 

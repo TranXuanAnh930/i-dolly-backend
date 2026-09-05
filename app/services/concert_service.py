@@ -1,9 +1,10 @@
 import uuid
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from app.schema.concert import ConcertCreate, ConcertUpdate, ConcertPerformerAssign
 from app.db.models.concert import Concert, ConcertPerformer
 from app.db.models.management_company import ManagementCompany
 from app.db.models.venue import Venue
+from app.db.models.ticket_type import TicketType
 from app.db.models.idol import Idol
 from app.db.models.group import Group
 from app.db.models.user import Users
@@ -93,6 +94,12 @@ def get_performers(db: Session, concert_id: uuid.UUID):
         return False
     return result
 
+def get_all_performers(db: Session):
+    result = db.query(ConcertPerformer).all()
+    if not result:
+        return False
+    return result
+
 def remove_performer(db: Session, id: uuid.UUID, current_user: Users):
     link = db.get(ConcertPerformer, id)
     if not link:
@@ -103,3 +110,60 @@ def remove_performer(db: Session, id: uuid.UUID, current_user: Users):
     db.delete(link)
     db.commit()
     return True
+
+# --- page-shaped reads (see idol_service.py's equivalent comment) ---
+
+def get_events_page(db: Session):
+    concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
+    if not concerts:
+        return False
+    return {"concerts": concerts}
+
+def _lineup_idol(idol: Idol):
+    return {
+        "id": idol.id,
+        "name": idol.name,
+        "profile_image_url": idol.profile_image_url,
+        "color_hex": idol.color.hex_code if idol.color else None,
+    }
+
+def get_concert_detail(db: Session, id: uuid.UUID):
+    concert = db.query(Concert).options(joinedload(Concert.venue)).filter(Concert.id == id).first()
+    if not concert:
+        return False
+    ticket_types = db.query(TicketType).filter(TicketType.concert_id == id).all()
+    performers = (
+        db.query(ConcertPerformer)
+        .options(joinedload(ConcertPerformer.idol).selectinload(Idol.color), joinedload(ConcertPerformer.group))
+        .filter(ConcertPerformer.concert_id == id)
+        .all()
+    )
+    # A group credit expands to that group's current members, a solo credit
+    # is just that one idol — de-duplicated in case the same idol shows up
+    # via both a solo and a group credit (mirrors the previous client-side
+    # concertsStore.lineupForConcert getter).
+    seen_idol_ids = set()
+    lineup = []
+    seen_group_ids = set()
+    performing_groups = []
+    for performer in performers:
+        if performer.group_id and performer.group:
+            if performer.group_id not in seen_group_ids:
+                seen_group_ids.add(performer.group_id)
+                performing_groups.append({"id": performer.group.id, "name": performer.group.name})
+            members = db.query(Idol).options(selectinload(Idol.color)).filter(Idol.group_id == performer.group_id).all()
+            for member in members:
+                if member.id not in seen_idol_ids:
+                    seen_idol_ids.add(member.id)
+                    lineup.append(_lineup_idol(member))
+        elif performer.idol_id and performer.idol:
+            if performer.idol_id not in seen_idol_ids:
+                seen_idol_ids.add(performer.idol_id)
+                lineup.append(_lineup_idol(performer.idol))
+    return {
+        "concert": concert,
+        "venue": concert.venue,
+        "ticket_types": ticket_types,
+        "lineup": lineup,
+        "performing_groups": performing_groups,
+    }

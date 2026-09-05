@@ -49,7 +49,15 @@ class FanOnlyPurchaseError(TriggerViolationError):
     """trg_cart_fan_only / trg_orders_fan_only / trg_lottery_entries_fan_only
     / trg_tickets_fan_only (fn_enforce_fan_only_purchase) — an admin/manager
     account attempted a fan-only action. An authorization failure, not a
-    validation one, so this is the one trigger exception that isn't 400."""
+    validation one, so this is the one trigger exception that isn't 400.
+
+    Unlike every other class here, this one is also raised **directly** by
+    service code (cart_service.add_to_cart, order_service.checkout) as the
+    primary check — the trigger is the backstop, per database-design.md
+    §4.1, but until now nothing implemented the primary check it's meant to
+    back up. Both paths (a direct raise, or translate_trigger_error()
+    catching the trigger firing) produce the same type, so a router only
+    ever needs the one `except TriggerViolationError` clause either way."""
     status_code = 403
 
 

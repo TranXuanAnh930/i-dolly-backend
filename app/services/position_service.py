@@ -73,6 +73,12 @@ def get_idol_positions(db: Session, idol_id: uuid.UUID):
         return False
     return result
 
+def get_all_idol_positions(db: Session):
+    result = db.query(IdolPosition).all()
+    if not result:
+        return False
+    return result
+
 def update_idol_position_primary(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users):
     link = db.get(IdolPosition, (idol_id, position_id))
     if not link:

@@ -8,7 +8,7 @@ from app.db.models.user import Users
 from app.schema.genre import GenreCreate, GenreRead, AlbumGenreAssign, AlbumGenreRead
 from app.services.genre_service import (
     add_genre, get_genres, delete_genre,
-    assign_genre, get_album_genres, remove_genre,
+    assign_genre, get_album_genres, get_all_album_genres, remove_genre,
 )
 
 # Same rationale as idol_colors/positions: a lookup table, manager/admin-
@@ -59,6 +59,16 @@ async def list_album_genres(product_id: uuid.UUID, db: Session = Depends(get_db)
     result = get_album_genres(db, product_id)
     if not result:
         raise HTTPException(status_code=404, detail="This album has no genres tagged")
+    return result
+
+# Bulk read — lets a client building a store grid (or any other view needing
+# every album's genre tags) fetch them in one request instead of one per
+# product.
+@router.get("/album_genres/all", response_model=List[AlbumGenreRead])
+async def list_all_album_genres(db: Session = Depends(get_db)):
+    result = get_all_album_genres(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No album genres found")
     return result
 
 @router.delete("/album_genres/{product_id}/{genre_id}")

@@ -692,10 +692,16 @@ This is now a hard rule, not just an access-control nicety: `admin` and `manager
 cannot add to a cart, place an order, hold a lottery entry, or own a ticket. Enforced at two
 layers:
 
-- **Service layer** (primary, matches every other check in this codebase): `cart_service`,
-  `order_service`, and the new lottery/ticket services check `current_user.role == 'fan'` before
-  doing anything, the same shape as the existing `is_admin` checks — and return the 403 there,
-  so the DB layer below is a backstop, not the primary UX.
+- **Service layer** (primary, matches every other check in this codebase; **implemented** —
+  `project_status.md` §6 item 4): `cart_service.add_to_cart` and `order_service.checkout` raise
+  `FanOnlyPurchaseError` (`app/exception/db_triggers.py` — the same class the trigger backstop
+  below translates into, now also raised directly) when `current_user.role != 'fan'`;
+  `lottery_entry_service.apply_to_lottery` returns a `"fan_only"` sentinel for the same check,
+  matching that file's string-sentinel convention. `ticket_service.add_ticket` is the one
+  exception to "checks `current_user`" — that endpoint is **admin-only** (an admin issuing a
+  ticket to someone else), so it checks the *ticket's intended owner* (`data.user_id`)'s role
+  instead, which is the actually-meaningful check for that flow. Either way, the DB trigger below
+  is a backstop, not the primary UX, for all four.
 - **Database trigger** (backstop, `schema.sql` §5): a `BEFORE INSERT` trigger on `cart`,
   `orders`, `lottery_entries`, and `tickets` looks up the buyer's `role` and rejects the insert
   outright if it isn't `fan`. Triggers are used sparingly and deliberately in this design (eight

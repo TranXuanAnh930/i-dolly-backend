@@ -18,7 +18,7 @@ MISSING_ID = uuid.uuid4()
 # Helpers
 # ─────────────────────────────────────────────────────────────
 
-def make_mock_user(id=DEFAULT_ID, name="Test", email="test@example.com", is_admin=False, is_verified=True):
+def make_mock_user(id=DEFAULT_ID, name="Test", email="test@example.com", is_admin=False, is_verified=True, role="fan"):
     user = MagicMock()
     user.id = id
     user.name = name
@@ -26,6 +26,7 @@ def make_mock_user(id=DEFAULT_ID, name="Test", email="test@example.com", is_admi
     user.is_admin = is_admin
     user.is_verified = is_verified
     user.hashed_password = "$2b$12$hashedpassword"
+    user.role = role  # matches Users.role's real DB default (database-design.md §3.1)
     return user
 
 def make_mock_product(id=DEFAULT_ID, name="Phone", price=999.0, description="A phone", quantity=10, category_id=DEFAULT_ID):

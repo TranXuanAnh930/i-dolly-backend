@@ -8,10 +8,12 @@ from app.deps.db import get_db
 from app.db.models.user import Users
 from app.schema.concert import (
     ConcertCreate, ConcertUpdate, ConcertRead, ConcertPerformerAssign, ConcertPerformerRead,
+    EventsPageRead, ConcertDetailRead,
 )
 from app.services.concert_service import (
     add_concert, get_concerts, get_concert, update_concert, delete_concert,
-    assign_performer, get_performers, remove_performer,
+    assign_performer, get_performers, get_all_performers, remove_performer,
+    get_events_page, get_concert_detail,
 )
 
 # Company-scoped exactly like groups/idols (database-design.md §4): a manager
@@ -41,6 +43,20 @@ async def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Sessi
     result = get_concerts(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concerts found")
+    return result
+
+@router.get("/events-page", response_model=EventsPageRead)
+async def get_events_page_data(db: Session = Depends(get_db)):
+    result = get_events_page(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No concerts found")
+    return result
+
+@router.get("/{id}/detail", response_model=ConcertDetailRead)
+async def get_concert_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
+    result = get_concert_detail(db, id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Concert not found")
     return result
 
 @router.get("/{id}", response_model=ConcertRead)
@@ -82,6 +98,16 @@ async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(g
     result = get_performers(db, concert_id)
     if not result:
         raise HTTPException(status_code=404, detail="This concert has no performers assigned")
+    return result
+
+# Bulk read — lets a client that needs to know which concerts feature a
+# given idol/group (e.g. a group's detail page) fetch every performer link
+# in one request instead of looping over every concert.
+@router.get("/performers/all", response_model=List[ConcertPerformerRead])
+async def list_all_concert_performers(db: Session = Depends(get_db)):
+    result = get_all_performers(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
 @router.delete("/performers/{id}")

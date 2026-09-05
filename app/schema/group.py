@@ -1,6 +1,9 @@
 import uuid
 from datetime import date, datetime
 from pydantic import BaseModel, Field
+from app.schema.idol import IdolWithPositions
+from app.schema.concert import ConcertWithVenue
+from app.schema.products import ProductCard
 
 class GroupBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -20,3 +23,18 @@ class GroupRead(GroupBase):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+# --- page-shaped reads — one bundled response per screen (see idol.py's
+# equivalent comment).
+
+class GroupWithCount(GroupRead):
+    member_count: int
+
+class GroupsPageRead(BaseModel):
+    groups: list[GroupWithCount]
+
+class GroupDetailRead(BaseModel):
+    group: GroupRead
+    members: list[IdolWithPositions]
+    events: list[ConcertWithVenue]
+    products: list[ProductCard]

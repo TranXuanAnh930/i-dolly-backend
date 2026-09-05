@@ -4,14 +4,19 @@ from app.db.models.cart import Cart
 from app.db.models.order import Order, OrderItem
 from app.db.models.products import Product
 from app.db.models.shipping import ShippingStatus, ShippingAddress
+from app.db.models.user import Users
 from app.schema.order import OrderStatus
 from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.payment import PaymentCreate
 from app.services.payment_service import create_payment
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
-from app.exception.db_triggers import flush_or_raise
+from app.exception.db_triggers import flush_or_raise, FanOnlyPurchaseError
 
 def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
+    user = db.get(Users, user_id)
+    if not user or user.role != "fan":
+        # Primary check for trg_orders_fan_only — see FanOnlyPurchaseError's docstring.
+        raise FanOnlyPurchaseError("Only fan accounts can check out")
     cart_items = db.query(Cart).filter(Cart.user_id==user_id).options(selectinload(Cart.product)).all()
     if not cart_items:
         raise CartItemError("No item in cart")
