@@ -202,6 +202,17 @@ newly introduced.
     where `category_service.update_category` expects a `CategoryUpdate`. Left as documented,
     unfixed, per explicit instruction when found — fix by updating the test calls/schema choice
     to match each service function's current signature.
+12. **Seeded accounts share a hardcoded, publicly-committed password** — `scripts/seed.py`
+    creates `admin@example.com` plus three managers and four fans all with the password
+    `Password123!`, written in plain text in that file's own docstring in this public repo. Fine
+    for a throwaway local dev DB; not fine the moment `scripts/seed.py` is run against a real
+    deployed database (see `docs/deployment.md`) — at that point anyone who reads the repo can log
+    into the live site as a full admin. Noted, not fixed, per explicit instruction when found —
+    before ever seeding a real deployed DB, either randomize the seeded admin/manager password
+    (so only the person who ran it knows it) or don't seed that DB at all and rely on read-only
+    browsing + `/docs` to demo it. Related, much smaller: `tests/fixtures/README.md` claims
+    Pillow is "already a project dependency" — it isn't, `requirements.txt` doesn't list it;
+    harmless since `gen_fixtures.py` only ever runs standalone/locally, but the doc line is wrong.
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
