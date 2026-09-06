@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, selectinload, joinedload
 from app.db.models.products import Product
 from app.db.models.category import Category
 from app.db.models.album_detail import AlbumDetail
-from app.db.models.lightstick_detail import LightstickDetail
+from app.db.models.merch_detail import MerchDetail
 from app.db.models.genre import AlbumGenre
 from app.db.models.idol import Idol
 from app.db.models.group import Group
@@ -13,18 +13,18 @@ from typing import List
 
 # Company-scoping for update/delete/image-replace only (see docs/project_status.md
 # SS4 item 10). A product has no company_id column of its own; its owner, if any,
-# is resolved by whichever of album_details/lightstick_details references it -
+# is resolved by whichever of album_details/merch_details references it -
 # the same dual-FK "which row exists, then which of idol_id/group_id is set"
-# lookup as album_detail_service._resolve_company_id / lightstick_detail_service's
+# lookup as album_detail_service._resolve_company_id / merch_detail_service's
 # twin - rather than a direct column check, per docs/database-design.md SS6's
 # note on this. A product tied to neither (plain merch not linked to any
 # idol/group) has no company owner and stays manager-agnostic, matching the
 # permissive behavior this project already had for every product before this -
 # only a product actually tied to talent is scoped. add_product/add_bulk_products
 # are deliberately NOT scoped: a bare Product row is created before any
-# album_details/lightstick_details row exists to attach it to a company, so
+# album_details/merch_details row exists to attach it to a company, so
 # there is nothing to check yet at creation time - that's handled when the
-# details row is created, by album_detail_service/lightstick_detail_service's
+# details row is created, by album_detail_service/merch_detail_service's
 # own scoping.
 
 def _resolve_product_company_id(db: Session, product_id: uuid.UUID):
@@ -37,13 +37,13 @@ def _resolve_product_company_id(db: Session, product_id: uuid.UUID):
             group = db.get(Group, album.group_id)
             return group.company_id if group else None
         return None
-    lightstick = db.get(LightstickDetail, product_id)
-    if lightstick:
-        if lightstick.idol_id is not None:
-            idol = db.get(Idol, lightstick.idol_id)
+    merch = db.get(MerchDetail, product_id)
+    if merch:
+        if merch.idol_id is not None:
+            idol = db.get(Idol, merch.idol_id)
             return idol.company_id if idol else None
-        if lightstick.group_id is not None:
-            group = db.get(Group, lightstick.group_id)
+        if merch.group_id is not None:
+            group = db.get(Group, merch.group_id)
             return group.company_id if group else None
         return None
     return None  # plain merch - no company owner
@@ -185,8 +185,8 @@ def _build_product_cards(db: Session, products: list[Product]):
     albums = db.query(AlbumDetail).filter(AlbumDetail.product_id.in_(product_ids)).all()
     album_by_product = {a.product_id: a for a in albums}
 
-    lightsticks = db.query(LightstickDetail).filter(LightstickDetail.product_id.in_(product_ids)).all()
-    lightstick_by_product = {l.product_id: l for l in lightsticks}
+    merch = db.query(MerchDetail).filter(MerchDetail.product_id.in_(product_ids)).all()
+    merch_by_product = {m.product_id: m for m in merch}
 
     album_genres = (
         db.query(AlbumGenre)
@@ -203,7 +203,7 @@ def _build_product_cards(db: Session, products: list[Product]):
     # Longest-name-first so a group's name can't shadow one of its own
     # member's longer name — same heuristic the frontend used (catalogStore.
     # artistForAlbum) before this endpoint existed, kept only as a fallback
-    # for plain merch with neither an album_details nor lightstick_details
+    # for plain merch with neither an album_details nor merch_details
     # row (a real idol/group FK, when one exists, always wins).
     name_candidates = sorted(
         [("idol", i) for i in idols_by_id.values()] + [("group", g) for g in groups_by_id.values()],
@@ -214,8 +214,8 @@ def _build_product_cards(db: Session, products: list[Product]):
         color_hex = entity.color.hex_code if kind == "idol" and getattr(entity, "color", None) else None
         return {"type": kind, "id": entity.id, "name": entity.name, "color_hex": color_hex}
 
-    def resolve_artist(product, album, lightstick):
-        for detail in (album, lightstick):
+    def resolve_artist(product, album, merch):
+        for detail in (album, merch):
             if not detail:
                 continue
             if detail.idol_id and detail.idol_id in idols_by_id:
@@ -230,7 +230,7 @@ def _build_product_cards(db: Session, products: list[Product]):
     cards = []
     for product in products:
         album = album_by_product.get(product.id)
-        lightstick = lightstick_by_product.get(product.id)
+        merch = merch_by_product.get(product.id)
         cards.append({
             "id": product.id,
             "name": product.name,
@@ -245,7 +245,7 @@ def _build_product_cards(db: Session, products: list[Product]):
                 "cover_image_url": album.cover_image_url,
             } if album else None,
             "genres": genres_by_product.get(product.id, []),
-            "artist": resolve_artist(product, album, lightstick),
+            "artist": resolve_artist(product, album, merch),
         })
     return cards
 
@@ -307,7 +307,7 @@ def _product_read_dict(product: Product):
 
 # Batch version of _resolve_product_company_id — one query per detail table
 # instead of two per product. A product with neither an album_details nor a
-# lightstick_details row (plain merch) resolves to None: "no company owns
+# merch_details row (plain merch) resolves to None: "no company owns
 # this", not "belongs to no one's view" — _manager_scope_violation already
 # treats that as manageable by any manager, so a manager's product list
 # must show it too, not just their own company's products.
@@ -316,9 +316,9 @@ def _resolve_product_company_ids(db: Session, products: list[Product]):
     if not product_ids:
         return {}
     albums = db.query(AlbumDetail).filter(AlbumDetail.product_id.in_(product_ids)).all()
-    lightsticks = db.query(LightstickDetail).filter(LightstickDetail.product_id.in_(product_ids)).all()
+    merch = db.query(MerchDetail).filter(MerchDetail.product_id.in_(product_ids)).all()
     detail_by_product = {}
-    for detail in albums + lightsticks:
+    for detail in albums + merch:
         detail_by_product[detail.product_id] = detail
 
     idol_ids = {d.idol_id for d in detail_by_product.values() if d.idol_id}

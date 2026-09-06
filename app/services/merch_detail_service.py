@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy.orm import Session
-from app.schema.lightstick_detail import LightstickDetailCreate, LightstickDetailUpdate
-from app.db.models.lightstick_detail import LightstickDetail
+from app.schema.merch_detail import MerchDetailCreate, MerchDetailUpdate
+from app.db.models.merch_detail import MerchDetail
 from app.db.models.products import Product
 from app.db.models.idol import Idol
 from app.db.models.group import Group
@@ -23,10 +23,10 @@ def _resolve_company_id(db: Session, idol_id, group_id):
         return group.company_id if group else None
     return None
 
-def add_lightstick_detail(db: Session, data: LightstickDetailCreate, current_user: Users):
+def add_merch_detail(db: Session, data: MerchDetailCreate, current_user: Users):
     if not db.get(Product, data.product_id):
         return "not_found"
-    if db.get(LightstickDetail, data.product_id):
+    if db.get(MerchDetail, data.product_id):
         return "conflict"
     if data.color_id is not None and not db.get(IdolColor, data.color_id):
         return "not_found"
@@ -35,23 +35,23 @@ def add_lightstick_detail(db: Session, data: LightstickDetailCreate, current_use
         return "not_found"
     if _manager_scope_violation(current_user, company_id):
         return "forbidden"
-    db_ls = LightstickDetail(**data.model_dump())
+    db_ls = MerchDetail(**data.model_dump())
     db.add(db_ls)
-    commit_or_raise(db)  # trg_lightstick_details_exclusive_kind
+    commit_or_raise(db)  # trg_merch_details_exclusive_kind
     db.refresh(db_ls)
     return db_ls
 
-def get_lightstick_detail(db: Session, product_id: uuid.UUID):
-    return db.get(LightstickDetail, product_id)
+def get_merch_detail(db: Session, product_id: uuid.UUID):
+    return db.get(MerchDetail, product_id)
 
-def get_lightstick_details(db: Session):
-    result = db.query(LightstickDetail).all()
+def get_merch_details(db: Session):
+    result = db.query(MerchDetail).all()
     if not result:
         return False
     return result
 
-def update_lightstick_detail(db: Session, product_id: uuid.UUID, data: LightstickDetailUpdate, current_user: Users):
-    db_ls = db.get(LightstickDetail, product_id)
+def update_merch_detail(db: Session, product_id: uuid.UUID, data: MerchDetailUpdate, current_user: Users):
+    db_ls = db.get(MerchDetail, product_id)
     if not db_ls:
         return "not_found"
     company_id = _resolve_company_id(db, db_ls.idol_id, db_ls.group_id)
@@ -65,8 +65,8 @@ def update_lightstick_detail(db: Session, product_id: uuid.UUID, data: Lightstic
     db.refresh(db_ls)
     return db_ls
 
-def delete_lightstick_detail(db: Session, product_id: uuid.UUID, current_user: Users):
-    db_ls = db.get(LightstickDetail, product_id)
+def delete_merch_detail(db: Session, product_id: uuid.UUID, current_user: Users):
+    db_ls = db.get(MerchDetail, product_id)
     if not db_ls:
         return "not_found"
     company_id = _resolve_company_id(db, db_ls.idol_id, db_ls.group_id)

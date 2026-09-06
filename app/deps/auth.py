@@ -33,10 +33,9 @@ def require_admin(current_user:Users=Depends(get_current_user)) -> Users:
 
 def require_manager_or_admin(current_user:Users=Depends(get_current_user)) -> Users:
     """Gate for actions a company manager can also do (CRUD on their own
-    company's idols/groups/concerts/albums/singles/lightsticks — see
+    company's idols/groups/concerts/albums/singles/merchandise — see
     database-design.md Section 4's role table). Does NOT scope to the
     manager's own company_id — that's a query-level filter each service
-    function still needs to apply (CLAUDE.md Section 9), same as how every
     other mutating query already filters by user_id. This dependency only
     answers "is this role allowed to attempt the action at all."
     """

@@ -75,7 +75,7 @@ class DuplicateConcertTicketError(TriggerViolationError):
 
 
 class ProductDetailKindConflictError(TriggerViolationError):
-    """trg_album_details_exclusive_kind / trg_lightstick_details_exclusive_kind
+    """trg_album_details_exclusive_kind / trg_merch_details_exclusive_kind
     (fn_enforce_single_product_detail_kind)."""
 
 
@@ -101,7 +101,7 @@ _MESSAGE_PATTERNS = [
     ("not concert_id=", LotteryPreferenceTicketTypeMismatchError),
     ("anti-resale cap on product_id=", ResaleCapExceededError),
     ("only one ticket per person per concert", DuplicateConcertTicketError),
-    ("already has a lightstick_details row", ProductDetailKindConflictError),
+    ("already has a merch_details row", ProductDetailKindConflictError),
     ("already has an album_details row", ProductDetailKindConflictError),
     ("(max_entries_per_user=", LotteryEntryCapExceededError),
     ("has not ranked ticket_type_id=", LotteryPreferenceRequiredError),

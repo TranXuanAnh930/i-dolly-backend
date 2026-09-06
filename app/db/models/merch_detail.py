@@ -4,9 +4,9 @@ from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
 
-class LightstickDetail(Base):
+class MerchDetail(Base):
 
-    __tablename__ = "lightstick_details"
+    __tablename__ = "merch_details"
 
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
     idol_id = Column(UUID(as_uuid=True), ForeignKey("idols.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
@@ -16,11 +16,11 @@ class LightstickDetail(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        # Strict XOR, unlike album_details' "at least one of": a lightstick is
+        # Strict XOR, unlike album_details' "at least one of": a merch detail is
         # always either an idol's personal design or a group's official one.
         CheckConstraint(
             "(idol_id IS NOT NULL AND group_id IS NULL) OR (idol_id IS NULL AND group_id IS NOT NULL)",
-            name="chk_lightstick_details_owner",
+            name="chk_merch_details_owner",
         ),
     )
 

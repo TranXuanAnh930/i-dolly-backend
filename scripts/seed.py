@@ -76,7 +76,7 @@ from app.db.base import (
     AlbumDetail,
     Genre,
     AlbumGenre,
-    LightstickDetail,
+    MerchDetail,
     LotteryPreference,
     LotteryCampaign,
     LotteryEntry,
@@ -511,8 +511,7 @@ def seed(db):
     cat_album = get_or_create_category(db, "Album", True)
     cat_single = get_or_create_category(db, "Single", True)
     cat_ep = get_or_create_category(db, "EP", True)
-    cat_lightstick = get_or_create_category(db, "Lightstick", True)
-    cat_merch = get_or_create_category(db, "Merch", False)
+    cat_merch = get_or_create_category(db, "Merch", True)
     db.flush()
 
     CATEGORY_BY_KIND = {"album": cat_album, "single": cat_single, "ep": cat_ep}
@@ -597,11 +596,11 @@ def seed(db):
         product = Product(
             name=title, price=price,
             description=f"Official {edition.lower()} lightstick.",
-            quantity=qty, category_id=cat_lightstick.id, image_url=image_url,
+            quantity=qty, category_id=cat_merch.id, image_url=image_url,
         )
         db.add(product)
         db.flush()
-        db.add(LightstickDetail(
+        db.add(MerchDetail(
             product_id=product.id,
             group_id=group.id if group else None,
             idol_id=idol.id if idol else None,

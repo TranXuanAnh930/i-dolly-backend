@@ -27,7 +27,7 @@ class ProductRead(ProductBase):
 # equivalent comment). ProductCard is the single shape every product-grid
 # view renders (store grid, a group's products, a product's own
 # recommendations) — album info, genre tags, and the resolved artist
-# (idol/group, from album_details/lightstick_details, or a name-prefix
+# (idol/group, from album_details/merch_details, or a name-prefix
 # match for plain merch with neither) all embedded so the client never
 # needs a second lookup to render one.
 

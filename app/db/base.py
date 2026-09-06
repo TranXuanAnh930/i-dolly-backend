@@ -36,5 +36,5 @@ from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.ticket import Ticket
 from app.db.models.album_detail import AlbumDetail
 from app.db.models.genre import Genre, AlbumGenre
-from app.db.models.lightstick_detail import LightstickDetail
+from app.db.models.merch_detail import MerchDetail
 from app.db.models.notification import Notification

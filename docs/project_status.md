@@ -8,12 +8,25 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-41 migrations, one linear chain, no branches. Chain head: **`df79d71c6a2c`**
-(`create_notifications_table`, chained onto `10f9dfa05636`) — **written and verified via a real
-mapper-configuration/import test (§3), but not yet run with `alembic upgrade head` against any
-Postgres instance**, live or otherwise; the DB itself (including this project's own local Docker
-Compose Postgres, which happens to be reachable this session) is still sitting at `10f9dfa05636`
-pending an explicit decision to apply it. Previous head: **`10f9dfa05636`**
+42 migrations, one linear chain, no branches. Chain head: **`b60aec9ffc02`**
+(`merge_lightstick_category_into_merch`, chained onto `df79d71c6a2c`) — **generated and reviewed,
+not yet applied to any Postgres instance**, live or otherwise; the local Docker Compose Postgres
+(confirmed reachable and used for live verification of the fan-only-purchase and category-500
+fixes) is still sitting at `10f9dfa05636`, two migrations behind the chain head. Backfills every
+`Lightstick`-categorized product to `Merch`, deletes the `Lightstick` category row, renames
+`lightstick_details` → `merch_details` (table, its `CHECK` constraint, its 3 indexes), and
+`CREATE OR REPLACE`s `fn_enforce_single_product_detail_kind()` so its hardcoded table-name
+reference stays correct after the rename — see `database-design.md` §3.15/§3.17 for the full
+design reasoning and §7.5 for the migration-sequencing note. **Application-code side of this
+change (renaming `LightstickDetail`/`lightstick_detail_service`/`lightstick_detail` router/schema
+to their `Merch*`/`merch_detail*` equivalents, plus every import site — see §2/§4 below) is being
+done by hand, not by Claude — migration/DDL work was, since catalog renames and trigger-function
+bodies are more "get the mechanics right" than a novel design judgment call. Until the code side
+lands, the app will not actually import cleanly against this new migration's schema — apply and
+merge together, not the migration alone.
+
+Previous head, still what the live DB is actually running: **`df79d71c6a2c`**
+(`create_notifications_table`, chained onto `10f9dfa05636`). Before that: `10f9dfa05636`
 (`extend_idol_colors_and_genres` — adds 17 more `idol_colors` rows and 5 more `genres` rows
 needed for the expanded seed roster below; previous head was `019b674bf0c1`,
 `add_image_url_to_products`). All 18 domain tables from `database-design.md` §1–§3 plus the
@@ -259,20 +272,41 @@ newly introduced.
     against the running dev stack, not just `py_compile`: the exact request that previously 500'd
     now returns a clean 400, a valid update on the same product still succeeds, and the
     cross-company 403 from item 14 below still fires correctly (no regression).
-14. **Plain "Merch" products have no company ownership at all**, so any manager can edit/delete
-    one, even a merch item whose *name* clearly signals which company's group it belongs to (e.g.
+14. ~~**Plain "Merch" products have no company ownership at all**~~ — **design decided, migration
+    written, application code in progress.** Originally: any manager could edit/delete a merch
+    item whose *name* clearly signalled which company's group it belonged to (e.g.
     `Sakura Prism Tour Hoodie`, seeded under Nova Entertainment's group but with no structural
-    link to it). This is not a bug in `_manager_scope_violation` — verified live: a manager editing
-    an **album**-linked product from another company correctly gets 403; the gap is specifically
-    that `_resolve_product_company_id` (`product_service.py`) has nothing to resolve for a product
-    with no `album_details`/`lightstick_details` row, and `None` was already documented (item 10,
-    `database-design.md` §3.15/§6) as "ownerless — any manager may manage it," a deliberate
-    decision at the time. Reported as "manager from another company can edit other companies'
-    products" — that framing is accurate for merch specifically, just not for the reason it first
-    sounds like. **Still open**: needs a real design decision (add `company_id` directly to
-    `products`; give merch its own optional idol/group link like `album_details`/
-    `lightstick_details` do; or leave it ownerless on purpose and document it as a known
-    limitation rather than a gap) — not fixed here, since it's schema/scope work, not a bug fix.
+    link to it) — not a bug in `_manager_scope_violation` (verified live: an **album**-linked
+    product from another company correctly got 403), but a real gap in what `_resolve_product_
+    company_id` had to resolve against for merch specifically. **Resolution chosen, after
+    discussion, over the two other options on the table** (a direct `products.company_id` column;
+    a brand-new standalone `merch_details` table): **merge the `Lightstick` category into `Merch`
+    and generalize `lightstick_details` into `merch_details`**, rather than build a second,
+    near-identical detail table. Nothing in this project's business rules ever actually
+    distinguished a lightstick from any other piece of official branded merch — same resale-cap
+    treatment, same ownership-resolution shape, same "sold under one clear banner" XOR reasoning —
+    so lightsticks already had exactly the mechanism merch needed; the fix generalizes it instead
+    of duplicating it. `Album`/`Single`/`EP`/`Merch` (4 categories) is also a more internally
+    consistent split than the previous 5, where 4 of 5 buckets were music-related and Lightstick
+    was an unexplained carve-out. Full design reasoning: `database-design.md` §3.15/§3.17.
+    Migration `b60aec9ffc02` (see §1) is written and reviewed, not yet applied. Application code
+    (model/schema/service/router renames, `product_service.py`'s two resolvers, `scripts/seed.py`)
+    is being done by hand — not yet landed as of this writing, so **don't treat this as fixed
+    until both the migration is applied and the code changes are merged in.**
+
+15. ~~**`DELETE /profile/delete` 500'd for any user with a `shipping_addresses` row**~~ —
+    **FIXED**. `Users.shippingadd`/`cart`/`user_order`/`paymentuser` (`app/db/models/user.py`)
+    had no `passive_deletes`, so on `db.delete(db_user)` SQLAlchemy's default unit-of-work tried
+    to `UPDATE ... SET user_id = NULL` on each child row before deleting the parent — which
+    raised a `NotNullViolation` since `shipping_addresses.user_id`/`cart.user_id`/
+    `orders.user_id`/`payment.user_id` are all `NOT NULL`, even though their FKs already declare
+    `ON DELETE CASCADE` at the DB level (see each table's migration). Fixed all four
+    relationships the same way (not just `shippingadd`, which is all the reported repro hit) by
+    adding `passive_deletes=True`, so SQLAlchemy skips the nullify step and lets Postgres's
+    existing cascade handle it. Verified live against the running dev stack (not just
+    `py_compile`): registered a fresh fan, added a shipping address, `DELETE /profile/delete` now
+    returns a clean 200, and both the `users` and `shipping_addresses` rows are confirmed gone
+    from Postgres afterward.
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a

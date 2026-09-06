@@ -10,7 +10,7 @@ An idol-concert **ticket reservation site** with an **album/singles marketplace*
 **portfolio project** — not a real company's backend. It started as a generic FastAPI
 e-commerce boilerplate (`VinayParmar555/E-commerce`, forked) and is being turned, incrementally,
 into the idol-ticket domain: idols/groups, venues/concerts, lottery-based ticket sales, and an
-album/lightstick marketplace layered on the original cart/order/payment plumbing.
+album/merch marketplace layered on the original cart/order/payment plumbing.
 
 ## 2. Goal
 
@@ -34,8 +34,9 @@ Four clusters — see `docs/database-design.md` §1 for the full breakdown:
 - **Talent** — management companies, groups, idols, idol colors, positions.
 - **Events & ticketing** — venues, concerts, ticket types (lottery or direct sale), lottery
   preferences/campaigns/entries, issued tickets.
-- **Marketplace** — products/categories extended with album/single/EP details, lightstick
-  details, genres — reusing the original cart/order/payment/shipping machinery.
+- **Marketplace** — products/categories extended with album/single/EP details, merch details
+  (covers lightsticks and other official branded merch — see `database-design.md` §3.17), genres —
+  reusing the original cart/order/payment/shipping machinery.
 
 ## 5. Database & architecture
 

@@ -57,12 +57,14 @@ Four clusters, three of them new:
    a concert), `lottery_campaigns`, `lottery_entries`, `tickets`.
 4. **Marketplace** (extends the existing `products`/`categories`/`cart`/`orders`/`payment`/
    `shipping_*` tables) — `categories` is now the single source of truth for "what kind of
-   product is this" (seeded with Album/Single/EP/Lightstick/Merch), and two new 1:1 detail
+   product is this" (seeded with Album/Single/EP/Merch — **4 categories, not 5**: "Lightstick"
+   was merged into "Merch", see §3.17's "merged this round" note), and two new 1:1 detail
    tables hang off `products`: `album_details` (covers albums, singles, AND EPs uniformly —
-   see §3.16) and `lightstick_details` (new this round). `genres`/`album_genres` do
+   see §3.16) and `merch_details` (new this round, covers lightsticks and any other officially
+   branded merch tied to one idol or one group). `genres`/`album_genres` do
    many-to-many genre tagging for every `album_details` row regardless of category, so the
    existing cart/checkout/payment/shipping machinery keeps working for albums, singles, EPs,
-   lightsticks, and merch exactly as it does today for generic products. **Only fans can use
+   and merch exactly as it does today for generic products. **Only fans can use
    any of it** — see §4.1.
 
 ## 2. ERD
@@ -178,7 +180,7 @@ erDiagram
     CATEGORIES ||--o{ PRODUCTS : classifies
     CATEGORIES {
         uuid id PK
-        string name UQ "Album / Single / EP / Lightstick / Merch"
+        string name UQ "Album / Single / EP / Merch"
         bool is_resale_capped "drives the anti-resale trigger, §4.2"
     }
 
@@ -205,15 +207,15 @@ erDiagram
         string name
     }
 
-    PRODUCTS ||--o| LIGHTSTICK_DETAILS : describes
-    IDOLS ||--o{ LIGHTSTICK_DETAILS : "owner (XOR with group)"
-    GROUPS ||--o{ LIGHTSTICK_DETAILS : "owner (XOR with idol)"
-    IDOL_COLORS ||--o{ LIGHTSTICK_DETAILS : "shell/light color (nullable)"
-    LIGHTSTICK_DETAILS {
+    PRODUCTS ||--o| MERCH_DETAILS : describes
+    IDOLS ||--o{ MERCH_DETAILS : "owner (XOR with group)"
+    GROUPS ||--o{ MERCH_DETAILS : "owner (XOR with idol)"
+    IDOL_COLORS ||--o{ MERCH_DETAILS : "shell/light color (nullable)"
+    MERCH_DETAILS {
         uuid product_id PK_FK
         uuid idol_id FK "nullable, XOR with group_id"
         uuid group_id FK "nullable, XOR with idol_id"
-        string edition "e.g. Ver. 3 (nullable)"
+        string edition "e.g. Ver. 3 (nullable) — lightsticks only, generic for other merch"
         uuid color_id FK "nullable"
     }
 ```
@@ -502,6 +504,16 @@ only Album/Single/EP/Lightstick were capped and Merch was exempt). The flag and 
 flipped to `true`, so a future exemption is opt-out rather than opt-in, but the mechanism is
 otherwise unchanged — see §4.2.
 
+**Merged this round: `Lightstick` → `Merch`, four seeded categories, not five.** Nothing in this
+design's actual business rules ever distinguished a lightstick from any other piece of official
+branded merch — the resale cap already applied identically to both, company-ownership resolution
+is the same walk (idol/group → `company_id`, see §3.17), and even the strict-XOR "exactly one
+owner" rule was never really lightstick-specific. `Lightstick` was the one non-music category with
+its own top-level slot for no functional reason recorded anywhere in this doc's design history —
+migration `b60aec9ffc02` backfills every existing `Lightstick`-categorized product to `Merch` and
+deletes the category row. `lightstick_details` is renamed to `merch_details` in the same
+migration — see §3.17.
+
 **`products.category_id` is now `NOT NULL`** — live as of migration
 `71b1b0443c96_make_products_category_id_not_null.py`, which backfills any pre-existing
 uncategorized product to `Merch` before tightening the column. This landed ahead of the rest of
@@ -515,16 +527,16 @@ product is this" is recorded; §3.16/§3.17 hold only the facts specific to that
 classification itself.
 
 **Category ↔ details-table agreement is still app-level, not DB-enforced** (same pattern as
-idol/group company match, §3.4): Album/Single/EP ↔ an `album_details` row, Lightstick ↔ a
-`lightstick_details` row, Merch ↔ neither. Enforced in `product_service`, not a trigger — this is
-ordinary cross-table consistency, not a money/fairness invariant (§4.1's criteria for what earns a
-trigger).
+idol/group company match, §3.4): Album/Single/EP ↔ an `album_details` row, Merch ↔ an optional
+`merch_details` row (plain, un-branded merch may legitimately have neither — §3.17). Enforced in
+`product_service`, not a trigger — this is ordinary cross-table consistency, not a money/fairness
+invariant (§4.1's criteria for what earns a trigger).
 
 **The "never both" half of that, though, is now DB-enforced (this round)** — see §3.17's mutual
 exclusivity trigger. That distinction is deliberate: "category says Album but there's no
 `album_details` row yet" is a workflow gap (the manager is mid-way through filling out a new
 release), unusual but recoverable, left to the service layer. "A product has rows in
-*both* `album_details` and `lightstick_details`" is a genuinely nonsensical state — it would
+*both* `album_details` and `merch_details`" is a genuinely nonsensical state — it would
 corrupt the resale-cap and classification logic no matter which value `categories.name` claims —
 so it gets the harder guarantee, explicitly requested rather than inferred.
 
@@ -549,33 +561,52 @@ so `Cart`, `Order`/`OrderItem`, `Payment`, and (for physical formats)
 `ShippingAddress`/`ShippingStatus` all keep working unmodified. A plain merch item is just a
 `products` row with no matching `album_details` row.
 
-### 3.17 `lightstick_details` (new)
+### 3.17 `merch_details` (new; originally shipped as `lightstick_details`, merged/renamed this
+round — §3.15)
 
-One-to-one extension of `products`, same shape of idea as `album_details` but for the other kind
-of official artist merch that carries idol/group identity: `product_id` (PK, FK), `idol_id` (FK,
-nullable), `group_id` (FK, nullable), `edition` (free text, e.g. "Ver. 3" — open-ended, not worth
-a lookup table), `color_id` (FK to the existing `idol_colors` lookup, §3.5, nullable).
+One-to-one extension of `products`, same shape of idea as `album_details` but for official artist
+merch that carries idol/group identity — a lightstick, a tour hoodie, anything sold under one
+specific idol's or group's name: `product_id` (PK, FK), `idol_id` (FK, nullable), `group_id` (FK,
+nullable), `edition` (free text, e.g. "Ver. 3" or "World Tour 2026" — open-ended, not worth a
+lookup table), `color_id` (FK to the existing `idol_colors` lookup, §3.5, nullable).
 
-**Strict XOR on `idol_id`/`group_id`**, unlike `album_details`' "at least one of": a lightstick is
-always either one member's personal lightstick or one group's official lightstick, never
-ambiguously both at once, so the `CHECK` constraint requires exactly one.
+**Originally `lightstick_details`, scoped to lightsticks only.** Merged into a generic
+`merch_details` table this round (migration `b60aec9ffc02`) once it became clear nothing about its
+shape was actually lightstick-specific — same ownership resolution, same resale-cap treatment,
+same "sold under one clear banner" reasoning as the XOR rule below. The bug that surfaced this: a
+plain, un-linked `Merch`-category product (no detail row of any kind) resolves to no company
+owner at all (§3.15/§4's role table) and is manager-agnostic by design — which is correct for
+genuinely un-branded merch, but was *also*, incorrectly, the state of merch that obviously belonged
+to one company (a product named "Sakura Prism Tour Hoodie" with no structural link to the Sakura
+Prism group). Attaching a `merch_details` row is what turns "ownerless by omission" into "actually
+scoped" for merch the way it already was for lightsticks — the fix was generalizing the mechanism
+lightsticks already had, not inventing a new one. Column shape, XOR rule, and the mutual-exclusivity
+trigger below are all unchanged from the original `lightstick_details` design; only the name and
+which categories can use it changed.
+
+**Strict XOR on `idol_id`/`group_id`**, unlike `album_details`' "at least one of": a piece of merch
+is always either one member's personal item or one group's official one, never ambiguously both at
+once, so the `CHECK` constraint requires exactly one. A product with no `merch_details` row at all
+stays fully ownerless (any manager may manage it) — attaching one is opt-in, not required, so
+plain/generic merch is unaffected.
 
 **`color_id` reuses `idol_colors`** rather than introducing a second color lookup — a lightstick's
-shell/light color is usually the group's or a member's signature color already modeled there, so
-this is genuine reuse, not duplication. This is an addition beyond the literal request (only
-"group id OR idol id" was asked for); flagged here as an assumption, easy to drop the column if
-it's not wanted.
+shell/light color, or a hoodie's print color, is usually the group's or a member's signature color
+already modeled there, so this is genuine reuse, not duplication.
 
-No genres relationship — lightsticks aren't musical releases, so `album_genres` doesn't apply.
+No genres relationship — merch isn't a musical release, so `album_genres` doesn't apply.
 
-**Mutually exclusive with `album_details` (this round, DB-enforced):** a product can have a row in
-`album_details` or a row in `lightstick_details`, never both. Since the two tables are siblings
+**Mutually exclusive with `album_details` (DB-enforced):** a product can have a row in
+`album_details` or a row in `merch_details`, never both. Since the two tables are siblings
 (each PK'd on `products.id` independently), nothing structurally prevented a product from having
 rows in both until now. This can't be a single-table `CHECK` — it spans two tables — so it's a
 trigger pair (`fn_enforce_single_product_detail_kind`, `schema.sql` §4c): one on each table's
 `BEFORE INSERT`, each checking the other table doesn't already have a row for that `product_id`.
 Explicitly requested as a guarantee, not left as a should-hold rule — see the exclusivity note in
-§3.15.
+§3.15. The trigger function itself, and the `trg_lightstick_details_exclusive_kind` trigger's name,
+were updated in the same rename migration (`b60aec9ffc02`) to reference `merch_details` — a
+straight table rename does not rewrite table names hardcoded inside a PL/pgSQL function body, so
+this needed an explicit `CREATE OR REPLACE FUNCTION`, not just `ALTER TABLE ... RENAME`.
 
 ### 3.18 `genres` + `album_genres` (new)
 
@@ -626,11 +657,11 @@ migration in this repo.
 | CRUD own company's idols/groups | ✅ | ✅ (own `company_id` only) | ❌ |
 | CRUD another company's idols/groups | ✅ | ❌ | ❌ |
 | CRUD concerts/ticket types/lottery campaigns (own company) | ✅ | ✅ | ❌ |
-| CRUD albums/singles/EPs/lightsticks (own company's idols/groups) | ✅ | ✅ | ❌ |
+| CRUD albums/singles/EPs/merch (own company's idols/groups) | ✅ | ✅ | ❌ |
 | Manage users / assign roles | ✅ | ❌ | ❌ |
 | Manage `categories` (name, is_resale_capped) | ✅ | ❌ | ❌ |
-| View idol/group/concert/album/lightstick listings | ✅ | ✅ | ✅ |
-| Buy albums/singles/EPs/lightsticks/merch (cart → checkout) | ❌ | ❌ | ✅ |
+| View idol/group/concert/album/merch listings | ✅ | ✅ | ✅ |
+| Buy albums/singles/EPs/merch (cart → checkout) | ❌ | ❌ | ✅ |
 | Apply to a lottery directly (no purchase required) | ❌ | ❌ | ✅ |
 | Pay for a won ticket slot | ❌ | ❌ | ✅ |
 | View/mark-read own notifications | ❌ | ❌ | ✅ |
@@ -642,7 +673,7 @@ fixed). Both check `current_user.role`, not `is_admin` — role is the source of
 `Users.role`/`Users.company_id` are wired into the ORM model (a new `ManagementCompany` model was
 added alongside them, since `company_id`'s FK needs a mapped class to resolve). Wired in per the
 role table above: product CRUD (add/update/delete/bulk — products are how
-albums/singles/lightsticks are represented) → `require_manager_or_admin`; category management,
+albums/singles/merch are represented) → `require_manager_or_admin`; category management,
 shipping-status updates, and promoting a user to admin stayed `require_admin`, since those are
 platform-wide actions the role table doesn't extend to managers.
 
@@ -711,10 +742,10 @@ layers:
   get a DB-level backstop share one property: the failure mode is money or fairness ("an admin
   account bought a ticket," "a scalper bought 40 copies of one album," "a fan got drawn into a
   lottery for a tier they never agreed to," "a lottery preference points at a ticket type from the
-  wrong concert," "a product is somehow both an album and a lightstick"), worth defending even
+  wrong concert," "a product is somehow both an album and a piece of merch"), worth defending even
   against a future bug or a forgotten check on a new endpoint — not a signal that triggers are now
   the house style. The one exception to the "money or fairness" framing is the
-  `album_details`/`lightstick_details` mutual-exclusivity pair (§3.15/§3.17) — it was added because
+  `album_details`/`merch_details` mutual-exclusivity pair (§3.15/§3.17) — it was added because
   it was asked for explicitly and a product that's both is a genuinely nonsensical state, not
   because it protects money or fairness like the others do.
 
@@ -759,7 +790,7 @@ worry about interacting with it.
 separate flows that share no steps. Buying something never touches the lottery; entering the
 lottery never touches checkout. They're diagrammed separately below.
 
-### 5.1 Flow A — buy album/single/EP/lightstick/merch (unaffected by the lottery)
+### 5.1 Flow A — buy album/single/EP/merch (unaffected by the lottery)
 
 ```mermaid
 sequenceDiagram
@@ -767,9 +798,9 @@ sequenceDiagram
     participant API as Order/Checkout API
     participant DB as Postgres
 
-    Fan->>API: Buy album/single/EP/lightstick/merch (existing cart → checkout flow)
+    Fan->>API: Buy album/single/EP/merch (existing cart → checkout flow)
     API->>DB: Create Order/OrderItem/Payment (existing flow)
-    Note over API,DB: trg_orders_items_resale_cap rejects the line outright past 3 lifetime units of that SPECIFIC product, for any category flagged is_resale_capped (Album/Single/EP/Lightstick) — anti-resale (§4.2). Merch is uncapped. Nothing here ever touches lottery_entries.
+    Note over API,DB: trg_orders_items_resale_cap rejects the line outright past 3 lifetime units of that SPECIFIC product, for any category flagged is_resale_capped — every category (Album/Single/EP/Merch) is capped by default as of §4.2's "cap all products" round; this note previously said Merch was uncapped, which was already stale before this round's rename, fixed here. Nothing here ever touches lottery_entries.
     Note over API,DB: This phase assumes every payment succeeds (mock gateway) — failed/retried payments are out of scope, see §6
 ```
 
@@ -1135,6 +1166,17 @@ service-layer scoping (§4) is the multi-tenancy model going forward, not a per-
 split. A per-tenant-schema design was drafted and considered for `management_companies` in an
 earlier round of this doc; it was explicitly removed rather than deferred — noted here so it
 isn't quietly re-proposed later without knowing it was already discussed and decided against.
+
+**Later addition, well past the `7abe0b6123b3` head above**: `df79d71c6a2c` added `notifications`
+(§3.19). On top of that, `b60aec9ffc02` merges the `Lightstick` category into `Merch` and renames
+`lightstick_details` → `merch_details` (§3.15/§3.17) — a backfill (reassign every `Lightstick`
+product to `Merch`) and a category-row delete, then the table/constraint/index renames, then a
+`CREATE OR REPLACE` of `fn_enforce_single_product_detail_kind()` since a table rename doesn't
+rewrite the table name hardcoded in that function's PL/pgSQL body. Both are forward migrations,
+not in-place edits — unlike the UUID PK rewrite (§1's intro), every migration up through at least
+`10f9dfa05636` has by now actually run against a real Postgres instance (this project's own local
+Docker Compose stack, confirmed reachable and at that exact head in one session), so editing an
+already-applied migration in place is no longer an option the way it was earlier in this project.
 
 ## 8. ORM/CRUD build-out: the tables migrated in §7.5
 

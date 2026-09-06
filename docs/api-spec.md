@@ -66,7 +66,7 @@ so a UI can be scaffolded before every endpoint is wired in.
 - Idol profile page — §3 `Idols`, plus their positions (§3 `Positions`) and merch (§5)
 - Group profile page — §3 `Groups`, plus member roster (§3 `Positions`)
 - Concert detail page — §4 `Concerts`, its ticket types (§4 `Ticket Types`), performers
-- Merch catalog + product detail — §5 `Products`, `Categories`, `Album Details`, `Lightstick
+- Merch catalog + product detail — §5 `Products`, `Categories`, `Album Details`, `Merch
   Details`, `Genres`
 - Login / register / email verify / forgot-password / reset-password — §2
 
@@ -86,7 +86,7 @@ so a UI can be scaffolded before every endpoint is wired in.
   admin-only)
 - Manage concerts, ticket types, performer assignments — §4 (campaigns/entries listing is
   manager+; drawing/issuing tickets is not exposed here — see `project_status.md` §5)
-- Manage products, album details, lightstick details, genre assignments — §5 (product image
+- Manage products, album details, merch details, genre assignments — §5 (product image
   upload/replace, update, delete are company-scoped — see the 403 note under `Products`)
 
 **Admin (site-wide):**
@@ -493,7 +493,7 @@ exist yet (`project_status.md` §5).
 
 ---
 
-## 5. Marketplace — Products, Categories, Album/Lightstick Details, Genres
+## 5. Marketplace — Products, Categories, Album/Merch Details, Genres
 
 ### `POST /Categories/add` 🔒 admin
 - Request (`CategoryBase`): `name` (str, 1–100 chars)
@@ -541,15 +541,16 @@ Note: `id` is a query param here, not a path segment.
   `category_id` (uuid), `image` (file, optional, same constraints as idol images)
 - Response: `{"msg": "Product added successfully"}` — refetch to get the new product's `id`
 - UI: manager — create product. Deliberately unscoped to any company at creation (see
-  `project_status.md` §4 item 10) — a bare product has no idol/group tie until an album/lightstick
+  `project_status.md` §4 item 10) — a bare product has no idol/group tie until an album/merch
   detail is attached to it (below)
 
-### `PUT /products/update/{id}` 🔒 manager+ — **company-scoped once the product has album/lightstick
+### `PUT /products/update/{id}` 🔒 manager+ — **company-scoped once the product has album/merch
 details attached**
 - Request (`ProductCreate`): `name`, `price`, `description`, `quantity`, `image_url`,
   `category_id`
-- Response: `{"msg": "Product Updated successfully"}`
-- UI: manager — edit product. `403` if the product is tied (via album/lightstick details) to a
+- Response: `{"msg": "Product Updated successfully"}` — `400` if `category_id` doesn't reference
+  an existing category (`project_status.md` item 13)
+- UI: manager — edit product. `403` if the product is tied (via album/merch details) to a
   different company than the manager's
 
 ### `POST /products/{id}/image` 🔒 manager+ (same company-scoping as update)
@@ -618,26 +619,31 @@ company ownership.
 - Response: `{"msg": "Genre unassigned from album successfully"}`
 - UI: album edit page — remove a genre tag
 
-### `POST /lightstick_details/add` 🔒 manager+
-Same pattern as album details, for official lightstick merch.
-- Request (`LightstickDetailCreate`): `product_id` (uuid), `idol_id` (uuid, optional), `group_id`
+### `POST /merch_details/add` 🔒 manager+
+Same pattern as album details, for official merch tied to one idol or one group — a lightstick, a
+tour hoodie, anything sold under one clear banner. (Originally `/lightstick_details/*`, scoped to
+lightsticks only; generalized when the `Lightstick` category was merged into `Merch` — see
+`database-design.md` §3.15/§3.17. Request/response field shape is unchanged from before the
+rename.)
+- Request (`MerchDetailCreate`): `product_id` (uuid), `idol_id` (uuid, optional), `group_id`
   (uuid, optional — exactly one), `edition` (str, optional), `color_id` (uuid, optional — links to
   `idol_colors`)
-- Response (`LightstickDetailRead`): adds `created_at`
-- UI: manager — "this is a lightstick" toggle on the product form
+- Response (`MerchDetailRead`): adds `created_at`
+- UI: manager — attach ownership on the product form (a lightstick-specific toggle no longer makes
+  sense once this covers any branded merch, not just lightsticks)
 
-### `GET /lightstick_details/all` 🔓
-- Response: `List[LightstickDetailRead]`
+### `GET /merch_details/all` 🔓
+- Response: `List[MerchDetailRead]`
 
-### `GET /lightstick_details/{product_id}` 🔓
-- Response: `LightstickDetailRead`
-- UI: product detail page (lightstick variant)
+### `GET /merch_details/{product_id}` 🔓
+- Response: `MerchDetailRead`
+- UI: product detail page (merch variant)
 
-### `PUT /lightstick_details/update/{product_id}` 🔒 manager+ (company-scoped)
-- Request (`LightstickDetailUpdate`): `edition`, `color_id`
+### `PUT /merch_details/update/{product_id}` 🔒 manager+ (company-scoped)
+- Request (`MerchDetailUpdate`): `edition`, `color_id`
 
-### `DELETE /lightstick_details/delete/{product_id}` 🔒 manager+ (company-scoped)
-- Response: `{"msg": "Lightstick details deleted successfully"}`
+### `DELETE /merch_details/delete/{product_id}` 🔒 manager+ (company-scoped)
+- Response: `{"msg": "Merch details deleted successfully"}`
 
 ---
 

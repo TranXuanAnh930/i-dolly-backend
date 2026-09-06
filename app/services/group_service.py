@@ -104,11 +104,11 @@ def get_group_detail(db: Session, id: uuid.UUID):
         .all()
     )
 
-    # Every product whose resolved artist (album_details/lightstick_details
+    # Every product whose resolved artist (album_details/merch_details
     # FK, or a name-prefix match for plain merch with neither — see
     # _build_product_cards) is this group. Built from every product rather
     # than a direct FK filter so plain merch (e.g. a tour hoodie with no
-    # album_details/lightstick_details row at all) still shows up here,
+    # album_details/merch_details row at all) still shows up here,
     # exactly as it does on the store grid.
     all_products = db.query(Product).options(joinedload(Product.category)).all()
     products = [

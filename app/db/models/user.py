@@ -29,8 +29,12 @@ class Users(Base):
         nullable=False
     )
 
-    cart = relationship("Cart", back_populates="user")
-    shippingadd = relationship("ShippingAddress", back_populates="useradd")
-    user_order = relationship("Order", back_populates="user_item")
-    paymentuser = relationship("Payment", back_populates="user_payment")
+    # passive_deletes=True on these four: all point to NOT NULL FKs that already have
+    # ON DELETE CASCADE at the DB level (see their migrations). Without it, SQLAlchemy's
+    # default unit-of-work tries to UPDATE the child's FK to NULL before deleting the
+    # user, which violates the NOT NULL constraint instead of letting Postgres cascade.
+    cart = relationship("Cart", back_populates="user", passive_deletes=True)
+    shippingadd = relationship("ShippingAddress", back_populates="useradd", passive_deletes=True)
+    user_order = relationship("Order", back_populates="user_item", passive_deletes=True)
+    paymentuser = relationship("Payment", back_populates="user_payment", passive_deletes=True)
     company = relationship("ManagementCompany", back_populates="staff")

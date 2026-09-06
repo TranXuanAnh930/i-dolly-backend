@@ -95,12 +95,12 @@ Every feature follows the same three-layer split:
   filtering — **not** per-tenant Postgres schemas (that was drafted and explicitly rejected, see
   `database-design.md` §7.5's closing note). Every service that manages a company-owned resource
   (`groups`, `idols`, `concerts`, `ticket_types`, `lottery_campaigns`, `album_details`,
-  `lightstick_details`) has a `_manager_scope_violation(current_user, company_id)`-shaped helper:
+  `merch_details`) has a `_manager_scope_violation(current_user, company_id)`-shaped helper:
   `False` for an admin (always) or a manager whose own `company_id` matches the row being touched,
   `True` otherwise — returned as the `"forbidden"` sentinel above. Reads stay unscoped (public
   listings). `products` uses the same shape but resolves `company_id` indirectly — see
   `product_service._resolve_product_company_id()` — since a product has no `company_id` column of
-  its own; ownership is derived from whichever of `album_details`/`lightstick_details` references
+  its own; ownership is derived from whichever of `album_details`/`merch_details` references
   it. `categories` intentionally has no scoping at all: every category-mutating endpoint is
   `require_admin`-only, so there's no per-company question to answer there.
 - **`app/cache/rate_limit.py::rate_limit(limit, window, key_func)`** — a dependency factory used
