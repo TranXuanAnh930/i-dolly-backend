@@ -28,4 +28,8 @@ class Ticket(Base):
     ticket_type = relationship("TicketType")
     user = relationship("Users")
     lottery_entry = relationship("LotteryEntry")
-    payment = relationship("Payment")
+    # foreign_keys is required here now — payment.ticket_id (added for
+    # Payment -> Ticket traceability, see payment_service.
+    # create_ticket_payment) gives this pair of tables a second FK path,
+    # which SQLAlchemy can't disambiguate on its own.
+    payment = relationship("Payment", foreign_keys=[payment_id])

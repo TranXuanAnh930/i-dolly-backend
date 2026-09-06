@@ -20,7 +20,14 @@ class PaymentCreate(BaseModel):
 
 class PaymentResponse(BaseModel):
     id : uuid.UUID
-    order_id : uuid.UUID
+    # Exactly one of these is set — order_id for a store checkout
+    # (order_service.checkout), ticket_id for a direct-sale ticket
+    # (ticket_service.checkout_ticket). order_id used to be required here,
+    # which meant serializing a ticket payment (order_id always null) raised
+    # a validation error — fetch_all_payments would 500 for any user who'd
+    # ever bought a ticket.
+    order_id : uuid.UUID | None = None
+    ticket_id : uuid.UUID | None = None
     user_id : uuid.UUID
     amount : int
     status : PaymentStatus

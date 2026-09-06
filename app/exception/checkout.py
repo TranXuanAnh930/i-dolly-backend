@@ -21,3 +21,12 @@ class AddressIdError(CartItemError):
 
 class UnsupportedGatewayError(CartItemError):
     pass
+
+class TicketTypeNotFoundError(CartItemError):
+    pass
+
+class WrongSaleMethodError(CartItemError):
+    pass
+
+class InsufficientTicketStockError(CartItemError):
+    pass
