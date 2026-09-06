@@ -11,6 +11,7 @@ from app.schema.payment import PaymentCreate
 from app.services.payment_service import create_payment
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
 from app.exception.db_triggers import flush_or_raise, FanOnlyPurchaseError
+from app.utils.tax import with_tax
 
 def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     user = db.get(Users, user_id)
@@ -24,7 +25,11 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
         product = db.query(Product).filter(Product.id==items.product_id).with_for_update().first()
         if product.quantity<items.quantity:
             raise InsufficientStockError("Insufficient Stock") 
-    total_amount = sum(item.total_price for item in cart_items)
+    # Cart rows store tax-excluded prices — tax is applied per row here
+    # (matching cartStore.subtotal on the frontend) so the amount the
+    # client sends and displays throughout checkout is the same
+    # tax-included figure this compares against.
+    total_amount = sum(with_tax(item.total_price) for item in cart_items)
     
     address =  (db
                .query(ShippingAddress)
