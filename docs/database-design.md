@@ -1178,6 +1178,17 @@ not in-place edits — unlike the UUID PK rewrite (§1's intro), every migration
 Docker Compose stack, confirmed reachable and at that exact head in one session), so editing an
 already-applied migration in place is no longer an option the way it was earlier in this project.
 
+`b60aec9ffc02` turned out to be incomplete, found by querying the live local Postgres directly
+after applying it rather than by re-reading the migration source: it only renamed the objects it
+had given an explicit name to (the `CHECK` constraint, the 3 secondary indexes) — the table's
+primary key constraint and all 4 foreign key constraints were never explicitly named back in
+`a9e33e281ffe`, so Postgres auto-named them `lightstick_details_pkey`/`lightstick_details_
+<column>_fkey`, and `ALTER TABLE ... RENAME TO` doesn't touch constraint names at all, given or
+auto-assigned alike. `133d9b4f9d17` renames all 5. Worth remembering as a general lesson for any
+future table rename in this project: enumerate *every* constraint on the table from Postgres's own
+catalogs before considering a rename migration complete — a migration's own source text only shows
+you the objects someone bothered to name.
+
 ## 8. ORM/CRUD build-out: the tables migrated in §7.5
 
 Every table migrated in §7.5 now has a full ORM model + Pydantic schema + service + FastAPI

@@ -8,27 +8,32 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-42 migrations, one linear chain, no branches. Chain head: **`b60aec9ffc02`**
-(`merge_lightstick_category_into_merch`, chained onto `df79d71c6a2c`) — **generated and reviewed,
-not yet applied to any Postgres instance**, live or otherwise; the local Docker Compose Postgres
-(confirmed reachable and used for live verification of the fan-only-purchase and category-500
-fixes) is still sitting at `10f9dfa05636`, two migrations behind the chain head. Backfills every
-`Lightstick`-categorized product to `Merch`, deletes the `Lightstick` category row, renames
-`lightstick_details` → `merch_details` (table, its `CHECK` constraint, its 3 indexes), and
-`CREATE OR REPLACE`s `fn_enforce_single_product_detail_kind()` so its hardcoded table-name
-reference stays correct after the rename — see `database-design.md` §3.15/§3.17 for the full
-design reasoning and §7.5 for the migration-sequencing note. **Application-code side of this
-change (renaming `LightstickDetail`/`lightstick_detail_service`/`lightstick_detail` router/schema
-to their `Merch*`/`merch_detail*` equivalents, plus every import site — see §2/§4 below) is being
-done by hand, not by Claude — migration/DDL work was, since catalog renames and trigger-function
-bodies are more "get the mechanics right" than a novel design judgment call. Until the code side
-lands, the app will not actually import cleanly against this new migration's schema — apply and
-merge together, not the migration alone.
+43 migrations, one linear chain, no branches. Chain head: **`133d9b4f9d17`**
+(`rename_leftover_lightstick_details_constraint_names`, chained onto `b60aec9ffc02`) — **generated,
+reviewed, not yet applied anywhere.** `b60aec9ffc02` (`merge_lightstick_category_into_merch`) itself
+**is applied** to the local Docker Compose Postgres (confirmed via `alembic current`) — the
+application-code side of the rename (models/schema/service/router, `product_service.py`'s
+resolvers, `scripts/seed.py`) also landed, done by hand rather than by Claude (migration/DDL work
+was Claude's — catalog renames and trigger-function bodies are "get the mechanics right," not a
+novel design judgment call). Both verified live: `py_compile` + a real `configure_mappers()`/
+`import main` check (146 routes, exactly 5 `/merch_details/*`, zero `lightstick` routes) +
+`pytest tests/unit` (56/61, same 5 pre-existing item-11 failures, no regressions).
 
-Previous head, still what the live DB is actually running: **`df79d71c6a2c`**
-(`create_notifications_table`, chained onto `10f9dfa05636`). Before that: `10f9dfa05636`
-(`extend_idol_colors_and_genres` — adds 17 more `idol_colors` rows and 5 more `genres` rows
-needed for the expanded seed roster below; previous head was `019b674bf0c1`,
+**`133d9b4f9d17` exists because `b60aec9ffc02` was incomplete** — querying the live local DB
+directly (`pg_constraint`/`pg_indexes`, not re-reading the migration source) after applying it
+found 5 leftover `lightstick_details_*`-named objects: the primary key constraint and all 4 foreign
+key constraints (`product_id`/`idol_id`/`group_id`/`color_id`). `b60aec9ffc02` only renamed the
+objects it had given an explicit name to (`chk_lightstick_details_owner`, the 3 `ix_lightstick_
+details_*` indexes) — `ALTER TABLE ... RENAME TO` doesn't rename constraints at all, named or
+Postgres-auto-named alike, and the PK/FK constraints here were never given explicit names in the
+original `a9e33e281ffe` migration, so they were never on the list of things to rename in the first
+place. Real gap, found by checking the live database rather than trusting the migration file was
+complete — see `database-design.md` §3.17 for the fuller writeup. **Not yet applied anywhere.**
+
+Previous head, what the live local DB is actually running: **`b60aec9ffc02`**. Before that:
+`df79d71c6a2c` (`create_notifications_table`, chained onto `10f9dfa05636`). Before that:
+`10f9dfa05636` (`extend_idol_colors_and_genres` — adds 17 more `idol_colors` rows and 5 more
+`genres` rows needed for the expanded seed roster below; previous head was `019b674bf0c1`,
 `add_image_url_to_products`). All 18 domain tables from `database-design.md` §1–§3 plus the
 pre-existing e-commerce tables are migrated. `schema.sql`, referenced throughout
 `database-design.md` as "the reference DDL," **does not exist as a file in this repo** — every
@@ -65,7 +70,8 @@ ORM-returned `.id`/name lookups, never a literal integer.
   `lottery_preferences`, `lottery_campaigns`, `lottery_entries`, `tickets` — full ORM + schema +
   service + router for all seven. `tickets` creation is admin-only (a manual stopgap — see §4).
 - **Marketplace**: `categories.is_resale_capped`, `album_details`, `genres`/`album_genres`,
-  `lightstick_details` — full ORM + schema + service + router.
+  `merch_details` (originally `lightstick_details`, merged/renamed — item 14) — full ORM + schema +
+  service + router.
 - **Image uploads**: `idols.profile_image_url` / `products.image_url`, a local/S3 storage
   abstraction (`app/utils/storage.py`), inline upload on `POST /idols/add` and
   `POST /products/add_product` (now `multipart/form-data`, a breaking change from the original
@@ -272,8 +278,8 @@ newly introduced.
     against the running dev stack, not just `py_compile`: the exact request that previously 500'd
     now returns a clean 400, a valid update on the same product still succeeds, and the
     cross-company 403 from item 14 below still fires correctly (no regression).
-14. ~~**Plain "Merch" products have no company ownership at all**~~ — **design decided, migration
-    written, application code in progress.** Originally: any manager could edit/delete a merch
+14. ~~**Plain "Merch" products have no company ownership at all**~~ — **FIXED, both migration and
+    application code landed** (local dev DB only — not yet applied to Supabase, see §1). Originally: any manager could edit/delete a merch
     item whose *name* clearly signalled which company's group it belonged to (e.g.
     `Sakura Prism Tour Hoodie`, seeded under Nova Entertainment's group but with no structural
     link to it) — not a bug in `_manager_scope_violation` (verified live: an **album**-linked
@@ -289,10 +295,13 @@ newly introduced.
     of duplicating it. `Album`/`Single`/`EP`/`Merch` (4 categories) is also a more internally
     consistent split than the previous 5, where 4 of 5 buckets were music-related and Lightstick
     was an unexplained carve-out. Full design reasoning: `database-design.md` §3.15/§3.17.
-    Migration `b60aec9ffc02` (see §1) is written and reviewed, not yet applied. Application code
-    (model/schema/service/router renames, `product_service.py`'s two resolvers, `scripts/seed.py`)
-    is being done by hand — not yet landed as of this writing, so **don't treat this as fixed
-    until both the migration is applied and the code changes are merged in.**
+    Migration `b60aec9ffc02` (see §1) is applied locally; application code (model/schema/service/
+    router renames, `product_service.py`'s two resolvers, `scripts/seed.py`) landed by hand and is
+    verified against the live local DB — 146 routes registered, zero `lightstick` routes remain,
+    `pytest tests/unit` shows no regressions. `133d9b4f9d17` (see §1) fixes a follow-on gap
+    `b60aec9ffc02` left behind (leftover `lightstick_details_*`-named PK/FK constraints — Postgres
+    doesn't rename constraints on `ALTER TABLE ... RENAME TO`), not yet applied anywhere. Neither
+    migration has reached Supabase yet — this item is fixed for local dev only until it does.
 
 15. ~~**`DELETE /profile/delete` 500'd for any user with a `shipping_addresses` row**~~ —
     **FIXED**. `Users.shippingadd`/`cart`/`user_order`/`paymentuser` (`app/db/models/user.py`)
@@ -345,6 +354,28 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
 - **`schema.sql`** — cited throughout `database-design.md` as if it exists; it doesn't (§1 above).
   Either generate one from the live migrations/models, or stop citing it and treat the migrations
   themselves as the reference DDL.
+- **Every product must be owned (have an `album_details` or `merch_details` row) — proposed, not
+  designed, not implemented.** Today an ownerless product is a fully legitimate, permitted state
+  by design (`database-design.md` §3.15/§6) — nothing enforces or even flags it, which is exactly
+  what let item 14's bug exist in the first place. Making ownership *required* rather than merely
+  *possible* is a real policy change, not a bug fix, and it runs straight into a structural
+  conflict worth resolving before it's built, not while building it: product creation is
+  deliberately two-step today (`POST /products/add_product` creates a bare `Product` with
+  nothing to check yet; a *separate* `POST /album_details/add` or `POST /merch_details/add` call
+  attaches ownership afterward — see `product_service.py`'s own comment on why `add_product`/
+  `add_bulk_products` are deliberately unscoped). A hard "must be owned" rule can't be enforced at
+  the moment of creation without also redesigning that flow to be atomic (one call creates both
+  rows together, or the two inserts happen in one transaction with a `DEFERRABLE INITIALLY
+  DEFERRED` constraint checked at commit — the latter only works if the API stops being two
+  separate HTTP requests). Softer alternatives that don't require touching the creation API:
+  a `products.status` (`draft`/`published`) gate that only requires ownership before a product
+  becomes publicly visible, or a periodic audit query (see the diagnostic SQL from this session)
+  with no DB-level enforcement at all — visibility instead of a hard constraint. Also genuinely
+  undecided: does this apply to *every* product, meaning there's no such thing as legitimate
+  platform-level/unbranded merch anymore, or does some category of product get to stay
+  intentionally ownerless on purpose? Don't pick an enforcement mechanism or a scope answer
+  speculatively — this needs its own design pass, the same way the checkout-transaction fix did,
+  before any of it gets built.
 
 ## 6. Suggested next steps, in order
 
