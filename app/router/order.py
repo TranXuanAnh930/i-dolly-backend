@@ -28,21 +28,26 @@ from app.exception.db_triggers import TriggerViolationError, commit_or_raise
 
 router = APIRouter(prefix="/order", tags=["Order"])
 
-@router.post("/checkout")
+@router.post("/checkout", response_model=Order)
 async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
     try:
         order = checkout(db, user.id, data)
         commit_or_raise(db)  # trg_orders_items_resale_cap fires here
+        db.refresh(order)
         return order
-    except (CartItemError, AddressIdError) as e:
-        db.rollback()
-        raise HTTPException(status_code=404, detail=str(e))
+    # Order matters here: PaymentFailedError, InsufficientStockError,
+    # PaymentAmountMismatch and UnsupportedGatewayError all subclass
+    # CartItemError, so the generic (CartItemError, AddressIdError) catch
+    # must come last or it swallows every more specific case as a 404.
     except PaymentFailedError as e:
         db.rollback()
         raise HTTPException(status_code=402, detail=str(e))
     except (InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    except (CartItemError, AddressIdError) as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
     except TriggerViolationError as e:
         db.rollback()
         raise HTTPException(status_code=e.status_code, detail=str(e))

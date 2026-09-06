@@ -62,9 +62,7 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
 
     db.query(Cart).filter(Cart.user_id==user_id).delete()
 
-    return {
-        "payment" : payment_res
-    }
+    return order
 
 def fetch_placed_order(db:Session, user_id:uuid.UUID):
     order = (
