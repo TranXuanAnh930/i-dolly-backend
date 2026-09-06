@@ -608,19 +608,22 @@ def seed(db):
         ))
     db.flush()
 
-    # --- marketplace: plain merch (not resale-capped) -----------------------
-    db.add_all([
-        Product(
-            name="Sakura Prism Tour Hoodie", price=6800,
-            description="Official Hanabi Ranman Tour hoodie.",
-            quantity=800, category_id=cat_merch.id,
-        ),
-        Product(
-            name="Yozora Requiem Coffin Tote Bag", price=2500,
-            description="Coffin-shaped tote bag from the Requiem for Dawn merch line.",
-            quantity=600, category_id=cat_merch.id,
-        ),
-    ])
+    # --- marketplace: group-branded merch (owned, same as the lightsticks
+    # above — see project_status.md item 14/§5's "every product must be
+    # owned" note. These two used to be created with no merch_details row at
+    # all ("plain merch"), which was the exact shape of the cross-company
+    # scoping bug: a manager from a different company could edit
+    # "Sakura Prism Tour Hoodie" because nothing linked it back to Nova's
+    # Sakura Prism group despite the name saying so.) --------------------
+    branded_merch = [
+        ("Sakura Prism Tour Hoodie", 6800, "Official Hanabi Ranman Tour hoodie.", 800, sakura_prism),
+        ("Yozora Requiem Coffin Tote Bag", 2500, "Coffin-shaped tote bag from the Requiem for Dawn merch line.", 600, yozora_requiem),
+    ]
+    for name, price, description, qty, group in branded_merch:
+        product = Product(name=name, price=price, description=description, quantity=qty, category_id=cat_merch.id)
+        db.add(product)
+        db.flush()
+        db.add(MerchDetail(product_id=product.id, group_id=group.id))
     db.flush()
 
     # --- lottery: preferences, campaigns, entries ---------------------------
@@ -665,7 +668,7 @@ def seed(db):
     print("  - 5 groups (Sakura Prism, Nagisa Melody, Kessho Stars, Yozora Requiem, Program:HEART),")
     print("    22 group idols + 3 solo idols = 25 idols total, each with a generated profile image")
     print("  - 6 venues, 6 concerts, 18 ticket types across lottery + direct sale methods")
-    print("  - 10 albums/singles/EPs with genres + cover art, 8 lightsticks, 2 plain (non-capped) merch items")
+    print("  - 10 albums/singles/EPs with genres + cover art, 10 merch items (8 lightsticks + 2 group-branded), all owned")
     print("  - 2 lottery campaigns with preferences + entries, 1 manually-issued ticket")
 
 

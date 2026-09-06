@@ -998,6 +998,22 @@ Key points this design makes explicit:
   are capped by default, this is a question of the per-category ceiling value, not whether
   Lightstick is capped at all; changeable via `UPDATE categories` without a migration either way.
 
+**Newly proposed, well after the round above — not designed, not implemented, tracked in
+`project_status.md` §5**: should every product be *required* to have an `album_details` or
+`merch_details` row, rather than ownerless being a fully legitimate state the way it is today?
+Raised directly in response to item 14's bug (an ownerless product is silently unscoped — that's
+what let a cross-company edit through in the first place), but turning "possible" into "required"
+is a policy change, not a bug fix, and it collides with something already true of this design:
+product creation is deliberately two-step (§3.15/§6 above already flags this for Album/Single/EP —
+"category says Album but there's no `album_details` row yet is a workflow gap... left to the
+service layer" — the exact same gap, just not yet named as a problem for Merch too). Enforcing
+"must be owned" at the DB level would mean either making creation atomic (one call, not two) or a
+`DEFERRABLE` constraint checked at commit (which only helps if both inserts land in one
+transaction, which they don't today), neither of which is a small change. Also unresolved: does
+this apply to literally every product, meaning there's no such thing as legitimate platform-level/
+unbranded merch in this design at all — or should some products stay intentionally ownerless?
+Not answered here on purpose.
+
 ## 7. Priorities: what's urgent vs. next phase
 
 A consolidated read of everything flagged across this doc and `CLAUDE.md`'s known-issues list,
