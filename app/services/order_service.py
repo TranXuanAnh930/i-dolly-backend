@@ -57,11 +57,14 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
         product.quantity-=its.quantity
     
     for item in cart_items:
+        # Same tax-inclusive treatment as total_amount above — otherwise
+        # sum(order_item.price * quantity) drifts 10% below order.total_price,
+        # and the order-details line items would show pre-tax figures.
         order_item = OrderItem(
-            order_id=order.id, 
-            product_id=item.product_id, 
-            quantity=item.quantity, 
-            price=item.price
+            order_id=order.id,
+            product_id=item.product_id,
+            quantity=item.quantity,
+            price=with_tax(item.price)
         )
         db.add(order_item)
 
