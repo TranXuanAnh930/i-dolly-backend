@@ -29,6 +29,7 @@ class TicketCheckoutCreate(BaseModel):
     amount: int
     gateway: PaymentGateway = PaymentGateway.mock
     simulate_succ: bool | None = None
+    idempotency_key: uuid.UUID
 
 class TicketRead(BaseModel):
     id: uuid.UUID

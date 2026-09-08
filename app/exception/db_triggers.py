@@ -91,6 +91,15 @@ class ConcertTicketCapacityExceededError(TriggerViolationError):
     """trg_ticket_types_capacity (fn_enforce_concert_ticket_capacity)."""
 
 
+class DuplicateIdempotencyKeyError(TriggerViolationError):
+    """A payment.idempotency_key UNIQUE violation — the backstop for the
+    race window between the service-layer pre-check and this commit (see
+    checkout()/checkout_ticket()). Not one of the 8 documented trigger
+    functions — a plain constraint, not a PL/pgSQL RAISE EXCEPTION — but
+    reusing this base class means routers need no new except clause."""
+    status_code = 409
+
+
 # (message substring, exception class) pairs, matched against the raw
 # Postgres error text. Each substring is chosen to be unique to one trigger
 # function's RAISE EXCEPTION wording (see the grep-able "RAISE EXCEPTION"
@@ -106,6 +115,7 @@ _MESSAGE_PATTERNS = [
     ("(max_entries_per_user=", LotteryEntryCapExceededError),
     ("has not ranked ticket_type_id=", LotteryPreferenceRequiredError),
     ("would exceed concerts.capacity", ConcertTicketCapacityExceededError),
+    ("uq_payment_idempotency_key", DuplicateIdempotencyKeyError),
 ]
 
 

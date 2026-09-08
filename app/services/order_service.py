@@ -3,6 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 from app.db.models.cart import Cart
 from app.db.models.order import Order, OrderItem
+from app.db.models.payment import Payment
 from app.db.models.products import Product
 from app.db.models.shipping import ShippingStatus, ShippingAddress
 from app.db.models.user import Users
@@ -11,7 +12,7 @@ from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.payment import PaymentCreate
 from app.services.payment_service import create_payment
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
-from app.exception.db_triggers import ResaleCapExceededError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError
+from app.exception.db_triggers import DuplicateIdempotencyKeyError, ResaleCapExceededError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError
 from app.utils.tax import with_tax
 
 def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
@@ -23,14 +24,16 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     if not address:
         raise AddressIdError("Invalid address id!")
 
+    if db.query(Payment).filter(Payment.idempotency_key == payment_data.idempotency_key).first():
+        raise DuplicateIdempotencyKeyError()  
+    
     cart_items = db.query(Cart).filter(Cart.user_id==user_id).all()
     if not cart_items:
         raise CartItemError("No item in cart")
-
     total_amount = sum(with_tax(item.total_price) for item in cart_items)
     if payment_data.amount!=total_amount:
         raise PaymentAmountMismatch("Payment amount does not match cart total!")
-
+        
     product_ids = [cart_item.product_id for cart_item in cart_items]
     capped_products = db.query(Product).filter(Product.id.in_(product_ids), Product.category.has(is_resale_capped=True)).all()
     capped_product_ids = {product.id for product in capped_products}

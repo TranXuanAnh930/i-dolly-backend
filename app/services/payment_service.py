@@ -19,8 +19,8 @@ def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreat
     # Deliberately does not commit
     gateway = PaymentGateway(data.gateway)
     if gateway != PaymentGateway.mock:
-        return False
-
+        return False 
+    
     is_success = data.simulate_succ
     if not is_success:
         payment_status = PaymentStatus.failed
@@ -46,7 +46,8 @@ def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreat
         is_paid=(payment_status == PaymentStatus.success),
         pg_order_id=pg_order_id,
         pg_payment_id=pg_payment_id,
-        pg_signature=pg_signature
+        pg_signature=pg_signature,
+        idempotency_key=data.idempotency_key,
     )
     db.add(payment)
     db.flush()
@@ -66,8 +67,8 @@ def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:Tic
     # tickets.payment_id.
     gateway = PaymentGateway(data.gateway)
     if gateway != PaymentGateway.mock:
-        return False
-
+        return False 
+    
     is_success = data.simulate_succ
     if not is_success:
         payment_status = PaymentStatus.failed
@@ -91,7 +92,8 @@ def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:Tic
         is_paid=(payment_status == PaymentStatus.success),
         pg_order_id=pg_order_id,
         pg_payment_id=pg_payment_id,
-        pg_signature=pg_signature
+        pg_signature=pg_signature,
+        idempotency_key=data.idempotency_key,
     )
     db.add(payment)
     db.flush()  # need payment.id before linking it below

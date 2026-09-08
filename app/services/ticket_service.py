@@ -1,6 +1,7 @@
 import uuid
 from app import db
 from sqlalchemy.orm import Session, selectinload
+from app.db.models.payment import Payment
 from app.schema.ticket import TicketCreate, TicketUpdate, TicketCheckoutCreate
 from app.db.models.ticket import Ticket
 from app.db.models.ticket_type import TicketType
@@ -13,7 +14,7 @@ from app.exception.checkout import (
     PaymentAmountMismatch,
     UnsupportedGatewayError,
 )
-from app.exception.db_triggers import commit_or_raise, flush_or_raise, FanOnlyPurchaseError, DuplicateConcertTicketError
+from app.exception.db_triggers import DuplicateIdempotencyKeyError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError, DuplicateConcertTicketError
 from app.services.payment_service import create_ticket_payment
 from app.utils.tax import with_tax
 
@@ -48,7 +49,10 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
         # backstop (see flush_or_raise below), same split as
         # order_service.checkout's own FanOnlyPurchaseError check.
         raise FanOnlyPurchaseError("Only fan accounts can purchase tickets")
-
+    
+    if db.query(Payment).filter(Payment.idempotency_key == data.idempotency_key).first():
+        raise DuplicateIdempotencyKeyError() 
+    
     ticket_type = db.query(TicketType).filter(TicketType.id == data.ticket_type_id).with_for_update().first()
     if not ticket_type:
         raise TicketTypeNotFoundError("Ticket type not found")
