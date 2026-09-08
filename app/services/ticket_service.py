@@ -1,4 +1,5 @@
 import uuid
+from app import db
 from sqlalchemy.orm import Session, selectinload
 from app.schema.ticket import TicketCreate, TicketUpdate, TicketCheckoutCreate
 from app.db.models.ticket import Ticket

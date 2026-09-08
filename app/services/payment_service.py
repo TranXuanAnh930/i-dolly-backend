@@ -16,6 +16,7 @@ from app.utils.mock_id import generate_mock_id
 # somewhere to slot in later without reshaping this function's contract.
 
 def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> Payment | bool:
+    # Deliberately does not commit
     gateway = PaymentGateway(data.gateway)
     if gateway != PaymentGateway.mock:
         return False
@@ -48,12 +49,11 @@ def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreat
         pg_signature=pg_signature
     )
     db.add(payment)
-    db.commit()
-    db.refresh(payment)
+    db.flush()
     return payment
 
 def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:TicketCheckoutCreate) -> Payment | bool:
-    # Deliberately does not commit (unlike create_payment above) — the
+    # Deliberately does not commit
     # caller (ticket_service.checkout_ticket) holds a row lock on the
     # ticket_type for the whole operation and commits once at the end, so
     # the lock is never released mid-flow the way order_service.checkout's

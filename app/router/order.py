@@ -32,8 +32,6 @@ router = APIRouter(prefix="/order", tags=["Order"])
 async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
     try:
         order = checkout(db, user.id, data)
-        commit_or_raise(db)  # trg_orders_items_resale_cap fires here
-        db.refresh(order)
         return order
     # Order matters here: PaymentFailedError, InsufficientStockError,
     # PaymentAmountMismatch and UnsupportedGatewayError all subclass
