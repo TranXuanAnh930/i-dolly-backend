@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from tests.conftest import fake_redis
 from fastapi.testclient import TestClient
 from main import app
@@ -191,7 +192,8 @@ def test_checkout_empty_cart():
         "amount": 1000,
         "shipping_address_id": FAKE_ID,
         "gateway": "mock",
-        "simulate_succ": True
+        "simulate_succ": True,
+        "idempotency_key": str(uuid.uuid4())
     }
     response = client.post("/order/checkout", json=payload, headers=headers)
     assert response.status_code in (400, 404)

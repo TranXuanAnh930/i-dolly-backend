@@ -155,20 +155,27 @@ Ordered roughly by how much each matters to the idol-ticket domain specifically.
 FIXED were pre-existing bugs in the forked boilerplate, closed during this project — not
 newly introduced.
 
-1. **Checkout is not one atomic transaction, and has a stock-overselling race** —
-   `order_service.checkout()` locks each `Product` row, then `payment_service.create_payment()`
-   does its own `db.commit()` mid-flow, releasing the locks; a second loop re-locks and
-   decrements without re-checking sufficiency. **Still fully unfixed as of this writing** —
-   verified by reading the current file directly, not assumed. **However, the ticket-domain
-   version of this exact race is now fixed**: `ticket_service.checkout_ticket()` (the new
-   direct-sale ticket purchase flow) acquires one `with_for_update()` lock on `ticket_type` and
-   holds it continuously through the stock check, the `Ticket` insert, `create_ticket_payment()`
-   (deliberately non-committing — see its own docstring), and the `sold_quantity += 1` increment,
-   committing exactly once via `commit_or_raise()` at the end — no premature commit anywhere in
-   the chain. This is the same fix designed for `order_service.checkout()` earlier in this
-   project, correctly applied to new code — retrofitting it to `checkout()`/`create_payment()` is
-   now mostly copying an already-proven pattern, not new design work. Fix before, not after,
-   wiring the lottery draw job to real inventory decrements.
+1. ~~**Checkout is not one atomic transaction, and has a stock-overselling race**~~ — **FIXED**
+   (hand-implemented by the project owner, per the interview-defensibility approach in §6 item 2 —
+   the doc text describing this as "still fully unfixed" went stale the moment that commit landed
+   and is corrected here, found while investigating an unrelated failing-tests request; not a
+   Claude-authored fix). `order_service.checkout()` now: checks the cart total and resale cap
+   *before* touching any lock, then takes one `ORDER BY Product.id ... .with_for_update()` lock
+   across every needed `Product` row (UUID-ordered — deadlock-safe), checks-then-holds that lock
+   through the `Order`/`OrderItem` inserts and `create_payment()` (which no longer commits — see
+   its own docstring, "Deliberately does not commit"), and commits exactly once via
+   `commit_or_raise()` at the very end, mirroring `ticket_service.checkout_ticket()`'s
+   already-fixed pattern (below) instead of the old lock-then-mid-flow-commit shape. Verified by
+   reading the current file directly (not assumed) and by the full test suite (`pytest tests/unit`
+   + `pytest tests/integration` against the live local Docker Postgres) passing with no
+   regressions. **The ticket-domain version of this exact race was fixed first**:
+   `ticket_service.checkout_ticket()` (the new direct-sale ticket purchase flow) acquires one
+   `with_for_update()` lock on `ticket_type` and holds it continuously through the stock check, the
+   `Ticket` insert, `create_ticket_payment()` (deliberately non-committing — see its own
+   docstring), and the `sold_quantity += 1` increment, committing exactly once via
+   `commit_or_raise()` at the end — no premature commit anywhere in the chain; `checkout()` above
+   now follows the same already-proven pattern. Still open: the draw job (§8) needs its own
+   concurrency guard designed in from the start, same as always.
 2. ~~**The rate limiter's key doesn't include the route**~~ — **FIXED**. `ip_key`/`user_key`
    (`app/cache/rate_limit.py`) previously built their Redis key from only the caller's identity
    (`rate:ip:<ip>` / `rate:user:<id>`), so every endpoint sharing a `key_func` shared one counter
@@ -249,17 +256,44 @@ newly introduced.
     `lightstick_details` row is attached, through its own already-scoped endpoint), so there is
     nothing to check at creation.
 
-11. **5 stale unit tests in `tests/unit/test_services.py`** (`TestProductService::test_update_product_found`/
-    `test_update_product_not_found`/`test_delete_product_found`/`test_delete_product_not_found`,
-    `TestCategoryService::test_update_category_success`) — found the first time this suite was
-    actually run (see §3: a full `pip install` + `pytest tests/unit` run finally worked in one of
-    this project's sessions). Two distinct causes, both test/production drift, not app bugs:
-    `update_product`/`delete_product` gained a required `current_user` parameter under item 10's
-    company-scoping fix but the tests still call them with the old (pre-scoping) argument count;
-    `test_update_category_success` constructs a `CategoryBase` (no `is_resale_capped` field)
-    where `category_service.update_category` expects a `CategoryUpdate`. Left as documented,
-    unfixed, per explicit instruction when found — fix by updating the test calls/schema choice
-    to match each service function's current signature.
+11. ~~**Stale unit/integration tests drifted from production code**~~ — **FIXED**. The original 5
+    (`TestProductService::test_update_product_found`/`test_update_product_not_found`/
+    `test_delete_product_found`/`test_delete_product_not_found`, `TestCategoryService::
+    test_update_category_success`) plus 4 more found in this same pass, all genuine test/production
+    drift, not app bugs — the app code was correct in every case:
+    - `update_product`/`delete_product` gained a required `current_user` parameter under item 10's
+      company-scoping fix; tests updated to pass a mock user (role `"fan"`, so
+      `_manager_scope_violation` never fires — only `"manager"` role triggers that check).
+    - `test_update_category_success`/`test_update_category_not_found` constructed a `CategoryBase`
+      (no `is_resale_capped`) where `category_service.update_category` expects a `CategoryUpdate`;
+      switched both to `CategoryUpdate`.
+    - `TestCartService::test_add_to_cart_new_item` — item 7's `with_for_update()` lock added to
+      `cart_service.add_to_cart`'s existing-cart-row lookup inserted a new mock-chain hop
+      (`.filter().with_for_update().first()`) that the test's old shared `side_effect` list on
+      `.filter().first()` no longer lined up with, so the mock silently returned a truthy
+      MagicMock for "existing cart row found" and the new-item branch (`db.add`) was never
+      exercised. Fixed by stubbing the two query chains (product lookup vs. locked cart-row lookup)
+      separately.
+    - `TestUserService::test_reset_password_process_email_not_found` asserted `result is None` for
+      an unregistered email; `reset_password_process` deliberately always returns `True` (item 18's
+      anti-enumeration fix, documented in its own comment) so a client response can't be used to
+      probe which emails have accounts. Fixed to assert `result is True` and
+      `bg_tasks.add_task.assert_not_called()` — actually verifying the anti-enumeration behavior
+      instead of asserting a stale, disproven contract.
+    - `TestPaymentService::test_create_mock_payment_success`/`test_create_mock_payment_failure` —
+      item 16's now-required `idempotency_key` field on `PaymentCreate` wasn't in either test's
+      constructor call, so both failed `pydantic` validation before `create_payment` ever ran (and
+      the matching `test_checkout_empty_cart` integration test 422'd for the same reason). Fixed by
+      supplying `idempotency_key=uuid.uuid4()`; `test_create_mock_payment_success`'s
+      `db.commit.assert_called()` was also stale post-item-1-fix (`create_payment` deliberately
+      only flushes now, per its own docstring) and was switched to `db.flush.assert_called()`.
+
+    Verified: `pytest tests/unit` (61/61) from the host, and `pytest tests` (86/86 — unit +
+    integration) run inside the `app` Docker container against the live local Postgres/Redis
+    (`docker compose exec app python -m pytest tests`), since the integration suite needs the
+    `postgres`/`redis` service hostnames that only resolve inside that container's network — not
+    reachable directly from the host. No app-code changes were needed for any of this; every
+    failure was the test suite lagging behind already-correct, already-landed service changes.
 12. **Seeded accounts share a hardcoded, publicly-committed password** — `scripts/seed.py`
     creates `admin@example.com` plus three managers and four fans all with the password
     `Password123!`, written in plain text in that file's own docstring in this public repo. Fine
@@ -324,30 +358,20 @@ newly introduced.
     returns a clean 200, and both the `users` and `shipping_addresses` rows are confirmed gone
     from Postgres afterward.
 
-16. **No client-retry idempotency on either checkout endpoint** — distinct from item 4's *webhook*
-    idempotency (moot — no real gateway exists yet). This is about the client side: a double-click
-    or network-timeout retry of `POST /order/checkout` / `POST /tickets/checkout` resubmitting the
-    same logical request. **Tickets are accidentally, partially protected**: `checkout_ticket`
-    calls `_existing_live_ticket()` before creating a `Ticket`, and a retry lands after the first
-    request's ticket is already `pending_payment`/`paid` (both "live"), so it hits
-    `DuplicateConcertTicketError` instead of creating a second ticket — a side effect of the
-    one-ticket-per-concert rule, not a deliberate idempotency mechanism. **Orders have no
-    protection at all** — a fan can legitimately place multiple separate orders for the same
-    product, so no natural guard exists, and `rate_limit(3, 60, user_key)` on both checkout routes
-    permits 3 attempts/minute, not 1, so it doesn't prevent a duplicate either. With the mock
-    gateway this just means duplicate mock `Payment` rows today; the pattern is exactly what would
-    silently double-charge a fan once a real gateway lands. **Recommended fix, reasoned through
-    against this project's own conventions, not implemented**: an `idempotency_key UUID UNIQUE`
-    column on `payment` (not duplicated onto `orders`/`tickets` separately — both checkout flows
-    already funnel into one `Payment` row via `create_payment`/`create_ticket_payment`), enforced
-    as a DB constraint and translated through the existing `commit_or_raise`/`TriggerViolationError`
-    machinery, the same "DB backstop for money/fairness concerns" pattern `database-design.md`
-    §4.1 already applies to the fan-only-purchase rule and the anti-resale cap — not a Redis-based
-    key, since Redis is explicitly a cache in this project (and already has one documented
-    enforcement bug, item 2's route-key issue) rather than the source of truth money-related
-    guarantees are supposed to rest on here. A Redis check could still sit in front of the DB
-    constraint purely as a cheap early-exit, mirroring the existing "service-layer check first, DB
-    constraint as the real backstop" shape used everywhere else in this codebase.
+16. ~~**No client-retry idempotency on either checkout endpoint**~~ — **FIXED** (hand-implemented
+    by the project owner; doc corrected here after being found stale during an unrelated
+    failing-tests investigation — not a Claude-authored fix). Built essentially as recommended
+    below: `payment.idempotency_key` is now a `UUID NOT NULL UNIQUE` column (two migrations —
+    added nullable, backfilled, then tightened to `NOT NULL`, one concern each), `PaymentCreate`/
+    `TicketCheckoutCreate` both require it from the client, and `order_service.checkout()`/
+    `ticket_service.checkout_ticket()` each check `Payment.idempotency_key` for a match *before*
+    doing anything else, raising `DuplicateIdempotencyKeyError` (`app/exception/db_triggers.py`,
+    mapped through the same `TriggerViolationError`/`commit_or_raise` machinery as the DB-trigger
+    backstops) rather than silently creating a second `Payment` row. A double-click or retry that
+    resends the same client-generated key now gets a clean rejection instead of a duplicate mock
+    charge. Verified by the full test suite passing (`tests/unit` + `tests/integration` against the
+    live local Docker Postgres) — not yet verified with a real concurrent-retry repro against a live
+    DB, which would be the next confirming step if this is revisited.
 
 17. ~~**`delete_group`/`delete_idol` hard-deleted the row**~~ — **FIXED**. `groups.id` and
     `idols.id` are FK targets with real cascade behavior: `concert_performers.idol_id`/`.group_id`
@@ -472,19 +496,13 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
    standing gap behind every "verified" claim in this project so far (§3), and now the specific
    thing that would confirm §4 item 9's trigger-message matching actually works against real
    Postgres error text, not just AST/compile checks.
-2. Fix the checkout/ticket-inventory race (§4 item 1) before building the draw job or direct
-   purchase flow on top of it — it's much cheaper to fix before other code depends on its current
-   (broken) behavior than after. **Design finalized, not yet implemented**: single query locking
-   every needed `Product` row `ORDER BY id FOR UPDATE` (UUID-sorted — deadlock-safe, and a real
-   deadlock risk exists today since the cart-items query has no `ORDER BY`), check-then-decrement
-   on the same locked rows in one pass (all-or-nothing, collecting every insufficient item rather
-   than failing on the first), one commit at the very end owned by `checkout()` itself rather than
-   split across `payment_service.create_payment()`'s internal commit + the router's
-   `commit_or_raise()` — `create_payment` demotes to a non-committing internal step
-   (`_create_payment`), matching this codebase's actual house style: every other service file's
-   public functions already own their own commit *and* rollback, and `order.py`'s router is the
-   only router in the whole codebase that touches `db.commit()`/`db.rollback()` at all. Deliberately
-   left for hand-implementation (interview-defensibility reasons) rather than done by Claude.
+2. ~~Fix the checkout/ticket-inventory race (§4 item 1) before building the draw job or direct
+   purchase flow on top of it~~ — **DONE**, see §4 item 1. `order_service.checkout()` now takes a
+   single `ORDER BY Product.id ... FOR UPDATE` lock across every needed row and commits once at
+   the very end via `commit_or_raise()`; `create_payment` stayed named `create_payment` (not
+   renamed to `_create_payment` as originally sketched here) but is otherwise the non-committing
+   internal step this plan called for. Hand-implemented by the project owner (interview-
+   defensibility reasons), not done by Claude.
 3. Build the draw job (§5/§8), with its concurrency guard designed in from the start.
 4. ~~Fill in the missing *primary* fan-only-purchase check at the service layer~~ — **FIXED**.
    `cart_service.add_to_cart`, `order_service.checkout`, `lottery_entry_service.apply_to_lottery`,
