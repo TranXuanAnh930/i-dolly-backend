@@ -33,12 +33,17 @@ def add_group(db: Session, group: GroupCreate, current_user: Users):
     return db_group
 
 def get_groups(db: Session):
-    result = db.query(Group).all()
+    # Public "browse all groups" list — deactivated groups don't belong on
+    # a store-facing listing (database-design.md §3.3).
+    result = db.query(Group).filter(Group.is_active.is_(True)).all()
     if not result:
         return False
     return result
 
 def get_group(db: Session, id: uuid.UUID):
+    # Deliberately NOT filtered by is_active: this is the plain by-id lookup
+    # behind GET /groups/{id}, which a manager's edit form also needs to be
+    # able to load a deactivated group in order to review/reactivate it.
     return db.get(Group, id)
 
 def update_group(db: Session, id: uuid.UUID, data: GroupUpdate, current_user: Users):
@@ -55,19 +60,36 @@ def update_group(db: Session, id: uuid.UUID, data: GroupUpdate, current_user: Us
     return db_group
 
 def delete_group(db: Session, id: uuid.UUID, current_user: Users):
+    # Soft delete, not db.delete(): concert_performers CASCADEs off
+    # groups.id and album_details/merch_details SET NULL their group_id —
+    # hard-deleting a group with concert or product history would destroy
+    # or orphan that history. Deactivating in place keeps every FK target
+    # alive (database-design.md §3.3).
     db_group = db.get(Group, id)
     if not db_group:
         return "not_found"
     if _manager_scope_violation(current_user, db_group.company_id):
         return "forbidden"
-    db.delete(db_group)
+    db_group.is_active = False
     db.commit()
     return True
+
+def reactivate_group(db: Session, id: uuid.UUID, current_user: Users):
+    db_group = db.get(Group, id)
+    if not db_group:
+        return "not_found"
+    if _manager_scope_violation(current_user, db_group.company_id):
+        return "forbidden"
+    db_group.is_active = True
+    db.commit()
+    db.refresh(db_group)
+    return db_group
 
 # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
 def get_groups_page(db: Session):
-    groups = db.query(Group).all()
+    # Store-facing browse page — same is_active filter as get_groups.
+    groups = db.query(Group).filter(Group.is_active.is_(True)).all()
     if not groups:
         return False
     counts = dict(
@@ -81,14 +103,17 @@ def get_groups_page(db: Session):
     return {"groups": groups}
 
 def get_group_detail(db: Session, id: uuid.UUID):
+    # Public group profile page — a deactivated group reads as "not found"
+    # here, same as get_groups/get_groups_page; only the manager/admin
+    # settings surfaces (get_manager_groups_page, plain get_group) still see it.
     group = db.get(Group, id)
-    if not group:
+    if not group or not group.is_active:
         return False
 
     members = (
         db.query(Idol)
         .options(*_with_positions_and_color())
-        .filter(Idol.group_id == id)
+        .filter(Idol.group_id == id, Idol.is_active.is_(True))
         .all()
     )
 

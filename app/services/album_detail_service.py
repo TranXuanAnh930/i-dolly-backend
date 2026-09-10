@@ -25,11 +25,26 @@ def _resolve_company_id(db: Session, idol_id, group_id):
         return group.company_id if group else None
     return None
 
+def _artist_active_or_missing(db: Session, idol_id, group_id) -> bool:
+    # True unless the referenced idol/group exists AND is deactivated — a
+    # nonexistent id is left for the "not_found" check right after this to
+    # catch, so this only ever blocks a genuine "new release under a
+    # deactivated artist" attempt (database-design.md §3.3/§3.4).
+    if idol_id is not None:
+        idol = db.get(Idol, idol_id)
+        return idol is None or idol.is_active
+    if group_id is not None:
+        group = db.get(Group, group_id)
+        return group is None or group.is_active
+    return True
+
 def add_album_detail(db: Session, data: AlbumDetailCreate, current_user: Users):
     if not db.get(Product, data.product_id):
         return "not_found"
     if db.get(AlbumDetail, data.product_id):
         return "conflict"  # already has album_details
+    if not _artist_active_or_missing(db, data.idol_id, data.group_id):
+        return "artist_inactive"
     company_id = _resolve_company_id(db, data.idol_id, data.group_id)
     if company_id is None:
         return "not_found"  # referenced idol/group doesn't exist

@@ -349,6 +349,46 @@ newly introduced.
     constraint purely as a cheap early-exit, mirroring the existing "service-layer check first, DB
     constraint as the real backstop" shape used everywhere else in this codebase.
 
+17. ~~**`delete_group`/`delete_idol` hard-deleted the row**~~ — **FIXED**. `groups.id` and
+    `idols.id` are FK targets with real cascade behavior: `concert_performers.idol_id`/`.group_id`
+    are `ondelete="CASCADE"` (a hard delete silently wiped the performer record for concerts that
+    already happened) and `album_details`/`merch_details`' `idol_id`/`group_id` are
+    `ondelete="SET NULL"` (a hard delete orphaned artist attribution on products with real order
+    history). Both services now soft-delete: a new `is_active BOOLEAN NOT NULL DEFAULT true`
+    column (migration `a1f3c9d27e56`, same shape as the pre-existing `users.is_active`) is flipped
+    to `false` instead of `db.delete()`, with a matching `reactivate_group`/`reactivate_idol` +
+    `PATCH /groups/activate/{id}` / `PATCH /idols/activate/{id}`. Store-facing reads (`get_groups`,
+    `get_idols`, `get_groups_page`, `get_group_detail`, `get_idol_detail`, `get_members_page`)
+    filter to `is_active=True`; manager/admin settings reads (`get_manager_groups_page`,
+    `get_manager_idols_page`, `get_manager_idol_form_page`) and the plain by-id lookups
+    (`get_group`, `get_idol`) deliberately don't, so a manager's edit form can still load a
+    deactivated row to reactivate it. Historical joins (concert performer credits, product artist
+    resolution in `product_service.py`) query `Group`/`Idol` directly and were left unfiltered on
+    purpose — that's the data soft-delete was meant to preserve.
+
+    Four follow-on judgment calls, resolved explicitly rather than left implicit: **(1)** filtering
+    is the store-vs-manager split above, not per-endpoint. **(2)** deactivating a group does **not**
+    cascade to its idols — matches the existing "membership is independent, `group_id IS NULL` for
+    solo idols" framing; an idol keeps its `group_id` untouched when its group goes inactive.
+    **(3)** a deactivated idol/group is closed to *new* attachments: `idol_service.add_idol`/
+    `update_idol` reject assigning an idol into an inactive group (`"group_inactive"`, 400 —
+    `update_idol` only rejects a genuine reassignment, not an unchanged `group_id` resent by the
+    full-replace `PUT` after the group was deactivated later), and
+    `album_detail_service.add_album_detail`/`merch_detail_service.add_merch_detail` reject
+    attaching a new release/merch item to an inactive idol or group (`"artist_inactive"`, 400) —
+    existing members/releases are untouched, only new ones are blocked. **(4)** reactivation is
+    `PATCH /groups|idols/activate/{id}`, not a field on the general-purpose `PUT /update` — putting
+    `is_active` on `GroupUpdate`/`IdolUpdate` would let it get silently reset to its Pydantic
+    default on any unrelated field edit, since neither `Update` schema is a partial/`PATCH` body.
+
+    Verified with `py_compile`, plus (network access happened to be available this session) `import
+    main` + `sqlalchemy.orm.configure_mappers()` end to end (150 routes, including the 2 new
+    `PATCH .../activate/{id}` routes) and `pytest tests/unit` (53/61 passing, the 8 failures are
+    pre-existing/unrelated `idempotency_key` schema changes — item 16 — not this feature; no
+    group/idol unit tests exist yet, so nothing regressed there specifically). **Not** run against
+    a live Postgres — `alembic upgrade head` + hitting the endpoints for real is still the
+    outstanding step, same standing gap as everything else in this section.
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't
@@ -362,11 +402,10 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
 - **The direct/"reservation" (non-lottery) checkout flow** — the schema supports it
   (`ticket_types.sale_method = 'direct'`), but only the lottery path has a sequence diagram
   (`database-design.md` §5.2) and only `tickets`' admin-only manual-issue endpoint exists so far.
-- **The draw job's actual runtime** — scheduled task, queue worker, or admin-triggered action;
-  nothing has been chosen. The schema only commits to `lottery_campaigns.draw_at`/`status`. A
-  Celery skeleton now exists (`app/celery_app.py`, broker on Redis) if "queue worker" is the
-  direction chosen, but nothing wires the draw logic to it yet — and Celery Beat (for a
-  time-based `draw_at` trigger, vs. an admin-triggered task) isn't set up either.
+- **The draw job's actual runtime** — **decided: manager-triggered**, not a Celery Beat scheduled
+  task — see §8 for the full plan. The Celery skeleton (`app/celery_app.py`, broker on Redis)
+  stays unused for this specific job as a result; it may still end up used for winner-notification
+  dispatch (a separate concern from the draw itself, see §8).
 - **UI messaging** for "you can't apply to this lottery because you haven't ranked that tier yet"
   — the application is correctly rejected server-side; there's no client-facing nudge designed.
 - **`idols.real_name`** — deliberately left unmodeled.
@@ -430,7 +469,7 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
    public functions already own their own commit *and* rollback, and `order.py`'s router is the
    only router in the whole codebase that touches `db.commit()`/`db.rollback()` at all. Deliberately
    left for hand-implementation (interview-defensibility reasons) rather than done by Claude.
-3. Build the draw job (§5), with its concurrency guard designed in from the start.
+3. Build the draw job (§5/§8), with its concurrency guard designed in from the start.
 4. ~~Fill in the missing *primary* fan-only-purchase check at the service layer~~ — **FIXED**.
    `cart_service.add_to_cart`, `order_service.checkout`, `lottery_entry_service.apply_to_lottery`,
    and `ticket_service.add_ticket` each now check the buyer's (or, for `add_ticket` — admin-only,
@@ -511,3 +550,84 @@ Ordered plan:
 **Verification plan**: no unit-testable "did money move" here — verify against a PayPal Sandbox
 account (developer.paypal.com) and its webhook simulator, the same standing-gap caveat as §3
 (needs real network access, not available in every session this project has been built in).
+
+## 8. Planned next: manager-triggered lottery draw job
+
+**Design drafted, not yet implemented** — deliberately left for hand-implementation (interview-
+defensibility reasons, same as §7: concurrency guarding a multi-table business algorithm is exactly
+the class of judgment this portfolio is meant to demonstrate, not infrastructure to have generated).
+Resolves §4 item 8 / §5's "draw job's actual runtime is unchosen" and §6 item 3.
+
+**Runtime decided: a company manager (or admin) triggers the draw via an HTTP action, scoped to
+their own company's concerts** — not a Celery Beat cron on `lottery_campaigns.draw_at`. Chosen
+specifically so the RBAC/company-scoping story this project tells everywhere else (`groups`/`idols`/
+`concerts`/`ticket_types`/`lottery_campaigns`) extends to the draw itself, and so there's a
+accountable human action instead of an unattended scheduled job for something that reserves
+inventory. `draw_at` stays on the schema as the fan-facing ETA; it does not have to be the instant
+the draw actually runs (see the open question below).
+
+**Trigger granularity: per concert, not per campaign.** `lottery_campaigns` is one row per
+`ticket_type` (one tier), but `database-design.md` §5.2's rank cascade requires every tier's
+campaign for one concert to be drawn together — a fan's "at most one ticket per concert" guarantee
+depends on the cascade seeing every tier's pending entries at once. A per-campaign trigger would let
+a manager draw VIP while Premium/Regular are still open, breaking that guarantee. Endpoint:
+`POST /lottery_campaigns/concerts/{concert_id}/draw`, added to the existing
+`app/router/lottery_campaign.py` (same `require_manager_or_admin` + string-sentinel/`_raise_for`
+convention already there), draws every `status='open'` campaign under that concert's ticket types
+as one atomic unit.
+
+**RBAC**: concerts already carry `company_id` directly, so this is the same one-level
+`_manager_scope_violation(current_user, concert.company_id)` check `concert_service`/
+`ticket_type_service` use — simpler than `lottery_campaign_service`'s own two-level
+(`ticket_type_id` → `concert_id`) join, since the trigger works from the concert side.
+
+**Concurrency guard** (same shape as the checkout fix and `ticket_service.checkout_ticket`'s
+existing pattern): `SELECT ... FOR UPDATE ORDER BY id` on every target `lottery_campaigns` row for
+the concert (UUID-ordered, deadlock-safe) plus `with_for_update()` on the `ticket_types` rows whose
+`sold_quantity` the draw will increment. Only `status='open'` campaigns are eligible, which makes
+the endpoint self-idempotent — a double-click or a race between two managers finds nothing open on
+the second call and returns a clean "already drawn" instead of re-running the draw.
+
+**Algorithm** (maps directly to `database-design.md` §5.2's sequence diagram — full walkthrough with
+a worked example was covered in conversation, not reproduced here): reject if any target campaign's
+`entry_end_at > now()`; then for `rank = 1, 2, 3, ...`, gather every tier's `pending` entries whose
+user ranked that tier at this rank and hasn't already won elsewhere in this concert this run, sample
+winners up to each tier's remaining `total_quantity - sold_quantity`, mark them `won` + insert a
+`Ticket(status='pending_payment')` + increment `sold_quantity`; after the last rank, every entry
+still `pending` becomes `lost`; flip all processed campaigns to `status='drawn'`; one commit at the
+end (`commit_or_raise`) — not the mid-flow-commit pattern `order_service.checkout` is still broken
+by.
+
+**Randomness source — decided**: use `secrets.SystemRandom().sample(candidates, k)`, not the
+default `random` module or Postgres's `ORDER BY random()`. The business rule ("no purchase
+multiplier, no bulk-buy bonus — every fan gets exactly one shot", §5.2) already fixes the *method*
+as uniform sampling — nothing to weight by, so no custom selection algorithm is needed. What's
+worth getting right is the *source*: the default `random`/`random()` PRNGs are Mersenne-Twister-
+class, statistically uniform but not cryptographically secure — in principle reconstructible from
+enough observed outputs. `secrets.SystemRandom()` is OS-CSPRNG-backed and a drop-in replacement, so
+there's no real cost to making a fairness-critical selection unpredictable rather than merely
+uniform. Sampling runs in Python (not SQL) since the cross-rank/cross-tier exclusion bookkeeping is
+already inherently procedural, not expressible as one query.
+
+**Explicitly deferred, not part of this job's own transaction**: winner-notification dispatch
+(payment link + deadline) — the Celery skeleton exists but has no real task yet (§2); coupling an
+email provider's latency to the draw's DB commit would risk the transaction on an unrelated external
+call. A reproducible/auditable draw (logging a seed + candidate snapshot per rank so a disputed
+result could be replayed) was considered and intentionally **not** planned in — nothing in this
+project's scope models a dispute process, and CLAUDE.md §7 flags exactly this kind of speculative
+scope addition to avoid; worth naming if asked, not worth building.
+
+**Placement**: new `app/services/lottery_draw_service.py` rather than folding into
+`lottery_campaign_service.py` — the draw is a meaningfully different concern (the "Job" actor in
+§5.2, touching `LotteryCampaign`/`LotteryEntry`/`LotteryPreference`/`TicketType`/`Ticket`) from plain
+campaign CRUD, and keeping it separate makes the interview-relevant file easy to point at directly.
+
+**Open question, not decided yet** — resolve before implementing, don't pick speculatively: does the
+endpoint gate only on `entry_end_at` (entries closed, manager has full discretion on exact timing —
+the option that actually justifies a human trigger over a cron) or also require `now() >= draw_at`
+(manager trigger becomes "confirm/kick off" rather than full discretion)? Leaning toward the former
+but this changes what `draw_at` means in the schema's story, so it isn't mine to decide.
+
+**Verification plan**: same standing gap as everything else in §3 — no live Postgres has run this;
+`alembic upgrade head` + a real multi-fan draw against seeded data (`scripts/seed.py`'s 2 lottery
+campaigns) is the confirming step once implemented, not just `py_compile`.

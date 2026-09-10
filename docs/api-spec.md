@@ -275,47 +275,69 @@ Toggle whether this position is the idol's primary one.
 ### `POST /groups/add` 🔒 manager+
 - Request (`GroupCreate`): `name` (str), `debut_date` (date, optional), `description` (str,
   optional, ≤2000 chars), `company_id` (uuid)
-- Response (`GroupRead`): adds `id`, `created_at`, `updated_at`
+- Response (`GroupRead`): adds `id`, `is_active` (always `true` on create), `created_at`, `updated_at`
 - UI: manager — create group
 
 ### `GET /groups/all` 🔓
-- Response: `List[GroupRead]`
+- Response: `List[GroupRead]` — **only `is_active=True` groups** (database-design.md §3.3)
 - UI: group directory / home page carousel
 
 ### `GET /groups/{id}` 🔓
-- Response: `GroupRead`
-- UI: group profile page
+- Response: `GroupRead` — deliberately **not** filtered by `is_active`, so a manager's edit form
+  can still load a deactivated group
+- UI: group profile page, manager edit form
 
 ### `PUT /groups/update/{id}` 🔒 manager+ (company-scoped)
-- Request (`GroupUpdate`): `name`, `debut_date`, `description`
+- Request (`GroupUpdate`): `name`, `debut_date`, `description` — `is_active` is **not** settable
+  here; use the delete/activate endpoints below
 - UI: manager — edit group
 
 ### `DELETE /groups/delete/{id}` 🔒 manager+ (company-scoped)
+Soft delete — sets `is_active = false`, does not remove the row (database-design.md §3.3).
 - Response: `{"msg": "Group deleted successfully"}`
+
+### `PATCH /groups/activate/{id}` 🔒 manager+ (company-scoped)
+Reverses the delete above — sets `is_active = true`.
+- Response (`GroupRead`): full reactivated group
+- UI: manager — settings page, "reactivate" on a deactivated group
 
 ### `POST /idols/add` 🔒 manager+ — **multipart/form-data**, not JSON
 - Request (form fields): `name` (str, required), `company_id` (uuid, required), `group_id` (uuid,
   optional), `date_of_birth` (date, optional), `hometown` (str, optional), `color_id` (uuid,
   optional), `short_intro` (str, optional, ≤500 chars), `long_description` (str, optional),
   `image` (file, optional — max 5MB, `image/jpeg|png|webp|gif`)
-- Response (`IdolRead`): all the above plus `id`, `profile_image_url`, `created_at`, `updated_at`
+- Response (`IdolRead`): all the above plus `id`, `is_active` (always `true` on create),
+  `profile_image_url`, `created_at`, `updated_at`
+- `400` if `group_id` names a deactivated group — new members can't be assigned into an inactive
+  group (database-design.md §3.3)
 - UI: manager — create idol (with photo upload in the same form)
 
 ### `GET /idols/all` 🔓
-- Response: `List[IdolRead]`
+- Response: `List[IdolRead]` — **only `is_active=True` idols** (database-design.md §3.4)
 - UI: idol directory / home page
 
 ### `GET /idols/{id}` 🔓
-- Response: `IdolRead`
-- UI: idol profile page
+- Response: `IdolRead` — deliberately **not** filtered by `is_active`, so a manager's edit form
+  can still load a deactivated idol
+- UI: idol profile page, manager edit form
 
 ### `PUT /idols/update/{id}` 🔒 manager+ (company-scoped) — **JSON**, not multipart
 Updates every field except the image — use the dedicated image endpoint below for that.
 - Request (`IdolUpdate`): same fields as `IdolCreate` minus `company_id` (ownership is immutable)
+  — `is_active` is **not** settable here; use the delete/activate endpoints below
+- `400` if `group_id` names a deactivated group **and it's a genuine change** — resending the
+  idol's current (already-deactivated) `group_id` unchanged is allowed, only moving an idol *into*
+  an inactive group is rejected (database-design.md §3.3)
 - UI: manager — edit idol (text fields)
 
 ### `DELETE /idols/delete/{id}` 🔒 manager+ (company-scoped)
+Soft delete — sets `is_active = false`, does not remove the row (database-design.md §3.4).
 - Response: `{"msg": "Idol deleted successfully"}`
+
+### `PATCH /idols/activate/{id}` 🔒 manager+ (company-scoped)
+Reverses the delete above — sets `is_active = true`.
+- Response (`IdolRead`): full reactivated idol
+- UI: manager — settings page, "reactivate" on a deactivated idol
 
 ### `POST /idols/{id}/image` 🔒 manager+ (company-scoped)
 Replace an idol's photo only, without touching any other field.
@@ -577,6 +599,8 @@ company ownership.
   optional), `track_count` (int, optional, >0), `format` (str, default `"physical"`),
   `cover_image_url` (str, optional)
 - Response (`AlbumDetailRead`): `product_id`, `idol_id`, `group_id`, plus base fields
+- `400` if the referenced `idol_id`/`group_id` is deactivated (`is_active=false`) — new releases
+  can't be attached to an inactive artist (database-design.md §3.3/§3.4)
 - UI: manager — "this is an album" toggle on the product form, revealing these fields
 
 ### `GET /album_details/all` 🔓
@@ -629,6 +653,8 @@ rename.)
   (uuid, optional — exactly one), `edition` (str, optional), `color_id` (uuid, optional — links to
   `idol_colors`)
 - Response (`MerchDetailRead`): adds `created_at`
+- `400` if the referenced `idol_id`/`group_id` is deactivated (`is_active=false`) — same rule as
+  `POST /album_details/add`
 - UI: manager — attach ownership on the product form (a lightstick-specific toggle no longer makes
   sense once this covers any branded merch, not just lightsticks)
 

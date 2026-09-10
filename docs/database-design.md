@@ -248,8 +248,33 @@ A management/entertainment company — the tenant boundary for `manager` account
 
 ### 3.3 `groups` (new)
 
-`id`, `company_id` (FK, required), `name`, `debut_date`, `description`, `created_at`,
-`updated_at`. A group always belongs to exactly one company, per the draft.
+`id`, `company_id` (FK, required), `name`, `debut_date`, `description`, `is_active` (bool,
+default `true` — see below), `created_at`, `updated_at`. A group always belongs to exactly one
+company, per the draft.
+
+`is_active` (migration `a1f3c9d27e56`, same shape as the pre-existing `users.is_active`): `DELETE
+/groups/delete/{id}` sets this `false` instead of deleting the row, and `PATCH
+/groups/activate/{id}` flips it back. Added because `concert_performers.group_id` is `ondelete=
+"CASCADE"` and `album_details`/`merch_details.group_id` are `ondelete="SET NULL"` — a real
+`db.delete()` on a group with concert or product history would destroy the performer record for a
+concert that already happened, or orphan artist attribution on products with real order history.
+Deactivating in place keeps every FK target alive instead. Store-facing reads (`get_groups`,
+`get_groups_page`, `get_group_detail`) filter to `is_active=True`; the manager/admin settings read
+and the plain by-id lookup deliberately don't, so a manager can still load a deactivated group to
+review/reactivate it.
+
+Deactivating a group does **not** cascade to its idols — group membership already models solo
+idols as `group_id IS NULL` (not a deletion), so an idol whose group goes inactive simply keeps
+its `group_id`, unaffected, matching that same "membership is independent of the idol's own
+lifecycle" framing. It's still visible on its own profile page; it just no longer surfaces as an
+active member of a group that itself isn't browsable anymore.
+
+A deactivated group is closed to *new* membership/inventory, though: `idol_service.add_idol`/
+`update_idol` reject assigning an idol into an inactive group (`"group_inactive"` sentinel, 400),
+and `album_detail_service.add_album_detail`/`merch_detail_service.add_merch_detail` reject
+attaching a new release/merch item to one (`"artist_inactive"` sentinel, 400) — same idea as not
+letting new work pile up behind a group that's been wound down, while what's already attached
+(existing members, past releases) stays exactly as it was.
 
 ### 3.4 `idols` (new)
 
@@ -258,7 +283,15 @@ for solo idols with no group), `group_id` (FK, **nullable** — solo acts exist)
 (single field — no separate stage name / real name split; `real_name` is deliberately deferred,
 not modeled at all right now), `date_of_birth`, `hometown`, `color_id` (FK → `idol_colors`,
 nullable — see §3.5; replaces the earlier `talent` field, which is dropped), `short_intro`
-(short text), `long_description` (long text), `profile_image_url`, `created_at`, `updated_at`.
+(short text), `long_description` (long text), `profile_image_url`, `is_active` (bool, default
+`true` — same soft-delete rationale as `groups.is_active`, §3.3: `concert_performers.idol_id` is
+`ondelete="CASCADE"` and `album_details`/`merch_details.idol_id` are `ondelete="SET NULL"`, so
+`DELETE /idols/delete/{id}` deactivates instead of hard-deleting, and `PATCH /idols/activate/{id}`
+reverses it), `created_at`, `updated_at`. An idol assigned to a group that later gets deactivated
+is unaffected — deactivation doesn't cascade between the two (§3.3) — but a deactivated *idol*
+closes off new attachments the same way a deactivated group does: `album_detail_service`/
+`merch_detail_service` reject attaching a new release/merch item to an inactive idol
+(`"artist_inactive"`, 400).
 
 Application-level invariant (not a DB constraint, to match how the codebase already handles
 cross-field validation in services rather than triggers): if `group_id` is set, the idol's
