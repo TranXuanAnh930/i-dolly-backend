@@ -9,7 +9,7 @@ from app.deps.db import get_db
 from app.db.models.user import Users
 from app.services.category_service import add_categories, get_categories, update_category, delete_category
 
-router = APIRouter(prefix="/Categories", tags=["Category"])
+router = APIRouter(prefix="/categories", tags=["Category"])
 
 @router.post("/add")
 async def add_new_category(category:CategoryBase, db:Session=Depends(get_db), current_user:Users = Depends(require_admin)):
