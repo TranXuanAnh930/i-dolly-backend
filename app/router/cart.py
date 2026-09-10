@@ -8,7 +8,7 @@ from app.db.models.user import Users
 from app.services.cart_service import add_to_cart, remove_cart, see_cart
 from app.exception.db_triggers import TriggerViolationError
 
-router = APIRouter(prefix="/Cart", tags=["Cart"])
+router = APIRouter(prefix="/cart", tags=["Cart"])
 
 @router.post("/add_cart")
 async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
