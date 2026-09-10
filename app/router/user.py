@@ -31,10 +31,11 @@ async def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_
 
 @router.post("/forgot-password")
 async def forgot_password(payload:ForgotPasswordRequest, background_tasks:BackgroundTasks, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)):
-    result = reset_password_process(db, payload.email, background_tasks)
-    if not result:
-        raise HTTPException(status_code=400, detail="Email not registered")
-    return {"msg" : "reset link sent successfully"}
+    # Always the same generic response, whether or not the email is
+    # registered — reset_password_process no-ops silently for an unknown
+    # email, so this endpoint can't be used to enumerate accounts.
+    reset_password_process(db, payload.email, background_tasks)
+    return {"msg" : "If that email is registered, a reset token has been sent"}
 
 @router.post("/set-password")
 async def set_new_password(payload:SetPasswordRequest, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
