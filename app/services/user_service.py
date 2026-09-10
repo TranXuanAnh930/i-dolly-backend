@@ -19,20 +19,25 @@ def change_password_process(db: Session, user:Users, old_password: str, new_pass
     return True
 
 def reset_password_process(db: Session, email: str, background_tasks:BackgroundTasks):
+    # Always returns True, whether or not the email is registered — the
+    # router gives the same generic response either way, so this endpoint
+    # can't be used to enumerate which emails have an account. Only the
+    # matched-user branch actually queues anything.
     user = db.query(Users).filter(Users.email == email).first()
-    if not user:
-        return None
-    token = create_password_reset_token(user.id)
-    email_body = f"""
-        Hi {user.email}, 
-        Your password reset token is:
+    if user:
+        token = create_password_reset_token(user.id)
+        email_body = f"""
+            Hi {user.email},
+            This is I-Dolly.
+            Thank you for using our service. We received a request to reset your password. If you did not make this request, please ignore this email.
+            Your password reset token is:
 
-        {token}
+            {token}
 
-        this token is valid for only 15minutes.
+            This token is valid for only 15 minutes. Please use it to reset your password. If you have any questions, please contact our support team.
 
-    """
-    background_tasks.add_task(send_email, user.email, "Reset password", email_body)
+        """
+        background_tasks.add_task(send_email, user.email, "Reset password", email_body)
     return True
 
 def verify_rtoken(db: Session, token: str, new_password: str):
@@ -40,9 +45,16 @@ def verify_rtoken(db: Session, token: str, new_password: str):
     if not user_id:
         return False
     user = db.query(Users).filter(Users.id == user_id).first()
-    if not user: 
+    if not user:
         return None
     user.hashed_password = hash_password(new_password)
+    # Revoke every existing refresh token, same as a fresh login (create_tokens)
+    # — otherwise a session an attacker already held survives the very reset
+    # meant to lock them out.
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user.id,
+        RefreshToken.revoked == False
+    ).update({"revoked": True})
     db.commit()
     db.refresh(user)
     return True

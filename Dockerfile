@@ -9,6 +9,13 @@ FROM python:3.12-slim
 # migration). Never write .pyc files instead of trying to keep them fresh.
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Python fully buffers stdout when it isn't attached to a real terminal —
+# which is exactly what a container's stdout is to `docker logs`/`docker
+# compose logs`. Without this, print() output (e.g. email_sender.py's
+# DEBUG-mode token dump) can sit in the buffer indefinitely instead of
+# reaching the log stream, since nothing forces a flush between requests.
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 COPY requirements.txt .

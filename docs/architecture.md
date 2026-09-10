@@ -30,6 +30,13 @@ this same folder. For *what's built vs. still open*, see `project_status.md`.
   stays an enum with one member rather than being collapsed away, so a real gateway has somewhere
   to slot in later.
 - **SendGrid** for transactional email, sent via FastAPI `BackgroundTasks`, never inline.
+  `settings.DEBUG` (default `false`) is a dev-only escape hatch, not a real email provider switch:
+  `app/utils/email_sender.py`'s `send_email` prints the full body — including whatever
+  verification/reset token it carries — to the console before attempting the real SendGrid call,
+  and swallows that call's failure instead of raising inside the background task. Needed because
+  `.env.example`'s `SENDGRID_API_KEY` is a placeholder, so local dev never actually delivers mail;
+  without this the token had nowhere visible to land. Must stay `false` in production — these
+  bodies carry live auth tokens.
 - **boto3** (optional — only imported when `STORAGE_BACKEND=s3`) for S3-compatible image storage;
   see §5.
 - Docker Compose (`app` + `postgres:16` + `redis`) for local dev; the Dockerfile runs
