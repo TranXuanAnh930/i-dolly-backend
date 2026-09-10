@@ -389,6 +389,22 @@ newly introduced.
     a live Postgres — `alembic upgrade head` + hitting the endpoints for real is still the
     outstanding step, same standing gap as everything else in this section.
 
+18. ~~**Verification/reset tokens had no dev-visible surface**~~ — **FIXED**. Frontend flagged
+    that `SENDGRID_API_KEY` is a placeholder in local dev (per `.env.example`), so
+    `email_verification_process`/`reset_password_process` always fail to actually deliver — and
+    since `send_email` runs via `BackgroundTasks` *after* the response, the failure (and the token
+    inside the unsent email) had nowhere visible to land. New `settings.DEBUG` flag (default
+    `false`): when `true`, `app/utils/email_sender.py`'s `send_email` prints the full email body —
+    token included — to the console before attempting the real SendGrid call, and now always
+    catches that call's exception instead of letting it raise unhandled inside the background
+    task. Deliberately **not** solved by returning the token in the API response instead: `POST
+    /profile/forgot-password` is intentionally anti-enumeration (identical response whether or not
+    the email is registered, per its own comment in `user_service.py`) — putting a real token in
+    the response only for matched accounts would reopen that exact side channel, even in dev.
+    `DEBUG` must stay unset/`false` in production (documented in `deployment.md`'s env var table)
+    since these bodies carry live auth tokens. Verified with `py_compile` and `import main` +
+    `configure_mappers()`; not exercised against a live SendGrid call either way.
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't

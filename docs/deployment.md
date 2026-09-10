@@ -131,6 +131,7 @@ needs to run through Celery. When it does:
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | from §4 | internal hostname, usually `6379`, `0` |
 | `CELERY_BROKER_DB` | `1` (default, can be omitted) | only relevant if the Celery worker (§5) is deployed too |
 | `SENDGRID_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | only exercised by the email-verification/password-reset flows |
+| `DEBUG` | **omit, or `false`** | dev-only: prints verification/reset tokens to the console when a placeholder `SENDGRID_API_KEY` can't actually deliver (`architecture.md`'s SendGrid note). Leaving it unset defaults to `false`, which is what you want here — these token bodies have no business in Render's shared logs. |
 | `BASE_URL` | `https://<your-render-service>.onrender.com` | used to build the email verification link |
 | `CORS_ORIGINS` | your frontend's real origin(s), comma-separated | e.g. `https://your-frontend.vercel.app` |
 | `STORAGE_BACKEND` | `s3` | per the chosen option in §3 |

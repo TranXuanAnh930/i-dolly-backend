@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     SENDGRID_API_KEY : str
     FROM_EMAIL : str
 
+    # Dev convenience only, defaults off. `.env.example`'s SENDGRID_API_KEY
+    # is a placeholder, so a real send always fails locally — when true,
+    # send_email() prints the full email body (including whatever
+    # verification/reset token it carries) to the console before attempting
+    # to send, and swallows the resulting SendGrid failure instead of
+    # letting it raise inside a BackgroundTask. Never set true in production:
+    # these bodies carry live auth tokens, which have no business sitting in
+    # a shared server log.
+    DEBUG: bool = True
+
     # Public base URL of this API — used to build links (e.g. the email
     # verification link) that must resolve from outside the container.
     # Defaults to local dev; override per-environment via .env.
