@@ -25,11 +25,13 @@ def reset_password_process(db: Session, email: str, background_tasks:BackgroundT
     token = create_password_reset_token(user.id)
     email_body = f"""
         Hi {user.email}, 
+        This is I-Dolly. 
+        Thank you for using our service. We received a request to reset your password. If you did not make this request, please ignore this email.
         Your password reset token is:
 
         {token}
 
-        this token is valid for only 15minutes.
+        This token is valid for only 15 minutes. Please use it to reset your password. If you have any questions, please contact our support team.
 
     """
     background_tasks.add_task(send_email, user.email, "Reset password", email_body)
