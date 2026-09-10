@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import String, Column, DateTime, ForeignKey, Date, func
+from sqlalchemy import String, Column, DateTime, ForeignKey, Date, Boolean, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
@@ -13,6 +13,7 @@ class Group(Base):
     name = Column(String, nullable=False)
     debut_date = Column(Date, nullable=True)
     description = Column(String, nullable=True)
+    is_active = Column(Boolean, server_default=func.true(), nullable=False)  # soft-delete flag: deactivate instead of hard-delete, see database-design.md §3.3
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now(), nullable=False)
 

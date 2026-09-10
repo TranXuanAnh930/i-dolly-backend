@@ -20,6 +20,8 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=404, detail=not_found_detail)
     if result == "conflict":
         raise HTTPException(status_code=400, detail="This product already has album details")
+    if result == "artist_inactive":
+        raise HTTPException(status_code=400, detail="Cannot attach a new release to a deactivated idol/group")
 
 @router.post("/add", response_model=AlbumDetailRead)
 async def add_new_album_detail(data: AlbumDetailCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):

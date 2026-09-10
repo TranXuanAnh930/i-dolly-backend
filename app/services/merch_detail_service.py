@@ -23,6 +23,16 @@ def _resolve_company_id(db: Session, idol_id, group_id):
         return group.company_id if group else None
     return None
 
+def _artist_active_or_missing(db: Session, idol_id, group_id) -> bool:
+    # Same rule as album_detail_service's equivalent helper.
+    if idol_id is not None:
+        idol = db.get(Idol, idol_id)
+        return idol is None or idol.is_active
+    if group_id is not None:
+        group = db.get(Group, group_id)
+        return group is None or group.is_active
+    return True
+
 def add_merch_detail(db: Session, data: MerchDetailCreate, current_user: Users):
     if not db.get(Product, data.product_id):
         return "not_found"
@@ -30,6 +40,8 @@ def add_merch_detail(db: Session, data: MerchDetailCreate, current_user: Users):
         return "conflict"
     if data.color_id is not None and not db.get(IdolColor, data.color_id):
         return "not_found"
+    if not _artist_active_or_missing(db, data.idol_id, data.group_id):
+        return "artist_inactive"
     company_id = _resolve_company_id(db, data.idol_id, data.group_id)
     if company_id is None:
         return "not_found"

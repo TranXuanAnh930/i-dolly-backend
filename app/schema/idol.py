@@ -23,6 +23,7 @@ class IdolUpdate(IdolBase):
 class IdolRead(IdolBase):
     id: uuid.UUID
     company_id: uuid.UUID
+    is_active: bool
     created_at: datetime
     updated_at: datetime
 
@@ -70,6 +71,7 @@ class ManagerIdolsPageRead(BaseModel):
 # — so this is the one place group.company_id is needed alongside id/name.
 class GroupOptionForCompany(GroupMini):
     company_id: uuid.UUID
+    is_active: bool
 
 class ManagerIdolFormPageRead(BaseModel):
     idols: list[IdolRead]  # only read for the isEditing lookup
