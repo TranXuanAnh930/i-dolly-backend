@@ -10,7 +10,7 @@ from app.schema.group import (
     GroupCreate, GroupUpdate, GroupRead, GroupsPageRead, GroupDetailRead, ManagerGroupsPageRead,
 )
 from app.services.group_service import (
-    add_group, get_groups, get_group, update_group, delete_group,
+    add_group, get_groups, get_group, update_group, delete_group, reactivate_group,
     get_groups_page, get_group_detail, get_manager_groups_page,
 )
 
@@ -76,7 +76,15 @@ async def update_existing_group(id: uuid.UUID, data: GroupUpdate, current_user: 
 
 @router.delete("/delete/{id}")
 async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    # Soft delete (sets is_active=False) — see group_service.delete_group.
     result = delete_group(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Group not found")
     return {"msg": "Group deleted successfully"}
+
+@router.patch("/activate/{id}", response_model=GroupRead)
+async def activate_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    result = reactivate_group(db, id, current_user)
+    if isinstance(result, str):
+        _raise_for(result, "Group not found")
+    return result

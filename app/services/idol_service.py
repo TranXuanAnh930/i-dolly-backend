@@ -27,9 +27,12 @@ def _with_positions_and_color():
 # a referenced row (company/group/color/idol) doesn't exist at all (-> 404 in
 # the router); "company_mismatch" = group_id points at a group belonging to a
 # DIFFERENT company than company_id (-> 400, database-design.md §3.4);
-# "forbidden" = everything above is valid, but the caller is a manager acting
-# outside their own company_id (-> 403, database-design.md §4's "Not yet
-# done" note — now done). A plain admin never hits "forbidden".
+# "group_inactive" = group_id exists and matches company_id but is
+# deactivated — new/changed membership into it is blocked (-> 400,
+# database-design.md §3.3); "forbidden" = everything above is valid, but the
+# caller is a manager acting outside their own company_id (-> 403,
+# database-design.md §4's "Not yet done" note — now done). A plain admin
+# never hits "forbidden".
 
 def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
@@ -48,6 +51,11 @@ def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | Non
         # company_id.
         if group.company_id != company_id:
             return "company_mismatch"
+        # A deactivated group is closed to new/changed membership — it can
+        # still be READ (existing members, past products/events), but an
+        # idol can't be newly assigned into it via add/update.
+        if not group.is_active:
+            return "group_inactive"
     if color_id is not None:
         color = db.get(IdolColor, color_id)
         if not color:
@@ -60,6 +68,8 @@ def add_idol(db: Session, idol: IdolCreate, current_user: Users):
     error = _validate_refs(db, idol.company_id, idol.group_id, idol.color_id)
     if error == "company_mismatch":
         return "company_mismatch"
+    if error == "group_inactive":
+        return "group_inactive"
     if error is not None:
         return "not_found"
     db_idol = Idol(**idol.model_dump())
@@ -69,34 +79,44 @@ def add_idol(db: Session, idol: IdolCreate, current_user: Users):
     return db_idol
 
 def get_idols(db: Session):
-    result = db.query(Idol).all()
+    # Public "browse all idols" list — deactivated idols don't belong on a
+    # store-facing listing (database-design.md §3.4).
+    result = db.query(Idol).filter(Idol.is_active.is_(True)).all()
     if not result:
         return False
     return result
 
 def get_idol(db: Session, id: uuid.UUID):
+    # Deliberately NOT filtered by is_active — see group_service.get_group's
+    # equivalent comment; a manager's edit form needs this to load a
+    # deactivated idol.
     return db.get(Idol, id)
 
 # --- page-shaped reads (see idol.py schema's equivalent comment) ---
 
 def get_members_page(db: Session):
-    idols = db.query(Idol).options(*_with_positions_and_color()).all()
+    # Store-facing browse page — same is_active filter as get_idols, plus
+    # the group-unit dropdown only offers active groups.
+    idols = db.query(Idol).options(*_with_positions_and_color()).filter(Idol.is_active.is_(True)).all()
     if not idols:
         return False
-    groups = db.query(Group).all()
+    groups = db.query(Group).filter(Group.is_active.is_(True)).all()
     return {"idols": idols, "groups": groups}
 
 def get_idol_detail(db: Session, id: uuid.UUID):
+    # Public idol profile page — a deactivated idol reads as "not found"
+    # here, same as get_idols/get_members_page; only the manager/admin
+    # settings surfaces (get_manager_idols_page, plain get_idol) still see it.
     idol = (
         db.query(Idol)
         .options(*_with_positions_and_color())
-        .filter(Idol.id == id)
+        .filter(Idol.id == id, Idol.is_active.is_(True))
         .first()
     )
     if not idol:
         return False
     group = db.get(Group, idol.group_id) if idol.group_id else None
-    siblings_query = db.query(Idol).filter(Idol.id != id)
+    siblings_query = db.query(Idol).filter(Idol.id != id, Idol.is_active.is_(True))
     siblings_query = siblings_query.filter(Idol.group_id == idol.group_id) if idol.group_id else siblings_query.filter(Idol.group_id.is_(None))
     siblings = siblings_query.options(*_with_positions_and_color()).all()
     return {"idol": idol, "group": group, "siblings": siblings}
@@ -124,8 +144,17 @@ def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: User
     # different company is a bigger operation than a profile edit and isn't
     # exposed here; validate group/color against the idol's EXISTING company.
     error = _validate_refs(db, db_idol.company_id, data.group_id, data.color_id)
+    # IdolUpdate is a full-replace PUT, so data.group_id is resent unchanged
+    # on every ordinary edit — if the idol was already a member before its
+    # group got deactivated, that's not a new assignment and shouldn't block
+    # the rest of the edit. Only a genuine move INTO a deactivated group
+    # (data.group_id != the idol's current group_id) is rejected.
+    if error == "group_inactive" and data.group_id == db_idol.group_id:
+        error = None
     if error == "company_mismatch":
         return "company_mismatch"
+    if error == "group_inactive":
+        return "group_inactive"
     if error is not None:
         return "not_found"
     db_idol.name = data.name
@@ -141,14 +170,30 @@ def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: User
     return db_idol
 
 def delete_idol(db: Session, id: uuid.UUID, current_user: Users):
+    # Soft delete, not db.delete(): concert_performers CASCADEs off
+    # idols.id and album_details/merch_details SET NULL their idol_id —
+    # hard-deleting an idol with concert or product history would destroy
+    # or orphan that history. Deactivating in place keeps every FK target
+    # alive (database-design.md §3.4).
     db_idol = db.get(Idol, id)
     if not db_idol:
         return "not_found"
     if _manager_scope_violation(current_user, db_idol.company_id):
         return "forbidden"
-    db.delete(db_idol)
+    db_idol.is_active = False
     db.commit()
     return True
+
+def reactivate_idol(db: Session, id: uuid.UUID, current_user: Users):
+    db_idol = db.get(Idol, id)
+    if not db_idol:
+        return "not_found"
+    if _manager_scope_violation(current_user, db_idol.company_id):
+        return "forbidden"
+    db_idol.is_active = True
+    db.commit()
+    db.refresh(db_idol)
+    return db_idol
 
 def set_idol_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users):
     """Used by POST /idols/{id}/image — updates only profile_image_url,

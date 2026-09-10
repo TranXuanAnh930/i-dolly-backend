@@ -12,7 +12,7 @@ from app.schema.idol import (
     ManagerIdolsPageRead, ManagerIdolFormPageRead,
 )
 from app.services.idol_service import (
-    add_idol, get_idols, get_idol, update_idol, delete_idol, set_idol_image,
+    add_idol, get_idols, get_idol, update_idol, delete_idol, reactivate_idol, set_idol_image,
     get_members_page, get_idol_detail, get_manager_idols_page, get_manager_idol_form_page,
 )
 from app.utils.storage import get_storage, StorageError
@@ -31,6 +31,8 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=404, detail=not_found_detail)
     if result == "company_mismatch":
         raise HTTPException(status_code=400, detail="group_id belongs to a different company than company_id")
+    if result == "group_inactive":
+        raise HTTPException(status_code=400, detail="Cannot assign an idol into a deactivated group")
 
 # multipart/form-data, not JSON — this is the file-upload requirement
 # (an optional `image` file alongside the rest of the profile in the same
@@ -118,10 +120,18 @@ async def update_existing_idol(id: uuid.UUID, data: IdolUpdate, current_user: Us
 
 @router.delete("/delete/{id}")
 async def delete_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    # Soft delete (sets is_active=False) — see idol_service.delete_idol.
     result = delete_idol(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Idol not found")
     return {"msg": "Idol deleted successfully"}
+
+@router.patch("/activate/{id}", response_model=IdolRead)
+async def activate_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    result = reactivate_idol(db, id, current_user)
+    if isinstance(result, str):
+        _raise_for(result, "Idol not found")
+    return result
 
 @router.post("/{id}/image", response_model=IdolRead)
 async def upload_idol_image(id: uuid.UUID, image: UploadFile = File(...), current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):

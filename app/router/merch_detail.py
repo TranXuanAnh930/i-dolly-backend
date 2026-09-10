@@ -21,6 +21,8 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=404, detail=not_found_detail)
     if result == "conflict":
         raise HTTPException(status_code=400, detail="This product already has merch details")
+    if result == "artist_inactive":
+        raise HTTPException(status_code=400, detail="Cannot attach new merch to a deactivated idol/group")
 
 @router.post("/add", response_model=MerchDetailRead)
 async def add_new_merch_detail(data: MerchDetailCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):

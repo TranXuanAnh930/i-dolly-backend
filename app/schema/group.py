@@ -19,6 +19,7 @@ class GroupUpdate(GroupBase):
 class GroupRead(GroupBase):
     id: uuid.UUID
     company_id: uuid.UUID
+    is_active: bool
     created_at: datetime
     updated_at: datetime
 
