@@ -17,6 +17,7 @@ class PaymentCreate(BaseModel):
     shipping_address_id : uuid.UUID
     gateway : PaymentGateway = PaymentGateway.mock
     simulate_succ : bool | None = None
+    idempotency_key: uuid.UUID
 
 class PaymentResponse(BaseModel):
     id : uuid.UUID

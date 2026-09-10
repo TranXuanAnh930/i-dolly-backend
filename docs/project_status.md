@@ -158,10 +158,17 @@ newly introduced.
 1. **Checkout is not one atomic transaction, and has a stock-overselling race** —
    `order_service.checkout()` locks each `Product` row, then `payment_service.create_payment()`
    does its own `db.commit()` mid-flow, releasing the locks; a second loop re-locks and
-   decrements without re-checking sufficiency. `ticket_types.sold_quantity` inherits the exact
-   same pattern once ticket issuance is built on top of `checkout()` — the ticket-domain failure
-   mode is **selling the same seat twice**. Fix before, not after, wiring the draw job / direct
-   purchase flow to real inventory decrements.
+   decrements without re-checking sufficiency. **Still fully unfixed as of this writing** —
+   verified by reading the current file directly, not assumed. **However, the ticket-domain
+   version of this exact race is now fixed**: `ticket_service.checkout_ticket()` (the new
+   direct-sale ticket purchase flow) acquires one `with_for_update()` lock on `ticket_type` and
+   holds it continuously through the stock check, the `Ticket` insert, `create_ticket_payment()`
+   (deliberately non-committing — see its own docstring), and the `sold_quantity += 1` increment,
+   committing exactly once via `commit_or_raise()` at the end — no premature commit anywhere in
+   the chain. This is the same fix designed for `order_service.checkout()` earlier in this
+   project, correctly applied to new code — retrofitting it to `checkout()`/`create_payment()` is
+   now mostly copying an already-proven pattern, not new design work. Fix before, not after,
+   wiring the lottery draw job to real inventory decrements.
 2. ~~**The rate limiter's key doesn't include the route**~~ — **FIXED**. `ip_key`/`user_key`
    (`app/cache/rate_limit.py`) previously built their Redis key from only the caller's identity
    (`rate:ip:<ip>` / `rate:user:<id>`), so every endpoint sharing a `key_func` shared one counter
@@ -317,6 +324,31 @@ newly introduced.
     returns a clean 200, and both the `users` and `shipping_addresses` rows are confirmed gone
     from Postgres afterward.
 
+16. **No client-retry idempotency on either checkout endpoint** — distinct from item 4's *webhook*
+    idempotency (moot — no real gateway exists yet). This is about the client side: a double-click
+    or network-timeout retry of `POST /order/checkout` / `POST /tickets/checkout` resubmitting the
+    same logical request. **Tickets are accidentally, partially protected**: `checkout_ticket`
+    calls `_existing_live_ticket()` before creating a `Ticket`, and a retry lands after the first
+    request's ticket is already `pending_payment`/`paid` (both "live"), so it hits
+    `DuplicateConcertTicketError` instead of creating a second ticket — a side effect of the
+    one-ticket-per-concert rule, not a deliberate idempotency mechanism. **Orders have no
+    protection at all** — a fan can legitimately place multiple separate orders for the same
+    product, so no natural guard exists, and `rate_limit(3, 60, user_key)` on both checkout routes
+    permits 3 attempts/minute, not 1, so it doesn't prevent a duplicate either. With the mock
+    gateway this just means duplicate mock `Payment` rows today; the pattern is exactly what would
+    silently double-charge a fan once a real gateway lands. **Recommended fix, reasoned through
+    against this project's own conventions, not implemented**: an `idempotency_key UUID UNIQUE`
+    column on `payment` (not duplicated onto `orders`/`tickets` separately — both checkout flows
+    already funnel into one `Payment` row via `create_payment`/`create_ticket_payment`), enforced
+    as a DB constraint and translated through the existing `commit_or_raise`/`TriggerViolationError`
+    machinery, the same "DB backstop for money/fairness concerns" pattern `database-design.md`
+    §4.1 already applies to the fan-only-purchase rule and the anti-resale cap — not a Redis-based
+    key, since Redis is explicitly a cache in this project (and already has one documented
+    enforcement bug, item 2's route-key issue) rather than the source of truth money-related
+    guarantees are supposed to rest on here. A Redis check could still sit in front of the DB
+    constraint purely as a cheap early-exit, mirroring the existing "service-layer check first, DB
+    constraint as the real backstop" shape used everywhere else in this codebase.
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't
@@ -325,6 +357,8 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - **Payment failure handling** — every trigger and flow so far assumes success (mock gateway).
+  A PayPal integration plan now exists — see §7 — but is deliberately left for hand-implementation
+  (interview-defensibility reasons, same as §6 item 2) rather than done by Claude.
 - **The direct/"reservation" (non-lottery) checkout flow** — the schema supports it
   (`ticket_types.sale_method = 'direct'`), but only the lottery path has a sequence diagram
   (`database-design.md` §5.2) and only `tickets`' admin-only manual-issue endpoint exists so far.
@@ -415,3 +449,65 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
    (`tests/unit/test_services.py`) never set `.role` at all, which would have broken
    `add_to_cart`'s two existing tests once a real role check existed — given a `role="fan"` default,
    matching `Users.role`'s actual DB default.
+
+## 7. Planned next: PayPal gateway integration
+
+**Design drafted, not yet implemented** — deliberately left for hand-implementation (interview-
+defensibility reasons, same as §6 item 2: real gateway integration, webhook idempotency, and
+signature verification are exactly the class of correctness problem this portfolio is meant to
+demonstrate judgment on, not infrastructure to have generated). This is the item §4 item 4 and §5
+referred to as "next-phase work" — this section is that phase's plan.
+
+**The core problem the previous, removed Paypal integration (§4 item 4) didn't solve**: the mock
+gateway resolves success/failure synchronously inside `checkout()`/`checkout_ticket()` via a
+`simulate_succ` flag. PayPal can't work that way — it's an async three-step handoff (create order →
+buyer approves in PayPal's UI → server captures) plus a webhook that can arrive before, after, or
+instead of the capture call, possibly more than once. Consequences that drive the plan below: stock/
+seat decrement must move to whenever payment is *actually* confirmed (not checkout time, or an
+abandoned PayPal order permanently holds inventory); the capture endpoint and the webhook handler
+are two entry points into the same "finalize this payment" logic, so it must be one shared function,
+not duplicated; and the webhook needs an idempotency guard before it touches anything, keyed on
+PayPal's event `id` — this is the same `idempotency_key` mechanism §4 item 16 already reasoned
+through without building, and PayPal is exactly the case it was designed for.
+
+Ordered plan:
+
+1. **Settings**: `app/config/settings.py` gains `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`,
+   `PAYPAL_MODE` (`sandbox`|`live`, default `sandbox`), `PAYPAL_WEBHOOK_ID`. No new dependency —
+   `httpx` is already in `requirements.txt`; PayPal's REST API doesn't need their SDK.
+2. **`app/utils/paypal_client.py`** (new, thin httpx wrapper, same "swap backend, no call-site
+   changes" shape as `app/utils/storage.py`): `get_access_token()` (OAuth2 client-credentials,
+   cached in-process), `create_order(amount)`, `capture_order(paypal_order_id)`,
+   `verify_webhook_signature(headers, body)` — calls PayPal's own
+   `/v1/notifications/verify-webhook-signature` endpoint rather than reimplementing their
+   cert-chain check locally.
+3. **Two migrations**, one concern each (CLAUDE.md §6, atomic `DO $$...EXCEPTION` pattern):
+   add `'paypal'` to `payment_gateway_enum`; add a `processed_webhook_events` table
+   (`event_id UNIQUE`, `gateway`, `processed_at`) as the idempotency guard, enforced as a DB
+   constraint and translated through the existing `commit_or_raise`/`TriggerViolationError`
+   machinery — the same "DB backstop for money invariants" pattern `database-design.md` §4.1
+   already uses.
+4. **Schema**: `PaymentGateway.paypal` in `app/schema/payment.py`. No new `Payment` columns needed
+   — `pg_order_id`/`pg_payment_id`/`pg_signature` already map onto PayPal's order id / capture id /
+   webhook transmission id.
+5. **Checkout flow split**, `paypal` branch only (mock keeps its current synchronous shape
+   untouched): `checkout()`/`checkout_ticket()` create the Order/Ticket row **pending**, call
+   `create_order()`, store `pg_order_id`, return it to the client — no stock decrement yet. A new
+   shared `finalize_paypal_payment(db, pg_order_id)` in `payment_service.py` re-locks the same row
+   (`with_for_update()`, matching `ticket_service.checkout_ticket`'s pattern), check-then-decrements,
+   marks `Payment`/`Order`/`Ticket` success, commits once. Two new router endpoints in
+   `app/router/payment.py`: `POST /payment/paypal/capture/{pg_order_id}` (fast path — calls PayPal
+   capture then `finalize_paypal_payment`) and `POST /payment/paypal/webhook` (reconciliation path —
+   verifies signature, checks/inserts the event id from step 3 *before* calling
+   `finalize_paypal_payment`, since the webhook can double-fire or arrive after the client already
+   captured).
+
+**Open questions, not decided yet** — resolve before implementing, don't pick speculatively:
+- How long a pending PayPal order holds implicit inventory intent before it's considered abandoned
+  — an expiry job, or is "never confirmed, stock never touched" sufficient for portfolio scope?
+- Whether `finalize_paypal_payment` needs its own lock against being called concurrently by both
+  the capture endpoint and the webhook for the same order.
+
+**Verification plan**: no unit-testable "did money move" here — verify against a PayPal Sandbox
+account (developer.paypal.com) and its webhook simulator, the same standing-gap caveat as §3
+(needs real network access, not available in every session this project has been built in).

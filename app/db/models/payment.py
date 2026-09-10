@@ -27,6 +27,8 @@ class Payment(Base):
     pg_signature = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now(), nullable=False)
+    # unique key to fix idempotency issues
+    idempotency_key = Column(UUID(as_uuid=True), nullable=False, unique=True, index=True)
 
     order_payment = relationship("Order", back_populates="payment")
     ticket_payment = relationship("Ticket", foreign_keys=[ticket_id])

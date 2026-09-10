@@ -17,7 +17,8 @@ def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID):
     product = db.query(Product).filter(Product.id==cart_item.product_id).first()
     if not product or product.quantity<cart_item.quantity:
         return None
-    stmt = db.query(Cart).filter(Cart.user_id==user_id, Cart.product_id==cart_item.product_id).first()
+    
+    stmt = db.query(Cart).filter(Cart.user_id==user_id, Cart.product_id==cart_item.product_id).with_for_update().first()
     if stmt:
         stmt.quantity+=cart_item.quantity
         stmt.total_price=product.price*stmt.quantity
