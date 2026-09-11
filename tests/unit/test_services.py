@@ -52,6 +52,46 @@ def make_mock_cart_item(id=DEFAULT_ID, user_id=DEFAULT_ID, product_id=DEFAULT_ID
     item.total_price = total_price
     return item
 
+# Talent/Marketplace domain helpers — company-scoped rows all need at least
+# .id/.company_id/.is_active for _manager_scope_violation and the soft-delete
+# checks each of these services shares.
+
+def make_mock_manager(id=DEFAULT_ID, company_id=DEFAULT_ID, name="Manager", email="manager@example.com"):
+    user = make_mock_user(id=id, name=name, email=email, role="manager")
+    user.company_id = company_id
+    return user
+
+def make_mock_company(id=DEFAULT_ID, name="Nova Entertainment"):
+    company = MagicMock()
+    company.id = id
+    company.name = name
+    return company
+
+def make_mock_group(id=DEFAULT_ID, company_id=DEFAULT_ID, name="Prism", is_active=True):
+    group = MagicMock()
+    group.id = id
+    group.company_id = company_id
+    group.name = name
+    group.is_active = is_active
+    return group
+
+def make_mock_idol(id=DEFAULT_ID, company_id=DEFAULT_ID, group_id=None, color_id=None, is_active=True):
+    idol = MagicMock()
+    idol.id = id
+    idol.company_id = company_id
+    idol.group_id = group_id
+    idol.color_id = color_id
+    idol.is_active = is_active
+    return idol
+
+def model_get_side_effect(mapping: dict):
+    """Builds a db.get(Model, id) side_effect that dispatches on the model
+    class, since a plain MagicMock().get ignores call args and can't tell
+    db.get(Product, ...) apart from db.get(AlbumDetail, ...) on its own."""
+    def _side_effect(model, ident=None):
+        return mapping.get(model)
+    return _side_effect
+
 
 # ─────────────────────────────────────────────────────────────
 # Auth Service Tests
@@ -574,20 +614,19 @@ class TestUserService:
         assert result is True
         bg_tasks.add_task.assert_called_once()
 
-    # TODO: Uncomment and implement this test once the reset_password_process function is fully implemented to handle the case where the email is not found.
-    # def test_reset_password_process_email_not_found(self):
-    #     from app.services.user_service import reset_password_process
+    def test_reset_password_process_email_not_found(self):
+        from app.services.user_service import reset_password_process
 
-    #     db = MagicMock()
-    #     db.query().filter().first.return_value = None
-    #     bg_tasks = MagicMock()
+        db = MagicMock()
+        db.query().filter().first.return_value = None
+        bg_tasks = MagicMock()
 
-    #     # Always returns True, matched user or not — the router gives the
-    #     # same generic response either way so this can't be used to
-    #     # enumerate registered emails (user_service.py's own comment).
-    #     result = reset_password_process(db, "nope@example.com", bg_tasks)
-    #     assert result is True
-    #     bg_tasks.add_task.assert_not_called()
+        # Always returns True, matched user or not — the router gives the
+        # same generic response either way so this can't be used to
+        # enumerate registered emails (user_service.py's own comment).
+        result = reset_password_process(db, "nope@example.com", bg_tasks)
+        assert result is True
+        bg_tasks.add_task.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -813,3 +852,1794 @@ class TestPaymentService:
 
         result = fetch_all_payments(db, DEFAULT_ID)
         assert result is None
+
+
+# ─────────────────────────────────────────────────────────────
+# Talent domain: Management Company / Idol Color / Position Service Tests
+# ─────────────────────────────────────────────────────────────
+
+class TestManagementCompanyService:
+
+    def test_add_company_success(self):
+        from app.services.management_company_service import add_company
+        from app.schema.management_company import ManagementCompanyCreate
+
+        db = MagicMock()
+        data = ManagementCompanyCreate(name="Nova Entertainment")
+
+        result = add_company(db, data)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert result is not False
+
+    def test_get_companies_found(self):
+        from app.services.management_company_service import get_companies
+
+        db = MagicMock()
+        db.query().all.return_value = [make_mock_company()]
+
+        result = get_companies(db)
+        assert len(result) == 1
+
+    def test_get_companies_empty(self):
+        from app.services.management_company_service import get_companies
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_companies(db)
+        assert result is False
+
+    def test_get_company_found(self):
+        from app.services.management_company_service import get_company
+
+        db = MagicMock()
+        mock_company = make_mock_company()
+        db.get.return_value = mock_company
+
+        result = get_company(db, DEFAULT_ID)
+        assert result == mock_company
+
+    def test_get_company_not_found(self):
+        from app.services.management_company_service import get_company
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = get_company(db, MISSING_ID)
+        assert result is None
+
+    def test_update_company_success(self):
+        from app.services.management_company_service import update_company
+        from app.schema.management_company import ManagementCompanyBase
+
+        db = MagicMock()
+        db.get.return_value = make_mock_company()
+        data = ManagementCompanyBase(name="Renamed", description="New desc", contact_email="a@b.com")
+
+        result = update_company(db, DEFAULT_ID, data)
+        db.commit.assert_called_once()
+        assert result is not False
+        assert result.name == "Renamed"
+
+    def test_update_company_not_found(self):
+        from app.services.management_company_service import update_company
+        from app.schema.management_company import ManagementCompanyBase
+
+        db = MagicMock()
+        db.get.return_value = None
+        data = ManagementCompanyBase(name="Renamed")
+
+        result = update_company(db, MISSING_ID, data)
+        assert result is False
+
+    def test_delete_company_success(self):
+        from app.services.management_company_service import delete_company
+
+        db = MagicMock()
+        mock_company = make_mock_company()
+        db.get.return_value = mock_company
+
+        result = delete_company(db, DEFAULT_ID)
+        db.delete.assert_called_once_with(mock_company)
+        db.commit.assert_called_once()
+        assert result is True
+
+    def test_delete_company_not_found(self):
+        from app.services.management_company_service import delete_company
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = delete_company(db, MISSING_ID)
+        assert result is False
+
+
+class TestIdolColorService:
+
+    def test_add_idol_color_success(self):
+        from app.services.idol_color_service import add_idol_color
+        from app.schema.idol_color import IdolColorCreate
+
+        db = MagicMock()
+        data = IdolColorCreate(name="Sakura Pink", hex_code="#FFB7C5")
+
+        result = add_idol_color(db, data)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert result is not False
+
+    def test_get_idol_colors_found(self):
+        from app.services.idol_color_service import get_idol_colors
+
+        db = MagicMock()
+        db.query().all.return_value = [MagicMock()]
+
+        result = get_idol_colors(db)
+        assert len(result) == 1
+
+    def test_get_idol_colors_empty(self):
+        from app.services.idol_color_service import get_idol_colors
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_idol_colors(db)
+        assert result is False
+
+    def test_update_idol_color_success(self):
+        from app.services.idol_color_service import update_idol_color
+        from app.schema.idol_color import IdolColorBase
+
+        db = MagicMock()
+        db.get.return_value = MagicMock()
+        data = IdolColorBase(name="Midnight Blue", hex_code="#191970")
+
+        result = update_idol_color(db, DEFAULT_ID, data)
+        db.commit.assert_called_once()
+        assert result is not False
+
+    def test_update_idol_color_not_found(self):
+        from app.services.idol_color_service import update_idol_color
+        from app.schema.idol_color import IdolColorBase
+
+        db = MagicMock()
+        db.get.return_value = None
+        data = IdolColorBase(name="Midnight Blue", hex_code="#191970")
+
+        result = update_idol_color(db, MISSING_ID, data)
+        assert result is False
+
+    def test_delete_idol_color_success(self):
+        from app.services.idol_color_service import delete_idol_color
+
+        db = MagicMock()
+        db.get.return_value = MagicMock()
+
+        result = delete_idol_color(db, DEFAULT_ID)
+        db.delete.assert_called_once()
+        db.commit.assert_called_once()
+        assert result is True
+
+    def test_delete_idol_color_not_found(self):
+        from app.services.idol_color_service import delete_idol_color
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = delete_idol_color(db, MISSING_ID)
+        assert result is False
+
+
+class TestPositionService:
+
+    def test_add_position_success(self):
+        from app.services.position_service import add_position
+        from app.schema.position import PositionCreate
+
+        db = MagicMock()
+        data = PositionCreate(name="Center")
+
+        result = add_position(db, data)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert result is not False
+
+    def test_get_positions_found(self):
+        from app.services.position_service import get_positions
+
+        db = MagicMock()
+        db.query().all.return_value = [MagicMock()]
+
+        result = get_positions(db)
+        assert len(result) == 1
+
+    def test_get_positions_empty(self):
+        from app.services.position_service import get_positions
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_positions(db)
+        assert result is False
+
+    def test_update_position_success(self):
+        from app.services.position_service import update_position
+        from app.schema.position import PositionBase
+
+        db = MagicMock()
+        db.get.return_value = MagicMock()
+        data = PositionBase(name="Leader")
+
+        result = update_position(db, DEFAULT_ID, data)
+        db.commit.assert_called_once()
+        assert result is not False
+
+    def test_update_position_not_found(self):
+        from app.services.position_service import update_position
+        from app.schema.position import PositionBase
+
+        db = MagicMock()
+        db.get.return_value = None
+        data = PositionBase(name="Leader")
+
+        result = update_position(db, MISSING_ID, data)
+        assert result is False
+
+    def test_delete_position_success(self):
+        from app.services.position_service import delete_position
+
+        db = MagicMock()
+        db.get.return_value = MagicMock()
+
+        result = delete_position(db, DEFAULT_ID)
+        db.delete.assert_called_once()
+        db.commit.assert_called_once()
+        assert result is True
+
+    def test_delete_position_not_found(self):
+        from app.services.position_service import delete_position
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = delete_position(db, MISSING_ID)
+        assert result is False
+
+    # --- idol_positions join table ---
+
+    def test_assign_idol_position_success(self):
+        from app.services.position_service import assign_idol_position
+        from app.schema.position import IdolPositionAssign
+        from app.db.models.idol import Idol
+        from app.db.models.position import Position, IdolPosition
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        mock_position = MagicMock()
+        db.get.side_effect = model_get_side_effect({Idol: mock_idol, Position: mock_position, IdolPosition: None})
+        current_user = make_mock_user(role="admin")
+        data = IdolPositionAssign(idol_id=DEFAULT_ID, position_id=DEFAULT_ID, is_primary=True)
+
+        result = assign_idol_position(db, data, current_user)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_assign_idol_position_idol_or_position_not_found(self):
+        from app.services.position_service import assign_idol_position
+        from app.schema.position import IdolPositionAssign
+        from app.db.models.idol import Idol
+        from app.db.models.position import Position
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({Idol: None, Position: MagicMock()})
+        current_user = make_mock_user(role="admin")
+        data = IdolPositionAssign(idol_id=MISSING_ID, position_id=DEFAULT_ID)
+
+        result = assign_idol_position(db, data, current_user)
+        assert result == "not_found"
+
+    def test_assign_idol_position_forbidden(self):
+        from app.services.position_service import assign_idol_position
+        from app.schema.position import IdolPositionAssign
+        from app.db.models.idol import Idol
+        from app.db.models.position import Position
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({Idol: mock_idol, Position: MagicMock()})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = IdolPositionAssign(idol_id=DEFAULT_ID, position_id=DEFAULT_ID)
+
+        result = assign_idol_position(db, data, current_user)
+        assert result == "forbidden"
+
+    def test_assign_idol_position_conflict(self):
+        from app.services.position_service import assign_idol_position
+        from app.schema.position import IdolPositionAssign
+        from app.db.models.idol import Idol
+        from app.db.models.position import Position, IdolPosition
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({
+            Idol: mock_idol, Position: MagicMock(), IdolPosition: MagicMock(),
+        })
+        current_user = make_mock_user(role="admin")
+        data = IdolPositionAssign(idol_id=DEFAULT_ID, position_id=DEFAULT_ID)
+
+        result = assign_idol_position(db, data, current_user)
+        assert result == "conflict"
+
+    def test_get_idol_positions_found(self):
+        from app.services.position_service import get_idol_positions
+
+        db = MagicMock()
+        db.query().filter().all.return_value = [MagicMock()]
+
+        result = get_idol_positions(db, DEFAULT_ID)
+        assert len(result) == 1
+
+    def test_get_idol_positions_empty(self):
+        from app.services.position_service import get_idol_positions
+
+        db = MagicMock()
+        db.query().filter().all.return_value = []
+
+        result = get_idol_positions(db, DEFAULT_ID)
+        assert result is False
+
+    def test_get_all_idol_positions_found(self):
+        from app.services.position_service import get_all_idol_positions
+
+        db = MagicMock()
+        db.query().all.return_value = [MagicMock(), MagicMock()]
+
+        result = get_all_idol_positions(db)
+        assert len(result) == 2
+
+    def test_get_all_idol_positions_empty(self):
+        from app.services.position_service import get_all_idol_positions
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_all_idol_positions(db)
+        assert result is False
+
+    def test_update_idol_position_primary_success(self):
+        from app.services.position_service import update_idol_position_primary
+
+        db = MagicMock()
+        link = MagicMock()
+        link.idol.company_id = DEFAULT_ID
+        db.get.return_value = link
+        current_user = make_mock_user(role="admin")
+
+        result = update_idol_position_primary(db, DEFAULT_ID, DEFAULT_ID, True, current_user)
+        assert result == link
+        assert link.is_primary is True
+        db.commit.assert_called_once()
+
+    def test_update_idol_position_primary_not_found(self):
+        from app.services.position_service import update_idol_position_primary
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+
+        result = update_idol_position_primary(db, MISSING_ID, MISSING_ID, True, current_user)
+        assert result == "not_found"
+
+    def test_update_idol_position_primary_forbidden(self):
+        from app.services.position_service import update_idol_position_primary
+
+        db = MagicMock()
+        link = MagicMock()
+        link.idol.company_id = OTHER_ID
+        db.get.return_value = link
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = update_idol_position_primary(db, DEFAULT_ID, DEFAULT_ID, True, current_user)
+        assert result == "forbidden"
+
+    def test_remove_idol_position_success(self):
+        from app.services.position_service import remove_idol_position
+
+        db = MagicMock()
+        link = MagicMock()
+        link.idol.company_id = DEFAULT_ID
+        db.get.return_value = link
+        current_user = make_mock_user(role="admin")
+
+        result = remove_idol_position(db, DEFAULT_ID, DEFAULT_ID, current_user)
+        db.delete.assert_called_once_with(link)
+        db.commit.assert_called_once()
+        assert result is True
+
+    def test_remove_idol_position_not_found(self):
+        from app.services.position_service import remove_idol_position
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+
+        result = remove_idol_position(db, MISSING_ID, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_remove_idol_position_forbidden(self):
+        from app.services.position_service import remove_idol_position
+
+        db = MagicMock()
+        link = MagicMock()
+        link.idol.company_id = OTHER_ID
+        db.get.return_value = link
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = remove_idol_position(db, DEFAULT_ID, DEFAULT_ID, current_user)
+        assert result == "forbidden"
+
+
+# ─────────────────────────────────────────────────────────────
+# Talent domain: Group Service Tests
+# ─────────────────────────────────────────────────────────────
+
+class TestGroupService:
+
+    def test_add_group_success(self):
+        from app.services.group_service import add_group
+        from app.schema.group import GroupCreate
+
+        db = MagicMock()
+        db.get.return_value = make_mock_company()
+        current_user = make_mock_user(role="admin")
+        data = GroupCreate(name="Prism Sirens", company_id=DEFAULT_ID)
+
+        result = add_group(db, data, current_user)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_add_group_forbidden(self):
+        from app.services.group_service import add_group
+        from app.schema.group import GroupCreate
+
+        db = MagicMock()
+        current_user = make_mock_manager(company_id=OTHER_ID)
+        data = GroupCreate(name="Prism Sirens", company_id=DEFAULT_ID)
+
+        result = add_group(db, data, current_user)
+        assert result == "forbidden"
+        db.add.assert_not_called()
+
+    def test_add_group_company_not_found(self):
+        from app.services.group_service import add_group
+        from app.schema.group import GroupCreate
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+        data = GroupCreate(name="Prism Sirens", company_id=MISSING_ID)
+
+        result = add_group(db, data, current_user)
+        assert result == "not_found"
+
+    def test_get_groups_found(self):
+        from app.services.group_service import get_groups
+
+        db = MagicMock()
+        db.query().filter().all.return_value = [make_mock_group()]
+
+        result = get_groups(db)
+        assert len(result) == 1
+
+    def test_get_groups_empty(self):
+        from app.services.group_service import get_groups
+
+        db = MagicMock()
+        db.query().filter().all.return_value = []
+
+        result = get_groups(db)
+        assert result is False
+
+    def test_get_group(self):
+        from app.services.group_service import get_group
+
+        db = MagicMock()
+        mock_group = make_mock_group()
+        db.get.return_value = mock_group
+
+        result = get_group(db, DEFAULT_ID)
+        assert result == mock_group
+
+    def test_update_group_success(self):
+        from app.services.group_service import update_group
+        from app.schema.group import GroupUpdate
+
+        db = MagicMock()
+        db.get.return_value = make_mock_group(company_id=DEFAULT_ID)
+        current_user = make_mock_user(role="admin")
+        data = GroupUpdate(name="Renamed Group")
+
+        result = update_group(db, DEFAULT_ID, data, current_user)
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_update_group_not_found(self):
+        from app.services.group_service import update_group
+        from app.schema.group import GroupUpdate
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+        data = GroupUpdate(name="Renamed Group")
+
+        result = update_group(db, MISSING_ID, data, current_user)
+        assert result == "not_found"
+
+    def test_update_group_forbidden(self):
+        from app.services.group_service import update_group
+        from app.schema.group import GroupUpdate
+
+        db = MagicMock()
+        db.get.return_value = make_mock_group(company_id=OTHER_ID)
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = GroupUpdate(name="Renamed Group")
+
+        result = update_group(db, DEFAULT_ID, data, current_user)
+        assert result == "forbidden"
+
+    def test_delete_group_success(self):
+        from app.services.group_service import delete_group
+
+        db = MagicMock()
+        mock_group = make_mock_group(company_id=DEFAULT_ID, is_active=True)
+        db.get.return_value = mock_group
+        current_user = make_mock_user(role="admin")
+
+        result = delete_group(db, DEFAULT_ID, current_user)
+        assert result is True
+        assert mock_group.is_active is False
+        db.commit.assert_called_once()
+        db.delete.assert_not_called()  # soft delete, not a hard db.delete()
+
+    def test_delete_group_not_found(self):
+        from app.services.group_service import delete_group
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+
+        result = delete_group(db, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_delete_group_forbidden(self):
+        from app.services.group_service import delete_group
+
+        db = MagicMock()
+        db.get.return_value = make_mock_group(company_id=OTHER_ID)
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = delete_group(db, DEFAULT_ID, current_user)
+        assert result == "forbidden"
+
+    def test_reactivate_group_success(self):
+        from app.services.group_service import reactivate_group
+
+        db = MagicMock()
+        mock_group = make_mock_group(company_id=DEFAULT_ID, is_active=False)
+        db.get.return_value = mock_group
+        current_user = make_mock_user(role="admin")
+
+        result = reactivate_group(db, DEFAULT_ID, current_user)
+        assert mock_group.is_active is True
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_reactivate_group_not_found(self):
+        from app.services.group_service import reactivate_group
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+
+        result = reactivate_group(db, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_reactivate_group_forbidden(self):
+        from app.services.group_service import reactivate_group
+
+        db = MagicMock()
+        db.get.return_value = make_mock_group(company_id=OTHER_ID)
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = reactivate_group(db, DEFAULT_ID, current_user)
+        assert result == "forbidden"
+
+    def test_get_groups_page_found(self):
+        from app.services.group_service import get_groups_page
+
+        db = MagicMock()
+        mock_group = make_mock_group()
+        db.query().filter().all.return_value = [mock_group]
+        db.query().filter().group_by().all.return_value = [(mock_group.id, 3)]
+
+        result = get_groups_page(db)
+        assert result["groups"] == [mock_group]
+        assert mock_group.member_count == 3
+
+    def test_get_groups_page_empty(self):
+        from app.services.group_service import get_groups_page
+
+        db = MagicMock()
+        db.query().filter().all.return_value = []
+
+        result = get_groups_page(db)
+        assert result is False
+
+    def test_get_group_detail_found(self):
+        from app.services.group_service import get_group_detail
+
+        db = MagicMock()
+        mock_group = make_mock_group(is_active=True)
+        mock_idol = make_mock_idol()
+        mock_concert = MagicMock()
+        mock_product = MagicMock()
+        db.get.return_value = mock_group
+        db.query().options().filter().all.return_value = [mock_idol]  # members
+        db.query().join().filter().options().distinct().order_by().all.return_value = [mock_concert]  # events
+        db.query().options().all.return_value = [mock_product]  # all_products
+
+        with patch(
+            "app.services.group_service._build_product_cards",
+            return_value=[{"artist": {"type": "group", "id": DEFAULT_ID}}],
+        ):
+            result = get_group_detail(db, DEFAULT_ID)
+
+        assert result["group"] == mock_group
+        assert result["members"] == [mock_idol]
+        assert result["events"] == [mock_concert]
+        assert len(result["products"]) == 1
+
+    def test_get_group_detail_not_found(self):
+        from app.services.group_service import get_group_detail
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = get_group_detail(db, MISSING_ID)
+        assert result is False
+
+    def test_get_group_detail_inactive(self):
+        from app.services.group_service import get_group_detail
+
+        db = MagicMock()
+        db.get.return_value = make_mock_group(is_active=False)
+
+        result = get_group_detail(db, DEFAULT_ID)
+        assert result is False
+
+    def test_get_manager_groups_page(self):
+        from app.services.group_service import get_manager_groups_page
+
+        db = MagicMock()
+        db.query().all.return_value = [make_mock_group()]
+
+        result = get_manager_groups_page(db)
+        assert len(result["groups"]) == 1
+
+    def test_get_manager_groups_page_empty_is_not_404(self):
+        from app.services.group_service import get_manager_groups_page
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        # Manager/admin settings pages deliberately never sentinel-False on
+        # empty — a fresh company legitimately has zero groups.
+        result = get_manager_groups_page(db)
+        assert result == {"groups": []}
+
+
+# ─────────────────────────────────────────────────────────────
+# Talent domain: Idol Service Tests
+# ─────────────────────────────────────────────────────────────
+
+class TestIdolService:
+
+    def test_add_idol_success(self):
+        from app.services.idol_service import add_idol
+        from app.schema.idol import IdolCreate
+
+        db = MagicMock()
+        db.get.return_value = make_mock_company()
+        current_user = make_mock_user(role="admin")
+        data = IdolCreate(name="Yuki", company_id=DEFAULT_ID)
+
+        result = add_idol(db, data, current_user)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_add_idol_forbidden(self):
+        from app.services.idol_service import add_idol
+        from app.schema.idol import IdolCreate
+
+        db = MagicMock()
+        current_user = make_mock_manager(company_id=OTHER_ID)
+        data = IdolCreate(name="Yuki", company_id=DEFAULT_ID)
+
+        result = add_idol(db, data, current_user)
+        assert result == "forbidden"
+        db.add.assert_not_called()
+
+    def test_add_idol_company_not_found(self):
+        from app.services.idol_service import add_idol
+        from app.schema.idol import IdolCreate
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+        data = IdolCreate(name="Yuki", company_id=MISSING_ID)
+
+        result = add_idol(db, data, current_user)
+        assert result == "not_found"
+
+    def test_add_idol_group_not_found(self):
+        from app.services.idol_service import add_idol
+        from app.schema.idol import IdolCreate
+        from app.db.models.management_company import ManagementCompany
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({ManagementCompany: make_mock_company(), Group: None})
+        current_user = make_mock_user(role="admin")
+        data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, group_id=MISSING_ID)
+
+        result = add_idol(db, data, current_user)
+        assert result == "not_found"
+
+    def test_add_idol_color_not_found(self):
+        from app.services.idol_service import add_idol
+        from app.schema.idol import IdolCreate
+        from app.db.models.management_company import ManagementCompany
+        from app.db.models.idol_color import IdolColor
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({ManagementCompany: make_mock_company(), IdolColor: None})
+        current_user = make_mock_user(role="admin")
+        data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, color_id=MISSING_ID)
+
+        result = add_idol(db, data, current_user)
+        assert result == "not_found"
+
+    def test_add_idol_company_mismatch(self):
+        from app.services.idol_service import add_idol
+        from app.schema.idol import IdolCreate
+        from app.db.models.management_company import ManagementCompany
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        mismatched_group = make_mock_group(company_id=OTHER_ID, is_active=True)
+        db.get.side_effect = model_get_side_effect({ManagementCompany: make_mock_company(), Group: mismatched_group})
+        current_user = make_mock_user(role="admin")
+        data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, group_id=OTHER_ID)
+
+        result = add_idol(db, data, current_user)
+        assert result == "company_mismatch"
+
+    def test_add_idol_group_inactive(self):
+        from app.services.idol_service import add_idol
+        from app.schema.idol import IdolCreate
+        from app.db.models.management_company import ManagementCompany
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        inactive_group = make_mock_group(company_id=DEFAULT_ID, is_active=False)
+        db.get.side_effect = model_get_side_effect({ManagementCompany: make_mock_company(), Group: inactive_group})
+        current_user = make_mock_user(role="admin")
+        data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, group_id=DEFAULT_ID)
+
+        result = add_idol(db, data, current_user)
+        assert result == "group_inactive"
+
+    def test_get_idols_found(self):
+        from app.services.idol_service import get_idols
+
+        db = MagicMock()
+        db.query().filter().all.return_value = [make_mock_idol()]
+
+        result = get_idols(db)
+        assert len(result) == 1
+
+    def test_get_idols_empty(self):
+        from app.services.idol_service import get_idols
+
+        db = MagicMock()
+        db.query().filter().all.return_value = []
+
+        result = get_idols(db)
+        assert result is False
+
+    def test_get_idol(self):
+        from app.services.idol_service import get_idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol()
+        db.get.return_value = mock_idol
+
+        result = get_idol(db, DEFAULT_ID)
+        assert result == mock_idol
+
+    def test_update_idol_success(self):
+        from app.services.idol_service import update_idol
+        from app.schema.idol import IdolUpdate
+        from app.db.models.idol import Idol
+        from app.db.models.management_company import ManagementCompany
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, group_id=None)
+        db.get.side_effect = model_get_side_effect({Idol: mock_idol, ManagementCompany: make_mock_company()})
+        current_user = make_mock_user(role="admin")
+        data = IdolUpdate(name="Renamed Idol")
+
+        result = update_idol(db, DEFAULT_ID, data, current_user)
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_update_idol_not_found(self):
+        from app.services.idol_service import update_idol
+        from app.schema.idol import IdolUpdate
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+        data = IdolUpdate(name="Renamed Idol")
+
+        result = update_idol(db, MISSING_ID, data, current_user)
+        assert result == "not_found"
+
+    def test_update_idol_forbidden(self):
+        from app.services.idol_service import update_idol
+        from app.schema.idol import IdolUpdate
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({Idol: mock_idol})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = IdolUpdate(name="Renamed Idol")
+
+        result = update_idol(db, DEFAULT_ID, data, current_user)
+        assert result == "forbidden"
+
+    def test_update_idol_company_mismatch(self):
+        from app.services.idol_service import update_idol
+        from app.schema.idol import IdolUpdate
+        from app.db.models.idol import Idol
+        from app.db.models.management_company import ManagementCompany
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, group_id=None)
+        mismatched_group = make_mock_group(company_id=OTHER_ID, is_active=True)
+        db.get.side_effect = model_get_side_effect({
+            Idol: mock_idol, ManagementCompany: make_mock_company(), Group: mismatched_group,
+        })
+        current_user = make_mock_user(role="admin")
+        data = IdolUpdate(name="Renamed Idol", group_id=OTHER_ID)
+
+        result = update_idol(db, DEFAULT_ID, data, current_user)
+        assert result == "company_mismatch"
+
+    def test_update_idol_group_inactive_blocks_new_assignment(self):
+        from app.services.idol_service import update_idol
+        from app.schema.idol import IdolUpdate
+        from app.db.models.idol import Idol
+        from app.db.models.management_company import ManagementCompany
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        new_group_id = uuid.uuid4()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, group_id=OTHER_ID)  # currently in OTHER_ID
+        inactive_group = make_mock_group(company_id=DEFAULT_ID, is_active=False)
+        db.get.side_effect = model_get_side_effect({
+            Idol: mock_idol, ManagementCompany: make_mock_company(), Group: inactive_group,
+        })
+        current_user = make_mock_user(role="admin")
+        data = IdolUpdate(name="Renamed Idol", group_id=new_group_id)  # moving INTO a deactivated group
+
+        result = update_idol(db, DEFAULT_ID, data, current_user)
+        assert result == "group_inactive"
+
+    def test_update_idol_group_inactive_allows_unchanged_group(self):
+        from app.services.idol_service import update_idol
+        from app.schema.idol import IdolUpdate
+        from app.db.models.idol import Idol
+        from app.db.models.management_company import ManagementCompany
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        same_group_id = uuid.uuid4()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, group_id=same_group_id)
+        inactive_group = make_mock_group(company_id=DEFAULT_ID, is_active=False)
+        db.get.side_effect = model_get_side_effect({
+            Idol: mock_idol, ManagementCompany: make_mock_company(), Group: inactive_group,
+        })
+        current_user = make_mock_user(role="admin")
+        # Full-replace PUT resending the idol's existing (now-deactivated) group_id
+        # unchanged — not a new assignment, must not be blocked.
+        data = IdolUpdate(name="Renamed Idol", group_id=same_group_id)
+
+        result = update_idol(db, DEFAULT_ID, data, current_user)
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_delete_idol_success(self):
+        from app.services.idol_service import delete_idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=True)
+        db.get.return_value = mock_idol
+        current_user = make_mock_user(role="admin")
+
+        result = delete_idol(db, DEFAULT_ID, current_user)
+        assert result is True
+        assert mock_idol.is_active is False
+        db.delete.assert_not_called()  # soft delete
+
+    def test_delete_idol_not_found(self):
+        from app.services.idol_service import delete_idol
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+
+        result = delete_idol(db, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_delete_idol_forbidden(self):
+        from app.services.idol_service import delete_idol
+
+        db = MagicMock()
+        db.get.return_value = make_mock_idol(company_id=OTHER_ID)
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = delete_idol(db, DEFAULT_ID, current_user)
+        assert result == "forbidden"
+
+    def test_reactivate_idol_success(self):
+        from app.services.idol_service import reactivate_idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=False)
+        db.get.return_value = mock_idol
+        current_user = make_mock_user(role="admin")
+
+        result = reactivate_idol(db, DEFAULT_ID, current_user)
+        assert mock_idol.is_active is True
+        assert not isinstance(result, str)
+
+    def test_reactivate_idol_not_found(self):
+        from app.services.idol_service import reactivate_idol
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+
+        result = reactivate_idol(db, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_reactivate_idol_forbidden(self):
+        from app.services.idol_service import reactivate_idol
+
+        db = MagicMock()
+        db.get.return_value = make_mock_idol(company_id=OTHER_ID)
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = reactivate_idol(db, DEFAULT_ID, current_user)
+        assert result == "forbidden"
+
+    def test_set_idol_image_success(self):
+        from app.services.idol_service import set_idol_image
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.return_value = mock_idol
+        current_user = make_mock_user(role="admin")
+
+        result = set_idol_image(db, DEFAULT_ID, "https://cdn.example.com/idol.png", current_user)
+        assert mock_idol.profile_image_url == "https://cdn.example.com/idol.png"
+        db.commit.assert_called_once()
+
+    def test_set_idol_image_not_found(self):
+        from app.services.idol_service import set_idol_image
+
+        db = MagicMock()
+        db.get.return_value = None
+        current_user = make_mock_user(role="admin")
+
+        result = set_idol_image(db, MISSING_ID, "https://cdn.example.com/idol.png", current_user)
+        assert result == "not_found"
+
+    def test_set_idol_image_forbidden(self):
+        from app.services.idol_service import set_idol_image
+
+        db = MagicMock()
+        db.get.return_value = make_mock_idol(company_id=OTHER_ID)
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = set_idol_image(db, DEFAULT_ID, "https://cdn.example.com/idol.png", current_user)
+        assert result == "forbidden"
+
+    def test_get_members_page_found(self):
+        from app.services.idol_service import get_members_page
+
+        db = MagicMock()
+        db.query().options().filter().all.return_value = [make_mock_idol()]
+        db.query().filter().all.return_value = [make_mock_group()]
+
+        result = get_members_page(db)
+        assert len(result["idols"]) == 1
+        assert len(result["groups"]) == 1
+
+    def test_get_members_page_empty(self):
+        from app.services.idol_service import get_members_page
+
+        db = MagicMock()
+        db.query().options().filter().all.return_value = []
+
+        result = get_members_page(db)
+        assert result is False
+
+    def test_get_idol_detail_found(self):
+        from app.services.idol_service import get_idol_detail
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(group_id=OTHER_ID)
+        mock_group = make_mock_group(id=OTHER_ID)
+        sibling = make_mock_idol(id=uuid.uuid4(), group_id=OTHER_ID)
+        db.query().options().filter().first.return_value = mock_idol
+        db.get.return_value = mock_group
+        db.query().filter().filter().options().all.return_value = [sibling]
+
+        result = get_idol_detail(db, DEFAULT_ID)
+        assert result["idol"] == mock_idol
+        assert result["group"] == mock_group
+        assert result["siblings"] == [sibling]
+
+    def test_get_idol_detail_not_found(self):
+        from app.services.idol_service import get_idol_detail
+
+        db = MagicMock()
+        db.query().options().filter().first.return_value = None
+
+        result = get_idol_detail(db, MISSING_ID)
+        assert result is False
+
+    def test_get_idol_detail_no_group_solo_idol(self):
+        from app.services.idol_service import get_idol_detail
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(group_id=None)
+        db.query().options().filter().first.return_value = mock_idol
+        db.query().filter().filter().options().all.return_value = []
+
+        result = get_idol_detail(db, DEFAULT_ID)
+        assert result["idol"] == mock_idol
+        assert result["group"] is None
+        db.get.assert_not_called()  # no group_id -> no Group lookup at all
+
+    def test_get_manager_idols_page(self):
+        from app.services.idol_service import get_manager_idols_page
+
+        db = MagicMock()
+        idols = [make_mock_idol()]
+        groups = [make_mock_group()]
+        db.query().all.side_effect = [idols, groups]
+
+        result = get_manager_idols_page(db)
+        assert result == {"idols": idols, "groups": groups}
+
+    def test_get_manager_idol_form_page(self):
+        from app.services.idol_service import get_manager_idol_form_page
+
+        db = MagicMock()
+        idols = [make_mock_idol()]
+        groups = [make_mock_group()]
+        colors = [MagicMock()]
+        db.query().all.side_effect = [idols, groups, colors]
+
+        result = get_manager_idol_form_page(db)
+        assert result == {"idols": idols, "groups": groups, "colors": colors}
+
+
+# ─────────────────────────────────────────────────────────────
+# Marketplace domain: Album Detail Service Tests
+# ─────────────────────────────────────────────────────────────
+
+class TestAlbumDetailService:
+
+    def test_add_album_detail_success_with_idol(self):
+        from app.services.album_detail_service import add_album_detail
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=True)
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), AlbumDetail: None, Idol: mock_idol})
+        current_user = make_mock_user(role="admin")
+        data = AlbumDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID, track_count=10)
+
+        result = add_album_detail(db, data, current_user)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_add_album_detail_success_with_group(self):
+        from app.services.album_detail_service import add_album_detail
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        mock_group = make_mock_group(company_id=DEFAULT_ID, is_active=True)
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), AlbumDetail: None, Group: mock_group})
+        current_user = make_mock_user(role="admin")
+        data = AlbumDetailCreate(product_id=DEFAULT_ID, group_id=DEFAULT_ID)
+
+        result = add_album_detail(db, data, current_user)
+        assert not isinstance(result, str)
+
+    def test_add_album_detail_product_not_found(self):
+        from app.services.album_detail_service import add_album_detail
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.db.models.products import Product
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({Product: None})
+        current_user = make_mock_user(role="admin")
+        data = AlbumDetailCreate(product_id=MISSING_ID, idol_id=DEFAULT_ID)
+
+        result = add_album_detail(db, data, current_user)
+        assert result == "not_found"
+
+    def test_add_album_detail_conflict(self):
+        from app.services.album_detail_service import add_album_detail
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.album_detail import AlbumDetail
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), AlbumDetail: MagicMock()})
+        current_user = make_mock_user(role="admin")
+        data = AlbumDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
+
+        result = add_album_detail(db, data, current_user)
+        assert result == "conflict"
+
+    def test_add_album_detail_artist_inactive(self):
+        from app.services.album_detail_service import add_album_detail
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        inactive_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=False)
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), AlbumDetail: None, Idol: inactive_idol})
+        current_user = make_mock_user(role="admin")
+        data = AlbumDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
+
+        result = add_album_detail(db, data, current_user)
+        assert result == "artist_inactive"
+
+    def test_add_album_detail_forbidden(self):
+        from app.services.album_detail_service import add_album_detail
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=OTHER_ID, is_active=True)
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), AlbumDetail: None, Idol: mock_idol})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = AlbumDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
+
+        result = add_album_detail(db, data, current_user)
+        assert result == "forbidden"
+
+    def test_get_album_detail_found(self):
+        from app.services.album_detail_service import get_album_detail
+
+        db = MagicMock()
+        mock_album = MagicMock()
+        db.get.return_value = mock_album
+
+        result = get_album_detail(db, DEFAULT_ID)
+        assert result == mock_album
+
+    def test_get_album_detail_not_found(self):
+        from app.services.album_detail_service import get_album_detail
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = get_album_detail(db, MISSING_ID)
+        assert result is None
+
+    def test_get_album_details_found(self):
+        from app.services.album_detail_service import get_album_details
+
+        db = MagicMock()
+        db.query().all.return_value = [MagicMock()]
+
+        result = get_album_details(db)
+        assert len(result) == 1
+
+    def test_get_album_details_empty(self):
+        from app.services.album_detail_service import get_album_details
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_album_details(db)
+        assert result is False
+
+    def test_update_album_detail_success(self):
+        from app.services.album_detail_service import update_album_detail
+        from app.schema.album_detail import AlbumDetailUpdate
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({AlbumDetail: mock_album, Idol: mock_idol})
+        current_user = make_mock_user(role="admin")
+        data = AlbumDetailUpdate(track_count=12)
+
+        result = update_album_detail(db, DEFAULT_ID, data, current_user)
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_update_album_detail_not_found(self):
+        from app.services.album_detail_service import update_album_detail
+        from app.schema.album_detail import AlbumDetailUpdate
+        from app.db.models.album_detail import AlbumDetail
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({AlbumDetail: None})
+        current_user = make_mock_user(role="admin")
+        data = AlbumDetailUpdate(track_count=12)
+
+        result = update_album_detail(db, MISSING_ID, data, current_user)
+        assert result == "not_found"
+
+    def test_update_album_detail_forbidden(self):
+        from app.services.album_detail_service import update_album_detail
+        from app.schema.album_detail import AlbumDetailUpdate
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({AlbumDetail: mock_album, Idol: mock_idol})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = AlbumDetailUpdate(track_count=12)
+
+        result = update_album_detail(db, DEFAULT_ID, data, current_user)
+        assert result == "forbidden"
+
+    def test_delete_album_detail_success(self):
+        from app.services.album_detail_service import delete_album_detail
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({AlbumDetail: mock_album, Idol: mock_idol})
+        current_user = make_mock_user(role="admin")
+
+        result = delete_album_detail(db, DEFAULT_ID, current_user)
+        assert result is True
+        db.delete.assert_called_once_with(mock_album)
+
+    def test_delete_album_detail_not_found(self):
+        from app.services.album_detail_service import delete_album_detail
+        from app.db.models.album_detail import AlbumDetail
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({AlbumDetail: None})
+        current_user = make_mock_user(role="admin")
+
+        result = delete_album_detail(db, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_delete_album_detail_forbidden(self):
+        from app.services.album_detail_service import delete_album_detail
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({AlbumDetail: mock_album, Idol: mock_idol})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = delete_album_detail(db, DEFAULT_ID, current_user)
+        assert result == "forbidden"
+
+
+# ─────────────────────────────────────────────────────────────
+# Marketplace domain: Merch Detail Service Tests
+# ─────────────────────────────────────────────────────────────
+
+class TestMerchDetailService:
+
+    def test_add_merch_detail_success(self):
+        from app.services.merch_detail_service import add_merch_detail
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=True)
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), MerchDetail: None, Idol: mock_idol})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID, edition="Limited")
+
+        result = add_merch_detail(db, data, current_user)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_add_merch_detail_product_not_found(self):
+        from app.services.merch_detail_service import add_merch_detail
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.db.models.products import Product
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({Product: None})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailCreate(product_id=MISSING_ID, group_id=DEFAULT_ID)
+
+        result = add_merch_detail(db, data, current_user)
+        assert result == "not_found"
+
+    def test_add_merch_detail_conflict(self):
+        from app.services.merch_detail_service import add_merch_detail
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.merch_detail import MerchDetail
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), MerchDetail: MagicMock()})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailCreate(product_id=DEFAULT_ID, group_id=DEFAULT_ID)
+
+        result = add_merch_detail(db, data, current_user)
+        assert result == "conflict"
+
+    def test_add_merch_detail_color_not_found(self):
+        from app.services.merch_detail_service import add_merch_detail
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol_color import IdolColor
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), MerchDetail: None, IdolColor: None})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID, color_id=MISSING_ID)
+
+        result = add_merch_detail(db, data, current_user)
+        assert result == "not_found"
+
+    def test_add_merch_detail_artist_inactive(self):
+        from app.services.merch_detail_service import add_merch_detail
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.group import Group
+
+        db = MagicMock()
+        inactive_group = make_mock_group(company_id=DEFAULT_ID, is_active=False)
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), MerchDetail: None, Group: inactive_group})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailCreate(product_id=DEFAULT_ID, group_id=DEFAULT_ID)
+
+        result = add_merch_detail(db, data, current_user)
+        assert result == "artist_inactive"
+
+    def test_add_merch_detail_forbidden(self):
+        from app.services.merch_detail_service import add_merch_detail
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.db.models.products import Product
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_idol = make_mock_idol(company_id=OTHER_ID, is_active=True)
+        db.get.side_effect = model_get_side_effect({Product: MagicMock(), MerchDetail: None, Idol: mock_idol})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = MerchDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
+
+        result = add_merch_detail(db, data, current_user)
+        assert result == "forbidden"
+
+    def test_get_merch_detail_found(self):
+        from app.services.merch_detail_service import get_merch_detail
+
+        db = MagicMock()
+        mock_merch = MagicMock()
+        db.get.return_value = mock_merch
+
+        result = get_merch_detail(db, DEFAULT_ID)
+        assert result == mock_merch
+
+    def test_get_merch_detail_not_found(self):
+        from app.services.merch_detail_service import get_merch_detail
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = get_merch_detail(db, MISSING_ID)
+        assert result is None
+
+    def test_get_merch_details_found(self):
+        from app.services.merch_detail_service import get_merch_details
+
+        db = MagicMock()
+        db.query().all.return_value = [MagicMock()]
+
+        result = get_merch_details(db)
+        assert len(result) == 1
+
+    def test_get_merch_details_empty(self):
+        from app.services.merch_detail_service import get_merch_details
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_merch_details(db)
+        assert result is False
+
+    def test_update_merch_detail_success(self):
+        from app.services.merch_detail_service import update_merch_detail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({MerchDetail: mock_merch, Idol: mock_idol})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailUpdate(edition="Reissue")
+
+        result = update_merch_detail(db, DEFAULT_ID, data, current_user)
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_update_merch_detail_not_found(self):
+        from app.services.merch_detail_service import update_merch_detail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.db.models.merch_detail import MerchDetail
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({MerchDetail: None})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailUpdate(edition="Reissue")
+
+        result = update_merch_detail(db, MISSING_ID, data, current_user)
+        assert result == "not_found"
+
+    def test_update_merch_detail_forbidden(self):
+        from app.services.merch_detail_service import update_merch_detail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({MerchDetail: mock_merch, Idol: mock_idol})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = MerchDetailUpdate(edition="Reissue")
+
+        result = update_merch_detail(db, DEFAULT_ID, data, current_user)
+        assert result == "forbidden"
+
+    def test_update_merch_detail_color_not_found(self):
+        from app.services.merch_detail_service import update_merch_detail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol import Idol
+        from app.db.models.idol_color import IdolColor
+
+        db = MagicMock()
+        mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({MerchDetail: mock_merch, Idol: mock_idol, IdolColor: None})
+        current_user = make_mock_user(role="admin")
+        data = MerchDetailUpdate(edition="Reissue", color_id=MISSING_ID)
+
+        result = update_merch_detail(db, DEFAULT_ID, data, current_user)
+        assert result == "not_found"
+
+    def test_delete_merch_detail_success(self):
+        from app.services.merch_detail_service import delete_merch_detail
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({MerchDetail: mock_merch, Idol: mock_idol})
+        current_user = make_mock_user(role="admin")
+
+        result = delete_merch_detail(db, DEFAULT_ID, current_user)
+        assert result is True
+        db.delete.assert_called_once_with(mock_merch)
+
+    def test_delete_merch_detail_not_found(self):
+        from app.services.merch_detail_service import delete_merch_detail
+        from app.db.models.merch_detail import MerchDetail
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({MerchDetail: None})
+        current_user = make_mock_user(role="admin")
+
+        result = delete_merch_detail(db, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_delete_merch_detail_forbidden(self):
+        from app.services.merch_detail_service import delete_merch_detail
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({MerchDetail: mock_merch, Idol: mock_idol})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = delete_merch_detail(db, DEFAULT_ID, current_user)
+        assert result == "forbidden"
+
+
+# ─────────────────────────────────────────────────────────────
+# Marketplace domain: Genre Service Tests
+# ─────────────────────────────────────────────────────────────
+
+class TestGenreService:
+
+    def test_add_genre_success(self):
+        from app.services.genre_service import add_genre
+        from app.schema.genre import GenreCreate
+
+        db = MagicMock()
+        data = GenreCreate(name="City Pop")
+
+        result = add_genre(db, data)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert result is not None
+
+    def test_get_genres_found(self):
+        from app.services.genre_service import get_genres
+
+        db = MagicMock()
+        db.query().all.return_value = [MagicMock()]
+
+        result = get_genres(db)
+        assert len(result) == 1
+
+    def test_get_genres_empty(self):
+        from app.services.genre_service import get_genres
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_genres(db)
+        assert result is False
+
+    def test_delete_genre_success(self):
+        from app.services.genre_service import delete_genre
+
+        db = MagicMock()
+        mock_genre = MagicMock()
+        db.get.return_value = mock_genre
+
+        result = delete_genre(db, DEFAULT_ID)
+        db.delete.assert_called_once_with(mock_genre)
+        db.commit.assert_called_once()
+        assert result is True
+
+    def test_delete_genre_not_found(self):
+        from app.services.genre_service import delete_genre
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        result = delete_genre(db, MISSING_ID)
+        assert result is False
+
+    def test_assign_genre_success(self):
+        from app.services.genre_service import assign_genre
+        from app.schema.genre import AlbumGenreAssign
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.genre import Genre, AlbumGenre
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({
+            AlbumDetail: mock_album, Idol: mock_idol, Genre: MagicMock(), AlbumGenre: None,
+        })
+        current_user = make_mock_user(role="admin")
+        data = AlbumGenreAssign(product_id=DEFAULT_ID, genre_id=DEFAULT_ID)
+
+        result = assign_genre(db, data, current_user)
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+        assert not isinstance(result, str)
+
+    def test_assign_genre_album_not_found(self):
+        from app.services.genre_service import assign_genre
+        from app.schema.genre import AlbumGenreAssign
+        from app.db.models.album_detail import AlbumDetail
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({AlbumDetail: None})
+        current_user = make_mock_user(role="admin")
+        data = AlbumGenreAssign(product_id=MISSING_ID, genre_id=DEFAULT_ID)
+
+        result = assign_genre(db, data, current_user)
+        assert result == "not_found"
+
+    def test_assign_genre_genre_not_found(self):
+        from app.services.genre_service import assign_genre
+        from app.schema.genre import AlbumGenreAssign
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.genre import Genre
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({AlbumDetail: mock_album, Idol: mock_idol, Genre: None})
+        current_user = make_mock_user(role="admin")
+        data = AlbumGenreAssign(product_id=DEFAULT_ID, genre_id=MISSING_ID)
+
+        result = assign_genre(db, data, current_user)
+        assert result == "not_found"
+
+    def test_assign_genre_forbidden(self):
+        from app.services.genre_service import assign_genre
+        from app.schema.genre import AlbumGenreAssign
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.genre import Genre
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({AlbumDetail: mock_album, Idol: mock_idol, Genre: MagicMock()})
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+        data = AlbumGenreAssign(product_id=DEFAULT_ID, genre_id=DEFAULT_ID)
+
+        result = assign_genre(db, data, current_user)
+        assert result == "forbidden"
+
+    def test_assign_genre_conflict(self):
+        from app.services.genre_service import assign_genre
+        from app.schema.genre import AlbumGenreAssign
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.genre import Genre, AlbumGenre
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({
+            AlbumDetail: mock_album, Idol: mock_idol, Genre: MagicMock(), AlbumGenre: MagicMock(),
+        })
+        current_user = make_mock_user(role="admin")
+        data = AlbumGenreAssign(product_id=DEFAULT_ID, genre_id=DEFAULT_ID)
+
+        result = assign_genre(db, data, current_user)
+        assert result == "conflict"
+
+    def test_get_album_genres_found(self):
+        from app.services.genre_service import get_album_genres
+
+        db = MagicMock()
+        db.query().filter().all.return_value = [MagicMock()]
+
+        result = get_album_genres(db, DEFAULT_ID)
+        assert len(result) == 1
+
+    def test_get_album_genres_empty(self):
+        from app.services.genre_service import get_album_genres
+
+        db = MagicMock()
+        db.query().filter().all.return_value = []
+
+        result = get_album_genres(db, DEFAULT_ID)
+        assert result is False
+
+    def test_get_all_album_genres_found(self):
+        from app.services.genre_service import get_all_album_genres
+
+        db = MagicMock()
+        db.query().all.return_value = [MagicMock(), MagicMock()]
+
+        result = get_all_album_genres(db)
+        assert len(result) == 2
+
+    def test_get_all_album_genres_empty(self):
+        from app.services.genre_service import get_all_album_genres
+
+        db = MagicMock()
+        db.query().all.return_value = []
+
+        result = get_all_album_genres(db)
+        assert result is False
+
+    def test_remove_genre_success(self):
+        from app.services.genre_service import remove_genre
+        from app.db.models.genre import AlbumGenre
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        link = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=DEFAULT_ID)
+        db.get.side_effect = model_get_side_effect({
+            AlbumGenre: link, AlbumDetail: mock_album, Idol: mock_idol,
+        })
+        current_user = make_mock_user(role="admin")
+
+        result = remove_genre(db, DEFAULT_ID, DEFAULT_ID, current_user)
+        assert result is True
+        db.delete.assert_called_once_with(link)
+
+    def test_remove_genre_not_found(self):
+        from app.services.genre_service import remove_genre
+        from app.db.models.genre import AlbumGenre
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({AlbumGenre: None})
+        current_user = make_mock_user(role="admin")
+
+        result = remove_genre(db, MISSING_ID, MISSING_ID, current_user)
+        assert result == "not_found"
+
+    def test_remove_genre_forbidden(self):
+        from app.services.genre_service import remove_genre
+        from app.db.models.genre import AlbumGenre
+        from app.db.models.album_detail import AlbumDetail
+        from app.db.models.idol import Idol
+
+        db = MagicMock()
+        link = MagicMock()
+        mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
+        mock_idol = make_mock_idol(company_id=OTHER_ID)
+        db.get.side_effect = model_get_side_effect({
+            AlbumGenre: link, AlbumDetail: mock_album, Idol: mock_idol,
+        })
+        current_user = make_mock_manager(company_id=DEFAULT_ID)
+
+        result = remove_genre(db, DEFAULT_ID, DEFAULT_ID, current_user)
+        assert result == "forbidden"
