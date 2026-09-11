@@ -6,10 +6,10 @@ projects:
   - name: Production
     services:
     - type: web
-      name: i-dolly-backend-staging
+      name: i-dolly-backend
       runtime: docker
       repo: https://github.com/TranXuanAnh930/i-dolly-backend
-      branch: develop
+      branch: main
       plan: free
       envVars:
       - key: DEBUG
@@ -36,7 +36,7 @@ projects:
         sync: false
       - key: REDIS_HOST
         fromService:
-          name: i-dolly-backend-redis-staging
+          name: i-dolly-backend-redis
           type: keyvalue
           property: host
       - key: EMAIL_TOKEN_EXPIRE_MINUTES
@@ -64,7 +64,7 @@ projects:
       dockerfilePath: ./Dockerfile
       autoDeployTrigger: commit
     - type: keyvalue
-      name: i-dolly-backend-redis-staging
+      name: i-dolly-backend-redis
       plan: free
       region: singapore
       maxmemoryPolicy: allkeys-lru
