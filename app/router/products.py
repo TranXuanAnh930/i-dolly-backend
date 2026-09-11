@@ -111,6 +111,8 @@ async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_u
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if db_product == "category_not_found":
         raise HTTPException(status_code=400, detail="category_id does not reference an existing category")
+    if db_product == "price_locked":
+        raise HTTPException(status_code=403, detail="Managers cannot change product price after creation — ask an admin")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     delete_cached_product(id)

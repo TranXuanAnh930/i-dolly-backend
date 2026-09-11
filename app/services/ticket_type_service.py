@@ -45,6 +45,13 @@ def update_ticket_type(db: Session, id: uuid.UUID, data: TicketTypeUpdate, curre
             return "invalid"  # would violate chk_ticket_types_capacity
         db_tt.total_quantity = data.total_quantity
     if data.price is not None:
+        # Managers can't reprice a ticket after creation — fans may already
+        # hold entries/tickets at the advertised price; only an admin can
+        # correct it. Rounded before comparing: price is Numeric(10,2)
+        # (Decimal) in the DB but arrives here as a float, and the two
+        # don't compare equal bit-for-bit even for the "same" price.
+        if current_user.role == "manager" and round(float(db_tt.price), 2) != round(data.price, 2):
+            return "price_locked"
         db_tt.price = data.price
     commit_or_raise(db)  # trg_ticket_types_capacity (fires on UPDATE OF total_quantity)
     db.refresh(db_tt)

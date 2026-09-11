@@ -92,6 +92,10 @@ def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user
         return False
     if _manager_scope_violation(db, current_user, id):
         return "forbidden"
+    # Managers can't reprice a product after creation, same rationale as
+    # ticket_type_service.update_ticket_type — only an admin can correct it.
+    if current_user.role == "manager" and round(product.price, 2) != round(db_product.price, 2):
+        return "price_locked"
     if not db.get(Category, product.category_id):
         return "category_not_found"  # was an uncaught IntegrityError -> 500 at commit
     db_product.name = product.name
