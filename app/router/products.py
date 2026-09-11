@@ -7,12 +7,12 @@ from app.deps.db import get_db
 from app.deps.auth import require_manager_or_admin
 from app.schema.products import (
     ProductRead, ProductCreate, StorePageRead, ProductDetailRead,
-    ManagerProductsPageRead, ManagerProductFormPageRead,
+    ManagerProductsPageRead, ManagerProductFormPageRead, ProductSalesPageRead,
 )
 from app.db.models.user import Users
 from app.services.product_service import (
     add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products, set_product_image,
-    get_store_page, get_product_detail, get_manager_products_page, get_manager_product_form_page,
+    get_store_page, get_product_detail, get_manager_products_page, get_manager_product_form_page, get_product_sales_page,
 )
 from app.cache.cache_service import get_cached_products, delete_cached_product
 from app.cache.redis_client import redis_client
@@ -48,6 +48,21 @@ async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db
 @router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
 async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)):
     return get_manager_product_form_page(db, company_id)
+
+@router.get("/{id}/sales", response_model=ProductSalesPageRead)
+async def get_product_sales(
+    id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: Users = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db),
+):
+    result = get_product_sales_page(db, id, current_user, page, limit)
+    if result == "forbidden":
+        raise HTTPException(status_code=403, detail="Managers can only view sales for products belonging to their own company's idols/groups")
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="Product not found")
+    return result
 
 @router.get("/search/{id:uuid}")
 async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)):
