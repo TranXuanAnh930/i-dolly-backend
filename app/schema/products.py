@@ -1,10 +1,11 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel, Field
 from app.schema.genre import GenreRead
 from app.schema.artist import ArtistRef
 from app.schema.idol import GroupMini
 from app.schema.category import CategoryRead
+from app.schema.order import OrderStatus
 
 class ProductBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -71,3 +72,21 @@ class ManagerProductsPageRead(BaseModel):
 class ManagerProductFormPageRead(BaseModel):
     products: list[ProductRead]
     categories: list[CategoryRead]
+
+# --- sales history (GET /products/{id}/sales) — one row per order that
+# included this product, newest first. Same page/limit/count/data envelope
+# as /products/pagination.
+
+class ProductSaleRead(BaseModel):
+    order_id: uuid.UUID
+    order_status: OrderStatus
+    order_created_at: datetime
+    quantity: int
+    price: int
+    line_total: int
+
+class ProductSalesPageRead(BaseModel):
+    page: int
+    limit: int
+    count: int
+    data: list[ProductSaleRead]

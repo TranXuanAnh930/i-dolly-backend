@@ -1,20 +1,21 @@
 import uuid
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import user_key, rate_limit
 from app.db.models.user import Users
 from app.deps.db import get_db
-from app.deps.auth import get_current_user, require_admin
+from app.deps.auth import get_current_user, require_admin, require_manager_or_admin
 from app.schema.shipping import ShippingStatus as SchemaShippingStatus
-from app.schema.order import Order
+from app.schema.order import Order, ManagerOrdersPageRead
 from app.schema.payment import PaymentCreate
 from app.services.order_service import (
-    cancel_placed_order, checkout, 
-    fetch_placed_order, 
-    fetch_single_placed_order, 
-    get_user_shipping_status, 
-    update_shipping_status
+    cancel_placed_order, checkout,
+    fetch_placed_order,
+    fetch_single_placed_order,
+    get_user_shipping_status,
+    update_shipping_status,
+    get_manager_orders_page,
 )
 from app.exception.checkout import (
     CartItemError,
@@ -50,6 +51,21 @@ async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user
         db.rollback()
         raise HTTPException(status_code=e.status_code, detail=str(e))
     
+@router.get("/manager-orders-page", response_model=ManagerOrdersPageRead)
+async def get_manager_orders_page_data(
+    company_id: uuid.UUID | None = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: Users = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db),
+):
+    # A manager is always scoped to their own company regardless of any
+    # company_id passed — only an admin (no single company of their own)
+    # may pick a different one, same trust boundary as every other manager
+    # settings page's write endpoints.
+    scoped_company_id = current_user.company_id if current_user.role == "manager" else company_id
+    return get_manager_orders_page(db, scoped_company_id, page, limit)
+
 @router.get("/fetch_placed_order", response_model=List[Order])
 async def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
     order = fetch_placed_order(db, user.id)

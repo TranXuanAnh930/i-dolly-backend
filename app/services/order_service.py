@@ -11,6 +11,7 @@ from app.schema.order import OrderStatus
 from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.payment import PaymentCreate
 from app.services.payment_service import create_payment
+from app.services.product_service import resolve_product_company_ids
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
 from app.exception.db_triggers import DuplicateIdempotencyKeyError, ResaleCapExceededError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError
 from app.utils.tax import with_tax
@@ -131,3 +132,66 @@ def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id
     db.commit()
     db.refresh(order_shippingstatus)
     return order_shippingstatus
+
+# --- manager/admin orders page (see product_service.py's manager pages for
+# the same "empty is normal, not a 404" convention). Product has no
+# company_id of its own, so which orders "belong" to a company is resolved
+# the same way ManagerProductsPage already is: via album_details/
+# merch_details -> idol/group -> company_id (resolve_product_company_ids),
+# ownerless products counting as everyone's. Unlike the idols/groups/
+# products/concerts manager-*-page bundles, this one requires real auth
+# (require_manager_or_admin in the router) since orders carry a real
+# customer's purchase history, not public catalog data.
+
+def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10):
+    products = db.query(Product).all()
+    if company_id is None:
+        relevant_ids = {p.id for p in products}
+    else:
+        company_by_product = resolve_product_company_ids(db, products)
+        relevant_ids = {pid for pid, cid in company_by_product.items() if cid in (None, company_id)}
+
+    if not relevant_ids:
+        return {"page": page, "limit": limit, "count": 0, "data": []}
+
+    order_ids = [
+        row[0] for row in
+        db.query(OrderItem.order_id).filter(OrderItem.product_id.in_(relevant_ids)).distinct().all()
+    ]
+    offset = (page - 1) * limit
+    orders = (
+        db.query(Order)
+        .filter(Order.id.in_(order_ids))
+        .options(selectinload(Order.items), selectinload(Order.user_item))
+        .order_by(Order.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    products_by_id = {p.id: p for p in products}
+    data = []
+    for order in orders:
+        # Narrowed to this company's own line items — a manager shouldn't
+        # see what else a customer bought from another company in the same
+        # checkout, only their own company's part of it.
+        items = [item for item in order.items if item.product_id in relevant_ids]
+        data.append({
+            "id": order.id,
+            "buyer_name": order.user_item.name if order.user_item else "",
+            "buyer_email": order.user_item.email if order.user_item else "",
+            "status": order.status,
+            "created_at": order.created_at,
+            "items": [
+                {
+                    "product_id": item.product_id,
+                    "product_name": products_by_id[item.product_id].name if item.product_id in products_by_id else "",
+                    "quantity": item.quantity,
+                    "price": item.price,
+                }
+                for item in items
+            ],
+            "company_total": sum(item.price * item.quantity for item in items),
+        })
+
+    return {"page": page, "limit": limit, "count": len(data), "data": data}

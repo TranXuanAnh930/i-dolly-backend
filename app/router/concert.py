@@ -30,6 +30,8 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=404, detail=not_found_detail)
     if result == "invalid":
         raise HTTPException(status_code=400, detail="Exactly one of idol_id or group_id must be set")
+    if result == "event_locked":
+        raise HTTPException(status_code=403, detail="Concert is already on sale — cancel it first, then edit the date/doors-open time/capacity once it's cancelled")
 
 @router.post("/add", response_model=ConcertRead)
 async def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
@@ -79,10 +81,15 @@ async def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_us
 
 @router.delete("/delete/{id}")
 async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    # Cancels (sets status="cancelled") rather than deleting the row — see
+    # concert_service.delete_concert. Kept on DELETE /delete/{id} for URL
+    # stability with existing clients; a manager can move the status off
+    # "cancelled" again via PUT /concerts/update/{id} same as any other
+    # status change.
     result = delete_concert(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Concert not found")
-    return {"msg": "Concert deleted successfully"}
+    return {"msg": "Concert cancelled successfully"}
 
 
 # --- concert_performers (join table) — nested under /concerts/performers,

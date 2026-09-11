@@ -7,6 +7,7 @@ from app.db.models.merch_detail import MerchDetail
 from app.db.models.genre import AlbumGenre
 from app.db.models.idol import Idol
 from app.db.models.group import Group
+from app.db.models.order import Order, OrderItem
 from app.db.models.user import Users
 from app.schema.products import ProductRead, ProductCreate
 from app.utils.resale import RESALE_CAP_QUANTITY
@@ -92,6 +93,10 @@ def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user
         return False
     if _manager_scope_violation(db, current_user, id):
         return "forbidden"
+    # Managers can't reprice a product after creation, same rationale as
+    # ticket_type_service.update_ticket_type — only an admin can correct it.
+    if current_user.role == "manager" and round(product.price, 2) != round(db_product.price, 2):
+        return "price_locked"
     if not db.get(Category, product.category_id):
         return "category_not_found"  # was an uncaught IntegrityError -> 500 at commit
     db_product.name = product.name
@@ -312,8 +317,12 @@ def _product_read_dict(product: Product):
 # merch_details row (plain merch) resolves to None: "no company owns
 # this", not "belongs to no one's view" — _manager_scope_violation already
 # treats that as manageable by any manager, so a manager's product list
-# must show it too, not just their own company's products.
-def _resolve_product_company_ids(db: Session, products: list[Product]):
+# must show it too, not just their own company's products. Not
+# underscore-prefixed (unlike its singular sibling above): order_service's
+# get_manager_orders_page reuses it to scope orders by which products in
+# them belong to a company, the same "which detail row, then which of
+# idol_id/group_id" chain.
+def resolve_product_company_ids(db: Session, products: list[Product]):
     product_ids = [p.id for p in products]
     if not product_ids:
         return {}
@@ -350,14 +359,52 @@ def _resolve_product_company_ids(db: Session, products: list[Product]):
 def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None):
     products = db.query(Product).options(joinedload(Product.category)).all()
     if company_id is not None:
-        company_by_product = _resolve_product_company_ids(db, products)
+        company_by_product = resolve_product_company_ids(db, products)
         products = [p for p in products if company_by_product[p.id] in (None, company_id)]
     return {"products": [_product_read_dict(p) for p in products]}
 
 def get_manager_product_form_page(db: Session, company_id: uuid.UUID | None = None):
     products = db.query(Product).options(joinedload(Product.category)).all()
     if company_id is not None:
-        company_by_product = _resolve_product_company_ids(db, products)
+        company_by_product = resolve_product_company_ids(db, products)
         products = [p for p in products if company_by_product[p.id] in (None, company_id)]
     categories = db.query(Category).all()
     return {"products": [_product_read_dict(p) for p in products], "categories": categories}
+
+# --- sales history — replaces the manager products page's old hard-delete
+# action (deleting a Product with any order history would CASCADE-delete
+# its orders_items rows, same class of data-loss bug the concert/idol/group
+# soft-deletes already fixed). "Delete" isn't replaced with a soft-delete
+# here since Product has nothing to flip (no is_active/status column) —
+# instead the manager UI drops the destructive action entirely in favor of
+# a read-only view of what actually sold, paginated newest-first same as
+# /products/pagination's page/limit/count/data shape.
+def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10):
+    db_product = db.get(Product, product_id)
+    if not db_product:
+        return "not_found"
+    if _manager_scope_violation(db, current_user, product_id):
+        return "forbidden"
+
+    query = (
+        db.query(OrderItem)
+        .join(Order, OrderItem.order_id == Order.id)
+        .filter(OrderItem.product_id == product_id)
+        .options(joinedload(OrderItem.order))
+        .order_by(Order.created_at.desc())
+    )
+    offset = (page - 1) * limit
+    rows = query.offset(offset).limit(limit).all()
+
+    data = [
+        {
+            "order_id": item.order_id,
+            "order_status": item.order.status,
+            "order_created_at": item.order.created_at,
+            "quantity": item.quantity,
+            "price": item.price,
+            "line_total": item.price * item.quantity,
+        }
+        for item in rows
+    ]
+    return {"page": page, "limit": limit, "count": len(data), "data": data}

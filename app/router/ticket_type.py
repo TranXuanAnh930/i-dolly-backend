@@ -24,6 +24,10 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=404, detail=not_found_detail)
     if result == "invalid":
         raise HTTPException(status_code=400, detail="total_quantity cannot be less than sold_quantity")
+    if result == "price_locked":
+        raise HTTPException(status_code=403, detail="Managers cannot change ticket price after creation — ask an admin")
+    if result == "capacity_locked":
+        raise HTTPException(status_code=403, detail="Concert is already on sale — cancel it first, then resize ticket capacity once it's cancelled")
 
 @router.post("/add", response_model=TicketTypeRead)
 async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):

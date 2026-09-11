@@ -15,6 +15,16 @@ from app.db.models.user import Users
 def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
+# Once a concert has gone on sale (or further), fans may already hold
+# tickets or lottery entries against its date/capacity — a manager silently
+# moving those out from under them is the thing this blocks. "cancelled" is
+# excluded on purpose: cancelling is how a manager unlocks the concert
+# again (to reschedule, or resize capacity), same "cancel, don't mutate a
+# live event" rule as delete_concert's soft-delete below. Also reused as-is
+# by ticket_type_service for the same reason on a ticket type's own
+# capacity (total_quantity).
+_EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
+
 def add_concert(db: Session, concert: ConcertCreate, current_user: Users):
     if _manager_scope_violation(current_user, concert.company_id):
         return "forbidden"
@@ -43,6 +53,16 @@ def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user
         return "not_found"
     if _manager_scope_violation(current_user, db_concert.company_id):
         return "forbidden"
+    if (
+        current_user.role == "manager"
+        and db_concert.status in _EVENT_OPEN_STATUSES
+        and (
+            data.event_datetime != db_concert.event_datetime
+            or data.doors_open_at != db_concert.doors_open_at
+            or data.capacity != db_concert.capacity
+        )
+    ):
+        return "event_locked"
     if not db.get(Venue, data.venue_id):
         return "not_found"
     db_concert.venue_id = data.venue_id
@@ -58,14 +78,21 @@ def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user
     return db_concert
 
 def delete_concert(db: Session, id: uuid.UUID, current_user: Users):
+    # Cancel, not db.delete(): ticket_types CASCADEs off concerts.id, and
+    # tickets/lottery_entries cascade off ticket_types in turn — hard-
+    # deleting a concert with any sales or lottery history would destroy it.
+    # Setting status="cancelled" (already a first-class concert_status_enum
+    # value the frontend renders everywhere) keeps every FK target alive,
+    # same rationale as idol_service.delete_idol's soft delete.
     db_concert = db.get(Concert, id)
     if not db_concert:
         return "not_found"
     if _manager_scope_violation(current_user, db_concert.company_id):
         return "forbidden"
-    db.delete(db_concert)
+    db_concert.status = "cancelled"
     db.commit()
-    return True
+    db.refresh(db_concert)
+    return db_concert
 
 
 # --- concert_performers ---
