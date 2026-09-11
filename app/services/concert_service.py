@@ -16,11 +16,13 @@ def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool
     return current_user.role == "manager" and current_user.company_id != company_id
 
 # Once a concert has gone on sale (or further), fans may already hold
-# tickets or lottery entries for that date — a manager silently moving the
-# date/doors-open time out from under them is the thing this blocks.
-# "cancelled" is excluded on purpose: cancelling is how a manager unlocks
-# the date again to reschedule, same "cancel, don't mutate a live event"
-# rule as delete_concert's soft-delete below.
+# tickets or lottery entries against its date/capacity — a manager silently
+# moving those out from under them is the thing this blocks. "cancelled" is
+# excluded on purpose: cancelling is how a manager unlocks the concert
+# again (to reschedule, or resize capacity), same "cancel, don't mutate a
+# live event" rule as delete_concert's soft-delete below. Also reused as-is
+# by ticket_type_service for the same reason on a ticket type's own
+# capacity (total_quantity).
 _EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
 
 def add_concert(db: Session, concert: ConcertCreate, current_user: Users):
@@ -54,7 +56,11 @@ def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user
     if (
         current_user.role == "manager"
         and db_concert.status in _EVENT_OPEN_STATUSES
-        and (data.event_datetime != db_concert.event_datetime or data.doors_open_at != db_concert.doors_open_at)
+        and (
+            data.event_datetime != db_concert.event_datetime
+            or data.doors_open_at != db_concert.doors_open_at
+            or data.capacity != db_concert.capacity
+        )
     ):
         return "event_locked"
     if not db.get(Venue, data.venue_id):

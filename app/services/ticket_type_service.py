@@ -12,6 +12,13 @@ from app.exception.db_triggers import commit_or_raise
 def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id
 
+# Mirrors concert_service._EVENT_OPEN_STATUSES/reasoning: once the parent
+# concert is on sale (or further), a ticket type's capacity is frozen for
+# managers too — resizing how many tickets are on offer out from under fans
+# who already hold entries/tickets is exactly what this blocks. Cancelling
+# the concert unlocks it again, same as the concert's own date/capacity.
+_EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
+
 def add_ticket_type(db: Session, data: TicketTypeCreate, current_user: Users):
     concert = db.get(Concert, data.concert_id)
     if not concert:
@@ -41,6 +48,12 @@ def update_ticket_type(db: Session, id: uuid.UUID, data: TicketTypeUpdate, curre
     if _manager_scope_violation(current_user, concert.company_id):
         return "forbidden"
     if data.total_quantity is not None:
+        if (
+            current_user.role == "manager"
+            and concert.status in _EVENT_OPEN_STATUSES
+            and data.total_quantity != db_tt.total_quantity
+        ):
+            return "capacity_locked"
         if data.total_quantity < db_tt.sold_quantity:
             return "invalid"  # would violate chk_ticket_types_capacity
         db_tt.total_quantity = data.total_quantity

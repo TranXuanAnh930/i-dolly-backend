@@ -31,7 +31,7 @@ def _raise_for(result, not_found_detail: str):
     if result == "invalid":
         raise HTTPException(status_code=400, detail="Exactly one of idol_id or group_id must be set")
     if result == "event_locked":
-        raise HTTPException(status_code=403, detail="Concert is already on sale — cancel it first, then edit the date/doors-open time once it's cancelled")
+        raise HTTPException(status_code=403, detail="Concert is already on sale — cancel it first, then edit the date/doors-open time/capacity once it's cancelled")
 
 @router.post("/add", response_model=ConcertRead)
 async def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
