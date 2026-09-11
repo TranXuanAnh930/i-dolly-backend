@@ -191,7 +191,8 @@ def test_checkout_empty_cart():
         "amount": 1000,
         "shipping_address_id": FAKE_ID,
         "gateway": "mock",
-        "simulate_succ": True
+        "simulate_succ": True,
+        "idempotency_key": FAKE_ID,
     }
     response = client.post("/order/checkout", json=payload, headers=headers)
     assert response.status_code in (400, 404)

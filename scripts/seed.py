@@ -180,7 +180,7 @@ def seed(db):
     # --- users -------------------------------------------------------------
     admin = Users(
         name="Admin",
-        email="c",
+        email="admin@example.com",
         hashed_password=hash_password(SEED_PASSWORD),
         role="admin",
         is_active=True,
