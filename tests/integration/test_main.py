@@ -81,7 +81,7 @@ def test_login_wrong_password():
     assert response.status_code in (400, 401)
 
 def test_protected_route_without_token():
-    response = client.get("/Cart/see_cart")
+    response = client.get("/cart/see_cart")
     assert response.status_code == 401
 
 # ─────────────────────────────────────────────────────────────
@@ -148,28 +148,28 @@ def test_delete_product_requires_admin():
 # ─────────────────────────────────────────────────────────────
 
 def test_see_cart_unauthenticated():
-    response = client.get("/Cart/see_cart")
+    response = client.get("/cart/see_cart")
     assert response.status_code == 401
 
 def test_see_cart_empty():
     headers = auth_headers()
-    response = client.get("/Cart/see_cart", headers=headers)
+    response = client.get("/cart/see_cart", headers=headers)
     assert response.status_code in (200, 404)
 
 def test_add_to_cart_unauthenticated():
-    response = client.post("/Cart/add_cart", json={"product_id": FAKE_ID, "quantity": 1})
+    response = client.post("/cart/add_cart", json={"product_id": FAKE_ID, "quantity": 1})
     assert response.status_code == 401
 
 def test_add_to_cart_nonexistent_product():
     headers = auth_headers()
-    response = client.post("/Cart/add_cart",
+    response = client.post("/cart/add_cart",
                            json={"product_id": FAKE_ID, "quantity": 1},
                            headers=headers)
     assert response.status_code == 404
 
 def test_delete_cart_not_found():
     headers = auth_headers()
-    response = client.delete(f"/Cart/delete_cart/{FAKE_ID}", headers=headers)
+    response = client.delete(f"/cart/delete_cart/{FAKE_ID}", headers=headers)
     assert response.status_code == 404
 
 # ─────────────────────────────────────────────────────────────
