@@ -1,0 +1,72 @@
+# Exported from Render on 2026-09-11T13:39:24Z
+version: "1"
+projects:
+- name: I-Dolly
+  environments:
+  - name: Production
+    services:
+    - type: web
+      name: i-dolly-backend-staging
+      runtime: docker
+      repo: https://github.com/TranXuanAnh930/i-dolly-backend
+      branch: develop
+      plan: free
+      envVars:
+      - key: DEBUG
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: STORAGE_BACKEND
+        sync: false
+      - key: REDIS_DB
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_HOST
+        fromService:
+          name: i-dolly-backend-redis-staging
+          type: keyvalue
+          property: host
+      - key: EMAIL_TOKEN_EXPIRE_MINUTES
+        sync: false
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        sync: false
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        sync: false
+      - key: JWT_EMAIL_SECRET_KEY
+        sync: false
+      - key: JWT_REFRESH_SECRET_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: DATABASE_PWD
+        sync: false
+      - key: DATABASE_USER
+        sync: false
+      - key: DATABASE_NAME
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      region: singapore
+      dockerContext: .
+      dockerfilePath: ./Dockerfile
+      autoDeployTrigger: commit
+    - type: keyvalue
+      name: i-dolly-backend-redis-staging
+      plan: free
+      region: singapore
+      maxmemoryPolicy: allkeys-lru
+      persistenceMode: "off"
+      ipAllowList: []
