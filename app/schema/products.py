@@ -48,6 +48,10 @@ class ProductCard(BaseModel):
     album: AlbumMini | None = None
     genres: list[GenreRead] = []
     artist: ArtistRef | None = None
+    # None = not resale-capped; otherwise the max units a fan may buy of
+    # this product, cumulative across every order they've ever placed (see
+    # order_service.checkout and app/utils/resale.RESALE_CAP_QUANTITY).
+    resale_cap_quantity: int | None = None
 
 class StorePageRead(BaseModel):
     products: list[ProductCard]

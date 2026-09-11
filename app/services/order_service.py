@@ -15,6 +15,7 @@ from app.services.product_service import resolve_product_company_ids
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
 from app.exception.db_triggers import DuplicateIdempotencyKeyError, ResaleCapExceededError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError
 from app.utils.tax import with_tax
+from app.utils.resale import RESALE_CAP_QUANTITY
 
 def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     user = db.get(Users, user_id)
@@ -47,8 +48,8 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
             .group_by(OrderItem.product_id).all()
         )
         for item in cart_items:
-            if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > 3:
-                raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the 3-unit resale cap")
+            if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > RESALE_CAP_QUANTITY:
+                raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the {RESALE_CAP_QUANTITY}-unit resale cap")
 
     products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().all()
     for product in products:

@@ -10,6 +10,7 @@ from app.db.models.group import Group
 from app.db.models.order import Order, OrderItem
 from app.db.models.user import Users
 from app.schema.products import ProductRead, ProductCreate
+from app.utils.resale import RESALE_CAP_QUANTITY
 from typing import List
 
 # Company-scoping for update/delete/image-replace only (see docs/project_status.md
@@ -244,6 +245,7 @@ def _build_product_cards(db: Session, products: list[Product]):
             "quantity": product.quantity,
             "image_url": product.image_url,
             "category": product.category.name if product.category else None,
+            "resale_cap_quantity": RESALE_CAP_QUANTITY if (product.category and product.category.is_resale_capped) else None,
             "album": {
                 "release_date": album.release_date,
                 "track_count": album.track_count,
