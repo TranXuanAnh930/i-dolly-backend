@@ -314,9 +314,13 @@ class TestProductService:
         db = MagicMock()
         mock_prod = make_mock_product()
         db.get.return_value = mock_prod
+        # Admin, not manager: update_product's manager-only price-lock guard
+        # (docs/database-design.md's manager-CRUD rules) isn't what this
+        # test is exercising, so use the role that bypasses it.
+        admin = make_mock_user(role="admin")
         update_data = ProductCreate(name="Updated", price=100.0, description="Updated", quantity=5, category_id=DEFAULT_ID)
 
-        result = update_product(db, DEFAULT_ID, update_data, make_mock_user())
+        result = update_product(db, DEFAULT_ID, update_data, admin)
         db.commit.assert_called_once()
         assert result is not False
 
@@ -326,9 +330,10 @@ class TestProductService:
 
         db = MagicMock()
         db.get.return_value = None
+        admin = make_mock_user(role="admin")
         update_data = ProductCreate(name="Updated", price=100.0, description="Updated", quantity=5, category_id=DEFAULT_ID)
 
-        result = update_product(db, MISSING_ID, update_data, make_mock_user())
+        result = update_product(db, MISSING_ID, update_data, admin)
         assert result is False
 
     def test_delete_product_found(self):
@@ -337,8 +342,9 @@ class TestProductService:
         db = MagicMock()
         mock_prod = make_mock_product()
         db.get.return_value = mock_prod
+        admin = make_mock_user(role="admin")
 
-        result = delete_product(db, DEFAULT_ID, make_mock_user())
+        result = delete_product(db, DEFAULT_ID, admin)
         db.delete.assert_called_once_with(mock_prod)
         db.commit.assert_called_once()
 
@@ -347,8 +353,9 @@ class TestProductService:
 
         db = MagicMock()
         db.get.return_value = None
+        admin = make_mock_user(role="admin")
 
-        result = delete_product(db, MISSING_ID, make_mock_user())
+        result = delete_product(db, MISSING_ID, admin)
         assert result is False
 
     def test_pagination_process(self):
@@ -377,12 +384,12 @@ class TestCartService:
         db.get.return_value = mock_user
 
         mock_prod = make_mock_product(quantity=10)
-        # Two distinct query chains: the product lookup (.filter().first())
-        # and the existing-cart-row lookup, which now also locks the row
-        # (.filter().with_for_update().first()) — must be stubbed separately,
-        # a shared side_effect list no longer lines up with call order.
+        # Product lookup is a plain .filter().first(); the existing-cart-row
+        # lookup goes through .with_for_update() first (row lock ahead of
+        # the increment) — a separate mock in the chain, not the same
+        # .first() called twice.
         db.query().filter().first.return_value = mock_prod
-        db.query().filter().with_for_update().first.return_value = None  # no existing cart row
+        db.query().filter().with_for_update().first.return_value = None
 
         cart_data = CartItem(quantity=2, product_id=DEFAULT_ID)
         result = add_to_cart(db, cart_data, DEFAULT_ID)
@@ -614,10 +621,9 @@ class TestUserService:
         db.query().filter().first.return_value = None
         bg_tasks = MagicMock()
 
-        # Deliberately anti-enumeration: always returns True regardless of
-        # whether the email is registered, so the API response can't be used
-        # to probe which emails have accounts. Only a matched user actually
-        # queues a reset email.
+        # Always returns True, matched user or not — the router gives the
+        # same generic response either way so this can't be used to
+        # enumerate registered emails (user_service.py's own comment).
         result = reset_password_process(db, "nope@example.com", bg_tasks)
         assert result is True
         bg_tasks.add_task.assert_not_called()
@@ -786,9 +792,9 @@ class TestPaymentService:
         result = create_payment(db, DEFAULT_ID, order, data)
         assert result is not False
         db.add.assert_called()
-        # create_payment deliberately does not commit — the caller
-        # (order_service.checkout) owns the single commit at the end of the
-        # transaction, so this only flushes to get the row's generated id.
+        # Deliberately does not commit (payment_service.create_payment's own
+        # comment) — the caller commits once, alongside the order/shipment
+        # writes it made in the same transaction.
         db.flush.assert_called()
 
     def test_create_mock_payment_failure(self):
