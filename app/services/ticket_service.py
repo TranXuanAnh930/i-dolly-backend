@@ -18,6 +18,7 @@ from app.exception.checkout import (
 )
 from app.exception.db_triggers import DuplicateIdempotencyKeyError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError, DuplicateConcertTicketError
 from app.services.payment_service import create_ticket_payment
+from app.services.notification_service import create_notification
 from app.utils.tax import with_tax
 
 # ADMIN-ONLY STOPGAP for create/update/delete — see TicketCreate's docstring.
@@ -97,6 +98,7 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
 
     if ticket.status == "paid":
         ticket_type.sold_quantity += 1
+        create_notification(db, user_id, "ticket_confirmation", ticket_id=ticket.id)
 
     commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert / chk_ticket_types_capacity backstop
     db.refresh(ticket)

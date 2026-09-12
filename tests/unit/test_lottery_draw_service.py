@@ -149,7 +149,11 @@ class TestDrawLottery:
         assert all(e.status == "won" for e in entries)
         assert vip_tt.sold_quantity == 3
         assert campaign.status == "drawn"
-        assert db.add.call_count == 3
+        # Per winner: 1 Ticket + 1 lottery_result Notification + 1
+        # lottery_payment_reminder Notification (fired once, at draw time —
+        # see draw_lottery's own comment). No losers here, so nothing extra
+        # from that branch.
+        assert db.add.call_count == 9
 
     def test_single_preference_entries_over_capacity_some_lose(self):
         from app.services.lottery_draw_service import draw_lottery

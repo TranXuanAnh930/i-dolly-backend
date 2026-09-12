@@ -759,3 +759,37 @@ order** — read that carefully when wiring the success screen.
 ### `PATCH /payment/status/all` 🔒 fan
 - Response: `List[PaymentResponse]`
 - UI: "My payments" page, if surfaced separately from orders
+
+## 7. Notifications
+
+No WebSocket/SSE layer exists — this is a short-polling design (database-design.md §3.19). A
+client with no push mechanism should poll `GET /notifications/unread-count` on an interval (15-30s
+suggested; pause while the tab/app is backgrounded) and only fetch the heavier `GET
+/notifications/mine` when the count goes up, rather than re-fetching full notification bodies on
+every tick.
+
+### `GET /notifications/unread-count` 🔒 fan
+Cheap, meant to be polled — see above. Rate-limited at 30 req/60s per user, well above any sane
+poll interval; a `429` here means the client is polling too aggressively, not a real error to
+surface to the user.
+- Response (`NotificationUnreadCount`): `{"count": int}`
+- UI: nav bar notification bell badge
+
+### `GET /notifications/mine` 🔒 fan
+- Query: `unread_only` (bool, default `false`)
+- Response: `List[NotificationRead]` — `id`, `user_id`, `type`
+  (`"order_confirmation"|"ticket_confirmation"|"lottery_registered"|"lottery_result"|
+  "lottery_payment_reminder"|"lottery_payment_confirmation"|"event_reminder"|"password_reset"`),
+  `order_id`/`ticket_id`/`lottery_entry_id`/`concert_id` (exactly one set, depending on `type`),
+  `status`, `sent_at`, `is_read`, `read_at`, `created_at`
+- Errors: `404` if the fan has no notifications at all (not just none matching `unread_only`)
+- UI: notification feed/dropdown
+
+### `POST /notifications/{notification_id}/read` 🔒 fan
+- Response: `NotificationRead` (updated)
+- Errors: `404` (not found), `403` (belongs to another user)
+- UI: marking one notification read on click/dismiss
+
+### `POST /notifications/read-all` 🔒 fan
+- Response: `{"msg": "<n> notification(s) marked as read"}`
+- UI: "mark all as read" action

@@ -8,6 +8,7 @@ from app.db.models.ticket import Ticket
 from app.db.models.ticket_type import TicketType
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
+from app.services.notification_service import create_notification
 from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, timedelta
 import secrets
@@ -63,13 +64,28 @@ def draw_lottery(db: Session, current_user: Users, concert_id: uuid.UUID) -> dic
                     new_ticket = Ticket(ticket_type_id=ticket_type.id, user_id=candidate.user_id, status="pending_payment", lottery_entry_id=candidate.id, payment_deadline_at=datetime.now(timezone.utc)  + timedelta(hours=campaign.payment_deadline_hours))
                     db.add(new_ticket)
                     won_user_ids.add(candidate.user_id)
-                ticket_type.sold_quantity += len(winners)   
+                    # Same row for win or loss — a lottery_result notification
+                    # always carries lottery_entry_id, and the client tells
+                    # the two apart by reading entries.status off the FK'd
+                    # row, same as everywhere else "which of the four FKs is
+                    # set" already drives the meaning (database-design.md
+                    # §3.19), rather than a second notification type.
+                    create_notification(db, candidate.user_id, "lottery_result", lottery_entry_id=candidate.id)
+                    # Fired once, here, at draw time — not a scheduled
+                    # nag closer to the deadline (that would need a cron/
+                    # Celery Beat job, deliberately out of scope for this
+                    # phase, see project_status.md §5). new_ticket.id is
+                    # already populated (Ticket.id defaults client-side via
+                    # uuid.uuid4, no flush needed) by the time this runs.
+                    create_notification(db, candidate.user_id, "lottery_payment_reminder", ticket_id=new_ticket.id)
+                ticket_type.sold_quantity += len(winners)
 
     for entry in entries:
         if entry.status == "pending":
             entry.status = "lost"
             if entry.user_id not in won_user_ids:
                 lost_user_ids.add(entry.user_id)
+            create_notification(db, entry.user_id, "lottery_result", lottery_entry_id=entry.id)
 
     for campaign in campaigns:
         campaign.status = "drawn"

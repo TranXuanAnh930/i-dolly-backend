@@ -12,6 +12,7 @@ notification_type_enum = Enum(
     "lottery_payment_reminder",
     "lottery_payment_confirmation",
     "event_reminder",
+    "password_reset",
     name="notification_type_enum",
 )
 notification_status_enum = Enum("pending", "sent", "failed", name="notification_status_enum")

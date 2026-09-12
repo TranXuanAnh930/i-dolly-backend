@@ -8,6 +8,7 @@ from app.schema.user import ManagerCreate
 from app.utils.email_sender import send_email
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import create_password_reset_token, verify_rtoken_and_get_user_id
+from app.services.notification_service import create_notification
 
 def change_password_process(db: Session, user:Users, old_password: str, new_password: str):
     password_verification = verify_password(old_password, user.hashed_password)
@@ -55,6 +56,10 @@ def verify_rtoken(db: Session, token: str, new_password: str):
         RefreshToken.user_id == user.id,
         RefreshToken.revoked == False
     ).update({"revoked": True})
+    # A security notice, not the reset-request email above (that one only
+    # queues a token, before we know a reset ever actually completes) —
+    # carries no order/ticket/lottery_entry/concert FK, just user_id.
+    create_notification(db, user.id, "password_reset")
     db.commit()
     db.refresh(user)
     return True

@@ -88,11 +88,13 @@ ephemeral. Since durability was the chosen option here:
 3. Set `REDIS_HOST` to the internal hostname, `REDIS_PORT` to its port (usually `6379`), `REDIS_DB`
    to `0`.
 
-## 5. Render — the Celery worker (optional — only if you need background tasks running)
+## 5. Render — the Celery worker (needed now that a real task exists)
 
-`app/celery_app.py` is currently a bare skeleton (one placeholder task, see
-`docs/architecture.md` §1) — skip this section for a portfolio deploy unless something actually
-needs to run through Celery. When it does:
+`app/celery_app.py` has a real task now — the manager-triggered lottery draw
+(`app.tasks.lottery.draw_lottery`, `docs/project_status.md` §8) — so this section is no longer
+skippable the way it was when it was a bare skeleton. No Celery Beat/scheduler is used: every
+notification producer (`docs/project_status.md` §2) fires inline, inside the request/task that
+causes it, not on a cron — so only the worker needs deploying, not a second scheduler process.
 
 1. **New → Background Worker** (not Web Service), same repo, same `Dockerfile`.
 2. **Start Command**: `/start-worker.sh` (overrides the image's default `CMD`, which is the web
