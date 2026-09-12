@@ -16,6 +16,7 @@ from app.router.idol import router as idol_router
 from app.router.venue import router as venue_router
 from app.router.concert import router as concert_router
 from app.router.ticket_type import router as ticket_type_router
+from app.router.direct_sale_campaign import router as direct_sale_campaign_router
 from app.router.lottery_preference import router as lottery_preference_router
 from app.router.lottery_campaign import router as lottery_campaign_router
 from app.router.lottery_entry import router as lottery_entry_router
@@ -85,6 +86,7 @@ app.include_router(idol_router)
 app.include_router(venue_router)
 app.include_router(concert_router)
 app.include_router(ticket_type_router)
+app.include_router(direct_sale_campaign_router)
 app.include_router(lottery_preference_router)
 app.include_router(lottery_campaign_router)
 app.include_router(lottery_entry_router)

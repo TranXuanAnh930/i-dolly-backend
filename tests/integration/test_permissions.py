@@ -25,12 +25,16 @@ from app.db.models.user import Users
 from app.db.models.venue import Venue
 from app.db.models.concert import Concert
 from app.db.models.ticket_type import TicketType
+from app.db.models.direct_sale_campaign import DirectSaleCampaign
+from app.db.models.lottery_campaign import LotteryCampaign
+from app.db.models.ticket import Ticket
 from app.db.models.category import Category
 from app.db.models.products import Product
 from app.db.models.idol import Idol
 from app.db.models.merch_detail import MerchDetail
 from app.utils.hashing import hash_password
 from app.utils.jwt_manager import create_access_token
+from app.utils.tax import with_tax
 
 client = TestClient(app)
 
@@ -115,6 +119,26 @@ class Factory:
     def merch_detail(self, product_id, idol_id):
         return self._save(MerchDetail(product_id=product_id, idol_id=idol_id))
 
+    def direct_sale_campaign(self, ticket_type_id, sale_start_at=None, sale_end_at=None, status="open"):
+        now = datetime.now(timezone.utc)
+        campaign = DirectSaleCampaign(
+            ticket_type_id=ticket_type_id,
+            sale_start_at=sale_start_at or (now - timedelta(days=1)),
+            sale_end_at=sale_end_at or (now + timedelta(days=30)),
+        )
+        campaign.status = status
+        return self._save(campaign)
+
+    def lottery_campaign(self, ticket_type_id, entry_start_at=None, entry_end_at=None, status="open"):
+        now = datetime.now(timezone.utc)
+        campaign = LotteryCampaign(
+            ticket_type_id=ticket_type_id,
+            entry_start_at=entry_start_at or (now - timedelta(days=2)),
+            entry_end_at=entry_end_at or (now + timedelta(days=5)),
+        )
+        campaign.status = status
+        return self._save(campaign)
+
 
 @pytest.fixture
 def factory():
@@ -162,6 +186,28 @@ def product_payload(product, **overrides):
         "description": product.description,
         "quantity": product.quantity,
         "category_id": str(product.category_id),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def direct_sale_campaign_payload(ticket_type_id, **overrides):
+    now = datetime.now(timezone.utc)
+    payload = {
+        "ticket_type_id": str(ticket_type_id),
+        "sale_start_at": (now - timedelta(days=1)).isoformat(),
+        "sale_end_at": (now + timedelta(days=30)).isoformat(),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def lottery_campaign_payload(ticket_type_id, **overrides):
+    now = datetime.now(timezone.utc)
+    payload = {
+        "ticket_type_id": str(ticket_type_id),
+        "entry_start_at": (now - timedelta(days=2)).isoformat(),
+        "entry_end_at": (now + timedelta(days=5)).isoformat(),
     }
     payload.update(overrides)
     return payload
@@ -488,3 +534,230 @@ def test_update_product_price_editable_by_admin(factory):
         headers=factory.token(admin),
     )
     assert response.status_code == 200
+
+
+# ─────────────────────────────────────────────────────────────
+# Direct Sale Campaigns — role gate, company scoping, sale_method validation
+# ─────────────────────────────────────────────────────────────
+
+def test_add_direct_sale_campaign_cross_company_manager_forbidden(factory):
+    company = factory.company()
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct")
+    response = client.post(
+        "/direct_sale_campaigns/add", json=direct_sale_campaign_payload(ticket_type.id),
+        headers=factory.token(other_manager),
+    )
+    assert response.status_code == 403
+
+
+def test_add_direct_sale_campaign_manager_own_company_allowed(factory):
+    company = factory.company()
+    manager = factory.user(role="manager", company_id=company.id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct")
+    response = client.post(
+        "/direct_sale_campaigns/add", json=direct_sale_campaign_payload(ticket_type.id),
+        headers=factory.token(manager),
+    )
+    assert response.status_code == 200
+    factory.created.append(factory.db.get(DirectSaleCampaign, uuid.UUID(response.json()["id"])))
+
+
+def test_add_direct_sale_campaign_rejects_lottery_ticket_type(factory):
+    company = factory.company()
+    manager = factory.user(role="manager", company_id=company.id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="lottery")
+    response = client.post(
+        "/direct_sale_campaigns/add", json=direct_sale_campaign_payload(ticket_type.id),
+        headers=factory.token(manager),
+    )
+    assert response.status_code == 400
+
+
+def test_update_direct_sale_campaign_cross_company_manager_forbidden(factory):
+    company = factory.company()
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct")
+    campaign = factory.direct_sale_campaign(ticket_type.id)
+    response = client.put(
+        f"/direct_sale_campaigns/update/{campaign.id}",
+        json=direct_sale_campaign_payload(ticket_type.id),
+        headers=factory.token(other_manager),
+    )
+    assert response.status_code == 403
+
+
+def test_delete_direct_sale_campaign_cross_company_manager_forbidden(factory):
+    company = factory.company()
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct")
+    campaign = factory.direct_sale_campaign(ticket_type.id)
+    response = client.delete(
+        f"/direct_sale_campaigns/delete/{campaign.id}", headers=factory.token(other_manager),
+    )
+    assert response.status_code == 403
+
+
+# ─────────────────────────────────────────────────────────────
+# Lottery Campaigns — role gate, company scoping, sale_method validation
+# ─────────────────────────────────────────────────────────────
+
+def test_add_lottery_campaign_cross_company_manager_forbidden(factory):
+    company = factory.company()
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="lottery")
+    response = client.post(
+        "/lottery_campaigns/add", json=lottery_campaign_payload(ticket_type.id),
+        headers=factory.token(other_manager),
+    )
+    assert response.status_code == 403
+
+
+def test_add_lottery_campaign_manager_own_company_allowed(factory):
+    company = factory.company()
+    manager = factory.user(role="manager", company_id=company.id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="lottery")
+    response = client.post(
+        "/lottery_campaigns/add", json=lottery_campaign_payload(ticket_type.id),
+        headers=factory.token(manager),
+    )
+    assert response.status_code == 200
+    assert response.json()["draw_at"] is None  # not drawn yet — see docs/project_status.md §8
+    factory.created.append(factory.db.get(LotteryCampaign, uuid.UUID(response.json()["id"])))
+
+
+def test_add_lottery_campaign_rejects_direct_ticket_type(factory):
+    company = factory.company()
+    manager = factory.user(role="manager", company_id=company.id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct")
+    response = client.post(
+        "/lottery_campaigns/add", json=lottery_campaign_payload(ticket_type.id),
+        headers=factory.token(manager),
+    )
+    assert response.status_code == 400
+
+
+def test_update_lottery_campaign_cross_company_manager_forbidden(factory):
+    company = factory.company()
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="lottery")
+    campaign = factory.lottery_campaign(ticket_type.id)
+    response = client.put(
+        f"/lottery_campaigns/update/{campaign.id}",
+        json=lottery_campaign_payload(ticket_type.id),
+        headers=factory.token(other_manager),
+    )
+    assert response.status_code == 403
+
+
+# ─────────────────────────────────────────────────────────────
+# Lottery draw (PUT /concerts/lottery-draw/{id}) — role gate + company scoping
+# ─────────────────────────────────────────────────────────────
+
+def test_draw_lottery_unauthenticated(factory):
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    response = client.put(f"/concerts/lottery-draw/{concert.id}")
+    assert response.status_code == 401
+
+
+def test_draw_lottery_fan_forbidden(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    response = client.put(f"/concerts/lottery-draw/{concert.id}", headers=factory.token(fan))
+    assert response.status_code == 403
+
+
+def test_draw_lottery_cross_company_manager_forbidden(factory):
+    company = factory.company()
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    response = client.put(f"/concerts/lottery-draw/{concert.id}", headers=factory.token(other_manager))
+    assert response.status_code == 403
+
+
+# ─────────────────────────────────────────────────────────────
+# Ticket checkout — on-sale gate (DirectSaleCampaign)
+# ─────────────────────────────────────────────────────────────
+
+def _ticket_checkout_payload(ticket_type, **overrides):
+    payload = {
+        "ticket_type_id": str(ticket_type.id),
+        "amount": with_tax(float(ticket_type.price)),
+        "gateway": "mock",
+        "simulate_succ": True,
+        "idempotency_key": str(uuid.uuid4()),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_checkout_ticket_not_on_sale_rejected(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct", price=50.0, total_quantity=10)
+    # No DirectSaleCampaign at all for this ticket type.
+    response = client.post(
+        "/tickets/checkout", json=_ticket_checkout_payload(ticket_type), headers=factory.token(fan),
+    )
+    assert response.status_code == 400
+    assert "not currently on sale" in response.json()["detail"].lower()
+
+
+def test_checkout_ticket_succeeds_when_on_sale(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct", price=50.0, total_quantity=10)
+    factory.direct_sale_campaign(ticket_type.id)
+
+    response = client.post(
+        "/tickets/checkout", json=_ticket_checkout_payload(ticket_type), headers=factory.token(fan),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "paid"
+    factory.created.append(factory.db.get(Ticket, uuid.UUID(response.json()["id"])))
+
+
+def test_checkout_ticket_rejected_outside_campaign_window(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    ticket_type = factory.ticket_type(concert.id, sale_method="direct", price=50.0, total_quantity=10)
+    # Campaign exists but hasn't started yet.
+    now = datetime.now(timezone.utc)
+    factory.direct_sale_campaign(
+        ticket_type.id, sale_start_at=now + timedelta(days=1), sale_end_at=now + timedelta(days=30),
+    )
+
+    response = client.post(
+        "/tickets/checkout", json=_ticket_checkout_payload(ticket_type), headers=factory.token(fan),
+    )
+    assert response.status_code == 400
+    assert "not currently on sale" in response.json()["detail"].lower()

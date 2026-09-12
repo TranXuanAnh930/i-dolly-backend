@@ -17,6 +17,8 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=403, detail="Managers can only manage lottery campaigns for their own company's concerts")
     if result == "not_found":
         raise HTTPException(status_code=404, detail=not_found_detail)
+    if result == "not_lottery_ticket_type":
+        raise HTTPException(status_code=400, detail="Lottery campaigns can only be attached to a lottery-sale ticket type")
 
 @router.post("/add", response_model=LotteryCampaignRead)
 async def add_new_campaign(data: LotteryCampaignCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):

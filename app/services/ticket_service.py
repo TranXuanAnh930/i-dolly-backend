@@ -1,16 +1,18 @@
 import uuid
-from app import db
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session, selectinload
 from app.db.models.payment import Payment
 from app.schema.ticket import TicketCreate, TicketUpdate, TicketCheckoutCreate
 from app.db.models.ticket import Ticket
 from app.db.models.ticket_type import TicketType
+from app.db.models.direct_sale_campaign import DirectSaleCampaign
 from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.user import Users
 from app.exception.checkout import (
     TicketTypeNotFoundError,
     WrongSaleMethodError,
     InsufficientTicketStockError,
+    NotOnSaleError,
     PaymentAmountMismatch,
     UnsupportedGatewayError,
 )
@@ -58,6 +60,21 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
         raise TicketTypeNotFoundError("Ticket type not found")
     if ticket_type.sale_method != "direct":
         raise WrongSaleMethodError("This ticket type is not sold directly — apply through the lottery instead")
+
+    now = datetime.now(timezone.utc)
+    on_sale = (
+        db.query(DirectSaleCampaign)
+        .filter(
+            DirectSaleCampaign.ticket_type_id == ticket_type.id,
+            DirectSaleCampaign.status == "open",
+            DirectSaleCampaign.sale_start_at <= now,
+            DirectSaleCampaign.sale_end_at >= now,
+        )
+        .first()
+    )
+    if not on_sale:
+        raise NotOnSaleError("This ticket type is not currently on sale")
+
     if ticket_type.sold_quantity >= ticket_type.total_quantity:
         raise InsufficientTicketStockError("No tickets left for this tier")
 

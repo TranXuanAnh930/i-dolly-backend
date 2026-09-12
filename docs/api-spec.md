@@ -432,10 +432,11 @@ lottery or (once built — see `project_status.md` §5) direct purchase.
 - Response: `{"msg": "Ticket type deleted successfully"}`
 
 ### `POST /lottery_campaigns/add` 🔒 manager+
-- Request (`LotteryCampaignCreate`): `entry_start_at`, `entry_end_at`, `draw_at` (all datetime),
+- Request (`LotteryCampaignCreate`): `entry_start_at`, `entry_end_at` (both datetime),
   `payment_deadline_hours` (int, default 48), `max_entries_per_user` (int, default 1),
   `ticket_type_id` (uuid)
-- Response (`LotteryCampaignRead`): adds `id`, `status`, `created_at`
+- Response (`LotteryCampaignRead`): adds `id`, `status`, `draw_at` (null until actually drawn —
+  written only by the draw job, never client-supplied), `created_at`
 - UI: manager — set up a lottery for a ticket tier
 
 ### `GET /lottery_campaigns/ticket_type/{ticket_type_id}` 🔓

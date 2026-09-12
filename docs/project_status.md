@@ -600,6 +600,23 @@ accountable human action instead of an unattended scheduled job for something th
 inventory. `draw_at` stays on the schema as the fan-facing ETA; it does not have to be the instant
 the draw actually runs (see the open question below).
 
+**Refined: the trigger endpoint enqueues a Celery task rather than running the algorithm inline
+in the request.** The draw touches every campaign/entry/preference/ticket_type row for a concert —
+not something that belongs in an HTTP request/response cycle. `app/celery_app.py`'s `include` list
+only registers `app.tasks.example` today; an untracked `app/tasks/lottery.py` placeholder already
+exists (`draw_lottery`, mirrors `example.py`'s `ping` shape) but **isn't wired into `include` yet**,
+so the worker wouldn't discover it as-is — first concrete gap to close. The router's job stays
+synchronous and small: validate the concert/RBAC, confirm at least one campaign is actually `open`,
+then `draw_concert_lottery.delay(concert_id)` and return `202` with a "queued" message — no task-id
+polling endpoint needed, since a manager can just re-`GET` the campaign(s) and watch `status` flip
+`open` → `drawn`, reusing an endpoint that already exists rather than building new status-tracking
+infra. The task itself opens its own DB session directly via `app.db.session.session()` (not
+FastAPI's `get_db` generator, which only exists inside a request) and calls straight into
+`lottery_draw_service`'s algorithm below. The row-level `FOR UPDATE` + `status='open'` guard already
+designed in makes this safe even if two managers' clicks enqueue two messages for the same concert —
+Postgres serializes on the row lock regardless of which worker process picks each message up, so
+nothing extra is needed at the Celery layer for that case.
+
 **Trigger granularity: per concert, not per campaign.** `lottery_campaigns` is one row per
 `ticket_type` (one tier), but `database-design.md` §5.2's rank cascade requires every tier's
 campaign for one concert to be drawn together — a fan's "at most one ticket per concert" guarantee
