@@ -60,6 +60,8 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
         
     order = Order(user_id=user_id, shipping_address_id=payment_data.shipping_address_id, total_price=float(total_amount))
     db.add(order)
+    flush_or_raise(db)
+
     for item in cart_items:
     # Same tax-inclusive treatment as total_amount above — otherwise
     # sum(order_item.price * quantity) drifts 10% below order.total_price,
@@ -71,8 +73,7 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
             price=with_tax(item.price)
         )
         db.add(order_item)
-
-    flush_or_raise(db)  # trg_orders_fan_only fires here (fn_enforce_fan_only_purchase)
+    flush_or_raise(db)
     
     payment = create_payment(db, user_id, order, payment_data)
     if not payment:

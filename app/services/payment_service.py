@@ -10,7 +10,7 @@ from app.schema.ticket import TicketCheckoutCreate
 from app.db.models.payment import Payment
 from app.schema.shipping import ShippingStatus as SchemaShipStatus
 from app.utils.mock_id import generate_mock_id
-from app.utils.paypal_client import create_order, capture_order
+from app.utils.paypal_client import create_order, capture_order, extract_approval_url
 from app.services.notification_service import create_notification
 from app.exception.db_triggers import commit_or_raise
 from app.db.models.cart import Cart
@@ -25,7 +25,8 @@ from app.db.models.order import Order, OrderItem
 def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> Payment | bool:
     # Deliberately does not commit
     gateway = PaymentGateway(data.gateway)
-    if gateway == PaymentGateway.mock:    
+    pg_approval_url = None
+    if gateway == PaymentGateway.mock:
         is_success = data.simulate_succ
         if not is_success:
             payment_status = PaymentStatus.failed
@@ -40,14 +41,17 @@ def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreat
             pg_signature = ids["signature_id"]
             order.status = OrderStatus.confirmed
             shipstatus = ModelShipStatus(order_id=order.id, status=SchemaShipStatus.pending)
-        db.add(shipstatus)
     elif gateway == PaymentGateway.paypal:
         # Handle PayPal-specific logic here
         payment_status = PaymentStatus.pending
-        pg_order_id = create_order(str(data.amount), "JPY")["id"]
+        order_response = create_order(str(data.amount), "JPY")
+        pg_order_id = order_response["id"]
+        pg_approval_url = extract_approval_url(order_response)
         pg_payment_id = pg_signature = None
         order.status = OrderStatus.pending
+        shipstatus = ModelShipStatus(order_id=order.id, status=SchemaShipStatus.pending)
 
+    db.add(shipstatus)
     payment = Payment(
         order_id=order.id,
         user_id=user_id,
@@ -58,6 +62,7 @@ def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreat
         pg_order_id=pg_order_id,
         pg_payment_id=pg_payment_id,
         pg_signature=pg_signature,
+        pg_approval_url=pg_approval_url,
         idempotency_key=data.idempotency_key,
     )
     db.add(payment)
@@ -78,6 +83,7 @@ def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:Tic
     # tickets.payment_id.
     gateway = PaymentGateway(data.gateway)
     payment_status = PaymentStatus.pending
+    pg_approval_url = None
     if gateway == PaymentGateway.mock:
         is_success = data.simulate_succ
         if not is_success:
@@ -93,7 +99,9 @@ def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:Tic
             ticket.status = "paid"
     elif gateway == PaymentGateway.paypal:
         # Handle PayPal-specific logic here
-        pg_order_id = create_order(str(data.amount), "JPY")["id"]
+        order_response = create_order(str(data.amount), "JPY")
+        pg_order_id = order_response["id"]
+        pg_approval_url = extract_approval_url(order_response)
         pg_payment_id = pg_signature = None
         ticket.status = "pending_payment"
 
@@ -108,6 +116,7 @@ def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:Tic
         pg_order_id=pg_order_id,
         pg_payment_id=pg_payment_id,
         pg_signature=pg_signature,
+        pg_approval_url=pg_approval_url,
         idempotency_key=data.idempotency_key,
     )
     db.add(payment)
@@ -142,11 +151,15 @@ def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | No
         if not ticket or ticket.status != "pending_payment" or (user_id and ticket.user_id != user_id):
             return None
         ticket_type = db.query(TicketType).filter(TicketType.id == ticket.ticket_type_id).with_for_update().first()
-        if not ticket_type or ticket_type.total_quantity - ticket_type.sold_quantity <= 0 - ticket_type.sold_quantity <= 0:
+        if not ticket_type or ticket_type.total_quantity - ticket_type.sold_quantity <= 0:
             return None
         paypal_payment = capture_order(pg_order_id)
         if paypal_payment["status"] == "COMPLETED":
             payment.status = PaymentStatus.success
+            payment.is_paid = True
+            ids = generate_mock_id()
+            payment.pg_payment_id = ids["payment_id"]
+            payment.pg_signature = ids["signature_id"]
             ticket.status = "paid"
             ticket_type.sold_quantity += 1
             ticket.payment_id = payment.id
@@ -158,17 +171,23 @@ def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | No
         order = db.query(Order).filter(Order.id == payment.order_id).with_for_update().first()
         if not order or (user_id and order.user_id != user_id) or (order.status != OrderStatus.pending):
             return None
+        order_items = db.query(OrderItem).filter(OrderItem.order_id == payment.order_id).all()
+        product_ids = [order_item.product_id for order_item in order_items]
+        products = db.query(Product).filter(Product.id.in_(product_ids)).with_for_update().all()
+        if len(order_items) == 0 or len(products) == 0:
+            return None
+        for product in products:
+            item = next((order_item for order_item in order_items if order_item.product_id == product.id), None)
+            if product.quantity < item.quantity:
+                return None
         paypal_payment = capture_order(pg_order_id)
         if paypal_payment["status"] == "COMPLETED":
-            order_items = db.query(OrderItem).filter(OrderItem.order_id == payment.order_id).all()
-            product_ids = [order_item.product_id for order_item in order_items]
-            products = db.query(Product).filter(Product.id.in_(product_ids)).with_for_update().all()
-            if len(order_items) == 0 or len(products) == 0:
-                return None
-            for product in products:
-                item = next((order_item for order_item in order_items if order_item.product_id == product.id), None)
-                return None
-        
+            payment.status = PaymentStatus.success
+            payment.is_paid = True
+            ids = generate_mock_id()
+            payment.pg_payment_id = ids["payment_id"]
+            payment.pg_signature = ids["signature_id"]
+
             for product in products:
                 item = next((order_item for order_item in order_items if order_item.product_id == product.id), None)
                 product.quantity-=item.quantity

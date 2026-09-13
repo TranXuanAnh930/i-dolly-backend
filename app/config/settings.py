@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Defaults to local dev; override per-environment via .env.
     BASE_URL: str = "http://localhost:8000"
 
+    # Public base URL of the frontend — used to build PayPal's return_url/
+    # cancel_url (app/utils/paypal_client.py's create_order) so the buyer
+    # lands back on the SPA, not this API. Defaults to the local Vite dev
+    # port; override per-environment via .env.
+    FRONTEND_BASE_URL: str = "http://localhost:8080"
+
     # Comma-separated list of frontend origins allowed to call this API
     # cross-origin (see main.py's CORSMiddleware). Defaults to the local Vue
     # dev port; set to the deployed frontend's real origin(s) in production —

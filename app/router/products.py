@@ -1,6 +1,8 @@
 import uuid
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from typing import List
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.deps.db import get_db
@@ -8,11 +10,13 @@ from app.deps.auth import require_manager_or_admin
 from app.schema.products import (
     ProductRead, ProductCreate, StorePageRead, ProductDetailRead,
     ManagerProductsPageRead, ManagerProductFormPageRead, ProductSalesPageRead,
+    ProductWithDetailCreate,
 )
 from app.db.models.user import Users
 from app.services.product_service import (
     add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products, set_product_image,
     get_store_page, get_product_detail, get_manager_products_page, get_manager_product_form_page, get_product_sales_page,
+    add_product_with_detail,
 )
 from app.cache.cache_service import get_cached_products, delete_cached_product
 from app.cache.redis_client import redis_client
@@ -103,6 +107,59 @@ async def add_new_product(
         raise HTTPException(status_code=400, detail="Unable to add product")
     redis_client.delete("products:list")
     return {"msg" : "Product added successfully"}
+
+# Bundles product creation with its AlbumDetail/MerchDetail row into one
+# request (see ProductWithDetailCreate's own docstring for why) —
+# ManagerProductFormPage.vue's "add product" form uses this, not the bare
+# /add_product above, so a product created there always ends up attached to
+# one of the manager's own idols/groups.
+@router.post("/add_with_detail")
+async def add_new_product_with_detail(
+    name: str = Form(...),
+    price: float = Form(...),
+    description: str = Form(...),
+    quantity: int = Form(...),
+    category_id: uuid.UUID = Form(...),
+    detail_kind: str = Form(...),
+    idol_id: uuid.UUID | None = Form(None),
+    group_id: uuid.UUID | None = Form(None),
+    release_date: date | None = Form(None),
+    track_count: int | None = Form(None),
+    format: str = Form("physical"),
+    edition: str | None = Form(None),
+    color_id: uuid.UUID | None = Form(None),
+    image: UploadFile | None = File(None),
+    current_user: Users = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        data = ProductWithDetailCreate(
+            name=name, price=price, description=description, quantity=quantity,
+            category_id=category_id, detail_kind=detail_kind, idol_id=idol_id, group_id=group_id,
+            release_date=release_date, track_count=track_count, format=format,
+            edition=edition, color_id=color_id,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    image_url = None
+    if image is not None:
+        try:
+            image_url = await get_storage().save(image, subfolder="products")
+        except StorageError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    result = add_product_with_detail(db, data, image_url, current_user)
+    if result == "category_not_found":
+        raise HTTPException(status_code=400, detail="category_id does not reference an existing category")
+    if result == "owner_not_found":
+        raise HTTPException(status_code=400, detail="idol_id, group_id, or color_id does not reference an existing record")
+    if result == "artist_inactive":
+        raise HTTPException(status_code=400, detail="Cannot attach a new product to a deactivated idol/group")
+    if result == "forbidden":
+        raise HTTPException(status_code=403, detail="Managers can only create products for their own company's idols/groups")
+    redis_client.delete("products:list")
+    return {"msg": "Product added successfully"}
 
 @router.put("/update/{id}")
 async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):

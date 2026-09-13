@@ -75,11 +75,41 @@ def create_order(amount: str, currency: str = "USD") -> dict:
             "purchase_units": [
                 {"amount": {"currency_code": currency, "value": amount}}
             ],
+            # application_context is deprecated in Orders v2 — silently
+            # ignored, not an error, which is exactly why setting return_url/
+            # cancel_url there never actually took effect. v2 nests these
+            # per payment source instead.
+            #
+            # Points at the frontend SPA (not this API) — it's the one that
+            # calls POST /payment/paypal/capture/{pg_order_id} after PayPal
+            # sends the buyer back with ?token=&PayerID=.
+            "payment_source": {
+                "paypal": {
+                    "experience_context": {
+                        "return_url": f"{settings.FRONTEND_BASE_URL}/payment/paypal/return",
+                        "cancel_url": f"{settings.FRONTEND_BASE_URL}/payment/paypal/cancel",
+                        "user_action": "PAY_NOW",
+                    }
+                }
+            },
         },
         timeout=10.0,
     )
     response.raise_for_status()
     return response.json()
+
+
+def extract_approval_url(order_response: dict) -> str | None:
+    """Pulls the buyer-facing redirect link out of create_order()'s response.
+    v2 names it "payer-action" once payment_source is specified (as
+    create_order does above); "approve" is the older/no-payment-source name,
+    kept as a fallback in case that ever changes. None if PayPal returns
+    neither (shouldn't happen for a freshly created order, but this is a
+    display convenience, not something to raise over)."""
+    for link in order_response.get("links", []):
+        if link.get("rel") in ("payer-action", "approve"):
+            return link.get("href")
+    return None
 
 
 def capture_order(paypal_order_id: str) -> dict:
@@ -107,11 +137,19 @@ def verify_webhook_signature(headers: dict, body: bytes | str | dict) -> bool:
     (including a malformed/missing header) as an unverified, untrusted
     event and don't act on it.
     """
-    webhook_event = body if isinstance(body, dict) else json.loads(body)
     lower_headers = {k.lower(): v for k, v in headers.items()}
 
     required = ("paypal-transmission-id", "paypal-transmission-time", "paypal-cert-url", "paypal-auth-algo", "paypal-transmission-sig")
     if not all(h in lower_headers for h in required):
+        return False
+
+    # Only parse the body once the request at least looks like a genuine
+    # PayPal webhook (has all the expected headers) — and never let a
+    # malformed/empty body crash this with an unhandled 500, since this
+    # endpoint is reachable by anyone, not just PayPal.
+    try:
+        webhook_event = body if isinstance(body, dict) else json.loads(body)
+    except (json.JSONDecodeError, TypeError):
         return False
 
     response = httpx.post(

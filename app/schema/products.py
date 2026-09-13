@@ -1,9 +1,10 @@
 import uuid
 from datetime import date, datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from app.schema.genre import GenreRead
 from app.schema.artist import ArtistRef
-from app.schema.idol import GroupMini
+from app.schema.idol import GroupMini, IdolRead, GroupOptionForCompany
+from app.schema.idol_color import IdolColorRead
 from app.schema.category import CategoryRead
 from app.schema.order import OrderStatus
 
@@ -23,6 +24,43 @@ class ProductCreate(ProductBase):
 class ProductRead(ProductBase):
     id: uuid.UUID
     category : str
+
+# Bundles a Product with its AlbumDetail/MerchDetail row into one request
+# (product_service.add_product_with_detail) — a bare add_product left a
+# product with no album_details/merch_details row until a separate,
+# optional follow-up call attached one; this is the route
+# ManagerProductFormPage.vue now uses instead so a product is never left
+# without one. detail_kind picks which set of the fields below applies —
+# mirrors AlbumDetailCreate's "at least one of idol_id/group_id" and
+# MerchDetailCreate's "exactly one" validators respectively.
+class ProductWithDetailCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    price: float = Field(..., gt=0)
+    description: str = Field(..., min_length=1, max_length=1000)
+    quantity: int = Field(..., ge=0)
+    category_id: uuid.UUID
+    detail_kind: str  # 'album' | 'merch'
+    idol_id: uuid.UUID | None = None
+    group_id: uuid.UUID | None = None
+    # album-only (detail_kind == 'album')
+    release_date: date | None = None
+    track_count: int | None = Field(None, gt=0)
+    format: str = "physical"
+    # merch-only (detail_kind == 'merch')
+    edition: str | None = None
+    color_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _check_kind_and_owner(self):
+        if self.detail_kind == "album":
+            if self.idol_id is None and self.group_id is None:
+                raise ValueError("At least one of idol_id or group_id must be set for an album/single/EP product")
+        elif self.detail_kind == "merch":
+            if (self.idol_id is None) == (self.group_id is None):
+                raise ValueError("Exactly one of idol_id or group_id must be set for a merch product")
+        else:
+            raise ValueError("detail_kind must be 'album' or 'merch'")
+        return self
 
 # --- page-shaped reads — one bundled response per screen (see idol.py's
 # equivalent comment). ProductCard is the single shape every product-grid
@@ -72,6 +110,14 @@ class ManagerProductsPageRead(BaseModel):
 class ManagerProductFormPageRead(BaseModel):
     products: list[ProductRead]
     categories: list[CategoryRead]
+    # For the "product for one of my own idols/groups" step of creating a
+    # product — idols/groups carry company_id so the form can filter to the
+    # current company client-side, same pattern as ManagerIdolFormPageRead's
+    # own groups field. colors is only ever used for a merch product's
+    # optional color_id.
+    idols: list[IdolRead] = []
+    groups: list[GroupOptionForCompany] = []
+    colors: list[IdolColorRead] = []
 
 # --- sales history (GET /products/{id}/sales) — one row per order that
 # included this product, newest first. Same page/limit/count/data envelope

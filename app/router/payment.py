@@ -75,11 +75,10 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Webhook signature verification failed")
 
     webhook_event = await request.json()
-    # TODO: webhook_event["resource"]["id"] is PayPal's capture id, not the
-    # PayPal *order* id finalize_paypal_payment keys on — check
-    # webhook_event["resource"]["supplementary_data"]["related_ids"]["order_id"]
-    # (or whichever field actually carries it for the event types you
-    # subscribed to) before wiring this up for real.
+    # webhook_event["resource"]["id"] is PayPal's capture id, not the PayPal
+    # *order* id finalize_paypal_payment keys on — confirmed against a real
+    # PAYMENT.CAPTURE.COMPLETED sample payload (PayPal's webhook simulator)
+    # that this is where the order id actually lives.
     pg_order_id = webhook_event["resource"]["supplementary_data"]["related_ids"]["order_id"]
     finalize_paypal_payment(db, pg_order_id)
 
@@ -88,3 +87,9 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
     # duplicate delivery, etc.) — a non-2xx here just triggers a retry of
     # an event that was never going to do anything different next time.
     return {"msg": "ok"}
+
+# The GET /paypal/return and /paypal/cancel placeholder routes that used to
+# live here are gone — create_order's return_url/cancel_url now point at
+# the frontend's own /payment/paypal/return and /payment/paypal/cancel
+# pages (see docs/api-spec.md §6), which call the capture endpoint above
+# directly instead of bouncing through this API first.
