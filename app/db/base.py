@@ -30,6 +30,7 @@ from app.db.models.idol import Idol
 from app.db.models.venue import Venue
 from app.db.models.concert import Concert, ConcertPerformer
 from app.db.models.ticket_type import TicketType
+from app.db.models.direct_sale_campaign import DirectSaleCampaign
 from app.db.models.lottery_preference import LotteryPreference
 from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.lottery_entry import LotteryEntry

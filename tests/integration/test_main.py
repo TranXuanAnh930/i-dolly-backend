@@ -1,6 +1,5 @@
 import pytest
 import uuid
-from tests.conftest import fake_redis
 from fastapi.testclient import TestClient
 from main import app
 
@@ -14,16 +13,10 @@ client = TestClient(app)
 FAKE_ID = "11111111-1111-1111-1111-111111111111"
 
 # ─────────────────────────────────────────────────────────────
-# Fixtures
+# Fixtures — reset_rate_limits is shared, autouse, in
+# tests/integration/conftest.py; every test module under this directory
+# gets it automatically, no per-file import needed.
 # ─────────────────────────────────────────────────────────────
-
-@pytest.fixture(autouse=True)
-def reset_rate_limits():
-    for key in fake_redis.scan_iter("rate:ip:*"):
-        fake_redis.delete(key)
-    for key in fake_redis.scan_iter("rate:user:*"):
-        fake_redis.delete(key)
-    yield
 
 @pytest.fixture(autouse=True)
 def ensure_user_exists():

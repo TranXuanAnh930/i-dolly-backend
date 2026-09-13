@@ -22,6 +22,8 @@ def _raise_for(result):
         raise HTTPException(status_code=400, detail="Rank this ticket tier in your lottery preferences before applying")
     if result == "cap_reached":
         raise HTTPException(status_code=400, detail="You've already used all your entries for this campaign")
+    if result == "already_has_ticket":
+        raise HTTPException(status_code=400, detail="You already hold a ticket for this concert")
 
 @router.post("/apply", response_model=LotteryEntryRead)
 async def apply_to_a_lottery(data: LotteryEntryApply, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)):

@@ -88,11 +88,13 @@ ephemeral. Since durability was the chosen option here:
 3. Set `REDIS_HOST` to the internal hostname, `REDIS_PORT` to its port (usually `6379`), `REDIS_DB`
    to `0`.
 
-## 5. Render — the Celery worker (optional — only if you need background tasks running)
+## 5. Render — the Celery worker (needed now that a real task exists)
 
-`app/celery_app.py` is currently a bare skeleton (one placeholder task, see
-`docs/architecture.md` §1) — skip this section for a portfolio deploy unless something actually
-needs to run through Celery. When it does:
+`app/celery_app.py` has a real task now — the manager-triggered lottery draw
+(`app.tasks.lottery.draw_lottery`, `docs/project_status.md` §8) — so this section is no longer
+skippable the way it was when it was a bare skeleton. No Celery Beat/scheduler is used: every
+notification producer (`docs/project_status.md` §2) fires inline, inside the request/task that
+causes it, not on a cron — so only the worker needs deploying, not a second scheduler process.
 
 1. **New → Background Worker** (not Web Service), same repo, same `Dockerfile`.
 2. **Start Command**: `/start-worker.sh` (overrides the image's default `CMD`, which is the web
@@ -179,8 +181,9 @@ so the secret needs to be re-added for this repo:
 
 - No live-DB verification has happened before this deploy (§8) — treat the first deploy as a real
   test, not a formality.
-- The Celery worker (§5) is a bare skeleton — no real task exists yet, so there's nothing lost by
-  skipping that service entirely for a portfolio deploy.
+- The Celery worker (§5) now backs a real task (the manager-triggered lottery draw) — deploying it
+  is no longer optional the way it was when it was a bare skeleton; skipping it means
+  `PUT /concerts/lottery-draw/{id}` returns "scheduled" but the draw never actually runs.
 - The checkout/ticket-inventory race and non-idempotent webhook handling
   (`docs/project_status.md` §4 items 1 and 4) are unchanged by deploying — they're app-logic bugs,
   not deploy-environment issues.

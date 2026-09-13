@@ -63,8 +63,6 @@ projects:
       dockerContext: .
       dockerfilePath: ./Dockerfile
       autoDeployTrigger: commit
-<<<<<<< Updated upstream
-=======
     - type: worker
       name: i-dolly-backend-worker
       runtime: docker
@@ -96,7 +94,6 @@ projects:
       dockerContext: .
       dockerfilePath: ./Dockerfile
       autoDeployTrigger: commit
->>>>>>> Stashed changes
     - type: keyvalue
       name: i-dolly-backend-redis
       plan: free

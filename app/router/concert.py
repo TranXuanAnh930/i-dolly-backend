@@ -3,18 +3,20 @@ from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit
-from app.deps.auth import require_manager_or_admin
+from app.deps.auth import require_manager_or_admin, get_current_user_optional
 from app.deps.db import get_db
 from app.db.models.user import Users
 from app.schema.concert import (
     ConcertCreate, ConcertUpdate, ConcertRead, ConcertPerformerAssign, ConcertPerformerRead,
-    EventsPageRead, ConcertDetailRead, ManagerEventsPageRead,
+    EventsPageRead, ConcertDetailRead, ManagerEventsPageRead
 )
 from app.services.concert_service import (
     add_concert, get_concerts, get_concert, update_concert, delete_concert,
     assign_performer, get_performers, get_all_performers, remove_performer,
     get_events_page, get_concert_detail, get_manager_events_page,
+    _manager_scope_violation,
 )
+from app.celery_app import celery_app
 
 # Company-scoped exactly like groups/idols (database-design.md §4): a manager
 # may only create/edit/delete concerts for their own company_id; admins are
@@ -59,8 +61,8 @@ async def get_manager_events_page_data(db: Session = Depends(get_db)):
     return get_manager_events_page(db)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
-async def get_concert_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
-    result = get_concert_detail(db, id)
+async def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), db: Session = Depends(get_db)):
+    result = get_concert_detail(db, id, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="Concert not found")
     return result
@@ -127,3 +129,27 @@ async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depend
     if isinstance(result, str):
         _raise_for(result, "Performer assignment not found")
     return {"msg": "Performer unassigned from concert successfully"}
+
+
+@router.put("/lottery-draw/{id}")
+async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    # Company-scoping has to happen HERE, synchronously, not inside the
+    # Celery task — draw_lottery's own _user_scope_violation check runs in
+    # the worker process, with no way to turn a rejection back into an HTTP
+    # response for a caller who's already gotten back "scheduled". Without
+    # this, a manager from a different company got a 200 for a task that
+    # silently no-oped in the worker (caught by
+    # test_permissions.py::test_draw_lottery_cross_company_manager_forbidden).
+    concert = get_concert(db, id)
+    if not concert:
+        raise HTTPException(status_code=404, detail="Concert not found")
+    if _manager_scope_violation(current_user, concert.company_id):
+        raise HTTPException(status_code=403, detail="Managers can only manage concerts for their own company")
+
+    # Fire-and-forget from here on: the actual draw (LotteryResult) runs
+    # async in a Celery worker — see app/tasks/lottery.py /
+    # lottery_draw_service.draw_lottery. This response is just a queued
+    # acknowledgement, so it can't declare response_model=LotteryResult
+    # without failing validation on every call.
+    celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)])
+    return {"msg": "Lottery draw task has been scheduled. Results will be available once the task is complete."}

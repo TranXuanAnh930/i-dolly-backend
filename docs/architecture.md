@@ -144,11 +144,26 @@ Alembic's `alembic_version` table ever disagree. A `GENERATED ALWAYS AS ... STOR
 cast to a Postgres user-defined enum (the enum's cast function is `STABLE`, not `IMMUTABLE`, and
 Postgres rejects it) — use a plain `VARCHAR` generated column instead (see `venues.size`).
 
-Tests: `pytest --cov=app` (needs a real Postgres; `fakeredis` handles Redis automatically via
-`tests/conftest.py`, no real Redis needed locally) — split into `tests/unit/` (mocked, no DB) and
-`tests/integration/` (real `TestClient` against the app). CI (`.github/workflows/test.yml`) spins up
-Postgres 16 + Redis service containers, runs migrations, runs pytest with coverage, uploads to
-Codecov, then deploys to Render on `main`/`master`.
+Tests: `pytest --cov=app` (needs a real Postgres only for `tests/integration/`; `fakeredis` handles
+Redis automatically via `tests/conftest.py`, no real Redis needed locally) — split into
+`tests/unit/` (mocked, no DB) and `tests/integration/` (real `TestClient` against the app). CI
+(`.github/workflows/test.yml`) spins up Postgres 16 + Redis service containers, runs migrations,
+runs pytest with coverage, uploads to Codecov, then deploys to Render on `main`/`master`.
+
+**Integration tests never touch whatever database `DATABASE_URL` points at.**
+`tests/conftest.py` redirects it onto a dedicated `<name>_test` database (a same-instance sibling,
+not the same one the running `app`/`worker` — or your own manual frontend testing, or
+`scripts/seed.py` — use) before anything else in the process can read the original value; then
+`tests/integration/conftest.py` drops, recreates, and fully migrates that database once per test
+session, before any integration test module is imported. `pytest tests/unit` is unaffected (the
+redirect is a pure string rewrite, no connection attempted) and still needs no live Postgres.
+Practical effect: `pytest tests` is safe to run against any local dev setup, any time, with a
+deterministic result — it can't see or corrupt real seeded/manually-created rows, and doesn't
+require you to keep a scratch database empty by hand. (CI's own standalone "run alembic upgrade
+head" step against its service-container Postgres still runs and still has to pass, but pytest no
+longer actually queries the database that step migrated — it creates and migrates its own
+`<ci-db>_test` sibling instead; harmless, just means that CI step is now an independent
+migration-chain smoke check rather than a precondition pytest depends on.)
 
 ## 5. Conventions to follow for new code
 
