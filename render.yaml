@@ -63,6 +63,40 @@ projects:
       dockerContext: .
       dockerfilePath: ./Dockerfile
       autoDeployTrigger: commit
+<<<<<<< Updated upstream
+=======
+    - type: worker
+      name: i-dolly-backend-worker
+      runtime: docker
+      repo: https://github.com/TranXuanAnh930/i-dolly-backend
+      branch: main
+      # Background workers have no free tier on Render — "starter" (0.5
+      # CPU / 512 MB RAM) is the smallest available plan, $7/month.
+      plan: starter
+      dockerCommand: /start-worker.sh
+      envVars:
+      - key: REDIS_DB
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_HOST
+        fromService:
+          name: i-dolly-backend-redis
+          type: keyvalue
+          property: host
+      - key: DATABASE_PWD
+        sync: false
+      - key: DATABASE_USER
+        sync: false
+      - key: DATABASE_NAME
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      region: singapore
+      dockerContext: .
+      dockerfilePath: ./Dockerfile
+      autoDeployTrigger: commit
+>>>>>>> Stashed changes
     - type: keyvalue
       name: i-dolly-backend-redis
       plan: free
