@@ -11,6 +11,7 @@ class PaymentStatus(str, Enum):
 
 class PaymentGateway(Enum):
     mock = "mock"
+    paypal = "paypal"
 
 class PaymentCreate(BaseModel):
     amount : int

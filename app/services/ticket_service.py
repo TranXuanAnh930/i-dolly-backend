@@ -3,8 +3,10 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session, selectinload
 from app.db.models.payment import Payment
 from app.schema.ticket import TicketCreate, TicketUpdate, TicketCheckoutCreate
+from app.schema.payment import PaymentStatus
 from app.db.models.ticket import Ticket
 from app.db.models.ticket_type import TicketType
+from app.db.models.concert import Concert
 from app.db.models.direct_sale_campaign import DirectSaleCampaign
 from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.lottery_campaign import LotteryCampaign
@@ -122,10 +124,10 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
     payment = create_ticket_payment(db, user_id, ticket, data)
     if not payment:
         raise UnsupportedGatewayError("Unsupported payment gateway!")
-
-    if ticket.status == "paid":
-        ticket_type.sold_quantity += 1
-        create_notification(db, user_id, "ticket_confirmation", ticket_id=ticket.id)
+    if payment.status == PaymentStatus.success:
+        if ticket.status == "paid":
+            ticket_type.sold_quantity += 1
+            create_notification(db, user_id, "ticket_confirmation", ticket_id=ticket.id)
 
     commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert / chk_ticket_types_capacity backstop
     db.refresh(ticket)
@@ -175,6 +177,40 @@ def get_ticket(db: Session, id: uuid.UUID):
         .options(selectinload(Ticket.ticket_type))
         .first()
     )
+
+# Company-scoped via the concert (Ticket -> TicketType -> Concert.company_id),
+# same pattern as concert_service/ticket_type_service. Mirrors
+# product_service.get_product_sales_page's shape (page/limit/count/data) for
+# the manager-facing "sales history" list/page pair.
+def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10):
+    concert = db.get(Concert, concert_id)
+    if not concert:
+        return "not_found"
+    if current_user.role == "manager" and current_user.company_id != concert.company_id:
+        return "forbidden"
+
+    query = (
+        db.query(Ticket)
+        .join(TicketType, Ticket.ticket_type_id == TicketType.id)
+        .filter(TicketType.concert_id == concert_id)
+        .options(selectinload(Ticket.ticket_type))
+        .order_by(Ticket.created_at.desc())
+    )
+    offset = (page - 1) * limit
+    rows = query.offset(offset).limit(limit).all()
+
+    data = [
+        {
+            "ticket_id": ticket.id,
+            "tier": ticket.ticket_type.tier,
+            "status": ticket.status,
+            "price": ticket.ticket_type.price,
+            "source": "lottery" if ticket.lottery_entry_id else "direct",
+            "created_at": ticket.created_at,
+        }
+        for ticket in rows
+    ]
+    return {"page": page, "limit": limit, "count": len(data), "data": data}
 
 def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate):
     db_ticket = db.get(Ticket, id)

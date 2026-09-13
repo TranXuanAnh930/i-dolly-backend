@@ -31,7 +31,15 @@ async def login(form_data:OAuth2PasswordRequestForm=Depends(), _:None=Depends(ra
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_tokens(db, db_user)
     response = JSONResponse(content={"access_token": token["access_token"]})
-    response.set_cookie("refresh_token", token["refresh_token"], httponly=True, secure=True, samesite="lax")
+    # samesite="none" (not "lax") — the frontend and this API are deployed
+    # on different origins (e.g. Vercel + Render), which browsers treat as
+    # cross-site. A Lax cookie is only sent on top-level navigations, never
+    # on the XHR/fetch POST /account/refresh call the frontend makes after
+    # a page reload — so it silently never reached this endpoint there,
+    # refresh always failed, and every reload logged the fan out even
+    # though their session was still otherwise valid. None requires
+    # Secure, already set.
+    response.set_cookie("refresh_token", token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 
 @router.post("/refresh")
@@ -44,7 +52,7 @@ async def refresh(request:Request, _:None=Depends(rate_limit(10,60,ip_key)), db:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
     new_token = create_tokens(db, user)
     response = JSONResponse(content={"msg":"Token refreshed successfully", "access_token":new_token["access_token"]})
-    response.set_cookie("refresh_token", new_token["refresh_token"], httponly=True, secure=True, samesite="lax")
+    response.set_cookie("refresh_token", new_token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 
 @router.post("/verify-request")

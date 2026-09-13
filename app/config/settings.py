@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str | None = None  # falls back to boto3's normal credential chain (env, shared config, IAM role) if unset
     AWS_SECRET_ACCESS_KEY: str | None = None
 
+    PAYPAL_CLIENT_ID: str | None = None
+    PAYPAL_CLIENT_SECRET: str | None = None
+    PAYPAL_MODE: str | None = None
+    PAYPAL_WEBHOOK_ID: str | None = None
+
     class Config:
         env_file = ".env"
 

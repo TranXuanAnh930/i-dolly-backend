@@ -51,3 +51,20 @@ class TicketRead(BaseModel):
     ticket_type: TicketTypeRead
 
     model_config = {"from_attributes": True}
+
+# --- manager-facing sales history (mirrors ProductSaleRead/ProductSalesPageRead
+# in schema/products.py) — one row per ticket, not per order, since a ticket
+# has no order/line-item concept of its own.
+class TicketSaleRead(BaseModel):
+    ticket_id: uuid.UUID
+    tier: str
+    status: str
+    price: float
+    source: str  # 'lottery' | 'direct' — derived from lottery_entry_id, not a stored column
+    created_at: datetime
+
+class TicketSalesPageRead(BaseModel):
+    page: int
+    limit: int
+    count: int
+    data: list[TicketSaleRead]
