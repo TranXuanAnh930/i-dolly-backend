@@ -68,7 +68,9 @@ projects:
       runtime: docker
       repo: https://github.com/TranXuanAnh930/i-dolly-backend
       branch: main
-      plan: free
+      # Background workers have no free tier on Render — "starter" (0.5
+      # CPU / 512 MB RAM) is the smallest available plan, $7/month.
+      plan: starter
       dockerCommand: /start-worker.sh
       envVars:
       - key: REDIS_DB
