@@ -1,5 +1,5 @@
 # Japan's standard consumption tax rate — mirrors src/utils/tax.js on the
-# frontend. Cart/product prices are stored tax-excluded, same as the rest of
+# frontend. cart/product prices are stored tax-excluded, same as the rest of
 # the store, so checkout applies tax to each cart row's total here.
 TAX_RATE = 0.1
 

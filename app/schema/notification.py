@@ -2,6 +2,9 @@ import uuid
 from datetime import datetime
 from pydantic import BaseModel
 
+class NotificationUnreadCount(BaseModel):
+    count: int
+
 class NotificationRead(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID

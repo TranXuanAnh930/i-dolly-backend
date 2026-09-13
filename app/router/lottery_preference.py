@@ -19,6 +19,8 @@ def _raise_for(result):
         raise HTTPException(status_code=404, detail="Concert or ticket type not found, or a ticket type doesn't belong to this concert")
     if result == "invalid":
         raise HTTPException(status_code=400, detail="Duplicate ticket_type_id in the ranked list")
+    if result == "not_lottery_ticket_type":
+        raise HTTPException(status_code=400, detail="Can only rank lottery-sale ticket types")
 
 @router.post("/set", response_model=List[LotteryPreferenceRead])
 async def set_my_preferences(data: LotteryPreferenceSet, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)):

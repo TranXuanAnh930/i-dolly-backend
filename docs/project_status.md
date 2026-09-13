@@ -53,6 +53,33 @@ the product-list Redis cache (`app/cache/cache_service.py` now stringifies `p.id
 cache the first time it ran). `scripts/seed.py` needed no changes — it already wires foreign keys via
 ORM-returned `.id`/name lookups, never a literal integer.
 
+**This section's head pointer above was stale** — nine more migrations had landed after
+`133d9b4f9d17` without this doc being updated (`b75496fd203e` through `f8a3c1d9e4b2`: nullable
+`payment.order_id`, `is_active` on groups/idols, nullable `lottery_campaigns.draw_at`, and
+`direct_sale_campaigns`), none of that history recorded here at the time. Corrected here per
+`CLAUDE.md` §9; a fuller rewrite of this section's narrative for everything between
+`133d9b4f9d17` and `f8a3c1d9e4b2` is still owed, just not attempted in this pass.
+
+**Current chain head: `a3f7c9e2b6d4`** (`add_password_reset_to_notification_type`) — 52 migrations
+total, one linear chain, no branches. **Confirmed applied for real this session**, not just
+`py_compile`'d: a fresh local Docker Compose Postgres (empty volume — this ran the *entire* chain
+from `f2a3135a19da` forward, not just the newest two) via `docker compose run --rm app python -m
+alembic upgrade head` — all 52 migrations ran with no errors, `alembic current` reports
+`a3f7c9e2b6d4 (head)`, and a direct `psql \d notifications` / `pg_enum` query confirmed the table
+shape and all 8 `notification_type_enum` values (including `password_reset`) match the models
+exactly. Went further than a schema check: brought the `app` service up against this same
+database and drove the actual notification feature over real HTTP — registered a fan, requested a
+password reset, completed it (`POST /profile/set-password`), and confirmed the resulting
+`password_reset` notification was real: `GET /notifications/unread-count` → `1`,
+`GET /notifications/mine` → the row with the right shape (`type`, all four entity FKs `null`,
+`is_read: false`), `POST /notifications/{id}/read` → `is_read: true`, then `unread-count` → `0`.
+Also confirmed the new per-route rate limiting actually fires under load: 32 rapid
+`GET /notifications/unread-count` calls with one token returned `200` for the first ~29 and `429`
+for the rest, matching its `rate_limit(30, 60, user_key)` budget. `docker compose exec app python
+-m pytest tests` (unit + integration, against this same live Postgres/Redis) also run — see §3 for
+the result. This is meaningfully more verification than this repo has had for most prior
+migrations (§3's standing gap was "no live DB reachable most sessions"; this session had one).
+
 ## 2. What's built
 
 - **Identity/RBAC**: `users.role`/`company_id`, `management_companies`, `require_admin`/
@@ -89,22 +116,51 @@ ORM-returned `.id`/name lookups, never a literal integer.
   `get_storage().save()` pipeline from `tests/fixtures/{idols,products}/` — procedural
   placeholder art (Pillow gradients/patterns/monograms, no AI image generation was available in
   this environment), not real character art; see `tests/fixtures/README.md`.
-- **Notifications** (`app/db/models/notification.py`, migration `df79d71c6a2c` — **not yet
-  applied**, see §1): a `notifications` table (`database-design.md` §3.19) covering 7 event types
-  (order/ticket/lottery confirmations, lottery result, payment reminder/confirmation, event
-  reminder), one nullable FK per referenced entity kind. Fan-facing read API only:
-  `GET /notifications/mine` (`?unread_only=true` filter), `POST /notifications/{id}/read`,
-  `POST /notifications/read-all` — self-scoped to `current_user.id`
-  (`app/services/notification_service.py`, `app/router/notification.py`). **Nothing writes a
-  notification row yet** — no purchase/lottery/payment flow creates one, and the Celery skeleton
-  (below) has no task that would email one either; this is read/mark-read plumbing only, waiting
-  on a producer.
+- **Notifications** (`app/db/models/notification.py`, migrations `df79d71c6a2c` + `a3f7c9e2b6d4` —
+  **applied and live-verified this session**, see §1): a `notifications` table (`database-design.md` §3.19) covering 8
+  event types (order/ticket/lottery confirmations, lottery result, payment reminder/confirmation,
+  event reminder, password reset), one nullable FK per referenced entity kind. **Now has
+  producers**, all inline — no cron/Celery Beat involved anywhere, deliberately (see below):
+  `notification_service.create_notification()` is called from inside `order_service.checkout()`
+  (`order_confirmation`, success only), `ticket_service.checkout_ticket()` (`ticket_confirmation`,
+  success only), `user_service.verify_rtoken()` (`password_reset`), and `lottery_draw_service.
+  draw_lottery()` — `lottery_result` for every winner *and* loser, plus `lottery_payment_reminder`
+  for winners only, fired once at draw time alongside `lottery_result` (**not** a scheduled
+  reminder closer to the payment deadline — that would need a periodic job, out of scope for this
+  phase, see §5). Every write lands in the same transaction/commit as the event it describes. Fan-
+  facing read/poll API: `GET /notifications/mine` (`?unread_only=true`), `GET /notifications/
+  unread-count` (cheap, meant to be polled — no WebSocket/SSE layer exists, see `docs/api-spec.md`
+  §7), `POST /notifications/{id}/read`, `POST /notifications/read-all` — self-scoped to
+  `current_user.id`, all four now rate-limited (`app/router/notification.py`, previously had
+  none). Not yet built: `lottery_registered` (on lottery entry application) and `lottery_payment_
+  confirmation`/`event_reminder` have no producer yet — flagged, not implemented speculatively.
+  **Also not built, and out of scope for now by explicit decision**: actually emailing any of
+  these (see the dedicated note below).
 - **Celery skeleton** (`app/celery_app.py`, `app/tasks/`): broker + result backend on the
   existing Redis instance (`CELERY_BROKER_DB`, separate from the cache/rate-limiter's `REDIS_DB`),
   a `worker` service in `docker-compose.yaml`, and a `/start-worker.sh` in the `Dockerfile` for a
-  Render Background Worker (`docs/deployment.md` §5). One placeholder task
-  (`app/tasks/example.py`'s `ping`) proves the wiring — **no real task exists yet**; which
-  background job(s) actually need it (the lottery draw, async email, ETL) is still open, see §5.
+  Render Background Worker (`docs/deployment.md` §5). One real task now exists: `app.tasks.lottery.
+  draw_lottery` (manager-triggered, §8) — the original placeholder (`app/tasks/example.py`'s
+  `ping`) is still there but no longer the only wiring. **No Celery Beat / scheduler is used or
+  planned for this phase** — every notification producer above fires inline inside whatever
+  request/task caused it, not on a schedule; a periodic job (payment-deadline reminders, an ETL
+  sweep) stays open, see §5.
+
+**No email dispatch exists for any notification, and this is a deliberate scope boundary, not an
+oversight**: `notifications.status`/`sent_at` sit at their `pending`/`null` defaults forever right
+now, because nothing reads a `pending` row and calls SendGrid. The in-app feed
+(`GET /notifications/mine`, `unread-count`, mark-read) is fully real — a fan who's logged in can
+see every notification listed above the moment it's created — but nothing pushes it to their inbox
+if they aren't. Wiring that up for real would mean either (a) a periodic sweep task that queries
+`status='pending'` and calls `email_sender.send_email` per row, which is exactly the kind of
+cron/Beat job this phase has decided not to build, or (b) sending inline at creation time the way
+`user_service.reset_password_process` already does via `BackgroundTasks` — but that only works
+inside an HTTP request with a `BackgroundTasks` object in scope, which `draw_lottery` (a Celery
+task, not a request handler) doesn't have, so it isn't a drop-in fit for the producer that creates
+the most rows (every winner and loser, per concert draw). Either path is a real design decision —
+which delivery mechanism, retry/failure handling if SendGrid itself fails, whether a failed send
+should block the notification from being marked read — not a small addition, so it's named here as
+an open item rather than picked speculatively.
 - **12 DB triggers / 8 trigger functions** enforcing the money/fairness invariants
   `database-design.md` §4 lists deliberately (fan-only purchasing, the anti-resale cap, concert
   ticket-capacity, the lottery entry cap, the preference-required check, the lottery
@@ -146,8 +202,63 @@ to a real target table/column. This project's own local Docker Compose stack
 (`postgres`/`redis`/`app`/`worker`) was also found already running and reachable from this
 environment — its Postgres is confirmed still at the documented `10f9dfa05636` head — but running
 `alembic upgrade head` against it was explicitly not done (user chose to hold off applying the
-migration), so **the notifications migration itself is still unverified against a real database**,
-same standing gap as everything else in this section.
+migration), so **the notifications migration itself was still unverified against a real database
+as of that session** — since resolved, see below.
+
+**This session went further than any before it, at the user's explicit request**: no docker-compose
+stack was running, so one was brought up from scratch (fresh `postgres_data` volume — an empty
+database, not the previously-documented `10f9dfa05636` state) and `docker compose run --rm app
+python -m alembic upgrade head` was run for real. Result: all 52 migrations in the chain applied
+cleanly end to end, `alembic current` reports `a3f7c9e2b6d4 (head)`, and a direct `psql` query
+against `pg_enum`/`\d notifications` confirmed the live schema matches the models exactly (8
+`notification_type_enum` values, all 5 FKs, all indexes). Then the `app` service itself was started
+against this same database and the notification feature was driven over real HTTP, not just
+queried: registered a fan (`POST /account/register`), requested and completed a real password
+reset (`POST /profile/forgot-password` → `DEBUG`-mode token in the container logs →
+`POST /profile/set-password`), and confirmed the resulting `password_reset` notification through
+the actual endpoints — `GET /notifications/unread-count` (`0` → `1`), `GET /notifications/mine`
+(the row, correct shape), `POST /notifications/{id}/read` (`is_read: true`), `unread-count` back to
+`0`. Also confirmed the new rate limiting under real load: 32 rapid calls to `/notifications/
+unread-count` with one token returned `200` for the first ~29 and `429` for the rest, matching its
+`rate_limit(30, 60, user_key)` budget exactly. Finally, `docker compose exec app python -m pytest
+tests` (unit + integration together, the fuller suite, against this same live Postgres/Redis) —
+**339/339 passed**, no regressions. This closes the standing gap for these two migrations
+specifically; the rest of the schema (everything before `df79d71c6a2c`) hasn't had this same
+live-HTTP treatment, only the `configure_mappers()`/`pytest tests/unit`-against-mocks level from
+earlier rounds — the general limitation described above still applies to those.
+
+**A real bug this same live-DB access surfaced: `pytest tests` was running integration tests
+directly against the shared dev database** — the one the running `app`/`worker` containers (and
+anyone's manual frontend testing, or `scripts/seed.py`) also use. `tests/integration/test_main.py`
+has always asserted several endpoints return `404`/empty on a table with zero rows
+(`test_list_companies_empty`, `test_list_groups_empty`, `test_get_manager_idols_page_never_404s`,
+9 others) — true the first time this test suite ever ran, against a genuinely empty database, and
+silently false ever since, the moment any real data (a seed run, a manually-created row) landed in
+those tables. Confirmed directly: `pytest tests` on this session's DB — which by then had a full
+`scripts/seed.py` catalog (`Sakura Prism`, `Yozora Requiem`, 3 more groups, seeded idols) —
+consistently produced exactly these 12 failures, none touching tickets/lottery/notifications, all
+failing because real rows existed where the test expected none.
+
+**Fixed at the root — integration tests no longer touch the dev database at all.**
+`tests/conftest.py` now redirects `DATABASE_URL` onto a dedicated `<name>_test` database as the
+very first thing in the whole test session (before anything imports `app.config.settings`, which
+caches whatever `DATABASE_URL` was current at *its* first import for the rest of the process — a
+subdirectory conftest would be too late). `tests/integration/conftest.py` then drops, recreates,
+and fully migrates that database (`alembic upgrade head`, all 52 migrations) once per test session,
+before any integration test module is even imported. Net effect: `pytest tests` is now safe to run
+at any time, against any dev-DB state, with a fully deterministic result — it can never see (or
+touch) real seeded/manually-created data again, and the 12 previously-flaky failures now pass
+reliably (confirmed: `343 passed` — 331 + the 12 — with the same command that used to show
+331 passed / 12 failed on a non-empty dev DB). `pytest tests/unit` needed no changes and still
+requires no live Postgres at all — the redirect is a pure string rewrite, and the actual
+DROP/CREATE/migrate only runs from `tests/integration/conftest.py`, which is never loaded unless
+an integration test is actually being collected. One real bug caught building this: `str(url)` on
+a SQLAlchemy `URL` object hides the password by default (`hide_password=True`) — the first version
+of this fix silently wrote `postgresql://user:***@host/db` into `DATABASE_URL`, which failed
+Postgres auth outright rather than connecting to the wrong place; fixed by using
+`url.render_as_string(hide_password=False)` everywhere a real connection string is needed. Also
+deduplicated `reset_rate_limits` (previously copy-pasted identically in `test_main.py` and
+`test_permissions.py`) into one shared autouse fixture in the new `tests/integration/conftest.py`.
 
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
@@ -429,6 +540,45 @@ newly introduced.
     since these bodies carry live auth tokens. Verified with `py_compile` and `import main` +
     `configure_mappers()`; not exercised against a live SendGrid call either way.
 
+19. ~~**A fan could hold both a direct-sale ticket and an active lottery claim on the same
+    concert**~~ — **FIXED**. Two gaps, both service-layer (neither is a money/fairness invariant in
+    §4.1's trigger-worthy sense): `lottery_entry_service.apply_to_lottery` didn't check whether the
+    fan already held a live ticket for the concert (`Ticket.status` in `reserved`/`pending_payment`/
+    `paid`/`used`) before letting them apply to another tier's lottery on top of it — now returns a
+    new `"already_has_ticket"` sentinel (400) if so, checked right after resolving the campaign's
+    `ticket_type`, before the preference/cap checks. `ticket_service.checkout_ticket` didn't check
+    the fan's lottery standing for the concert at all before letting them buy `direct` — now raises
+    a new `LotteryEntryUnresolvedError` (`app/exception/checkout.py`, a plain `CartItemError`
+    subclass, so no new router `except` clause was needed — it falls through to the existing generic
+    400 handler) if any of their `lottery_entries` for that concert are still `pending` or `won`;
+    only `lost` (or no entry) clears it. The `won`-without-a-live-ticket case is the one
+    `trg_tickets_one_per_concert`/`_existing_live_ticket` alone can't catch: a fan who won a tier but
+    let the resulting ticket's `payment_deadline_at` lapse (`status` → `expired`) no longer holds a
+    live ticket, but their entry is still `won` — this closes that gap specifically. Full reasoning:
+    `database-design.md`'s `ticket_types` section (§3.8-adjacent). Verified for real against the
+    live local Docker Postgres: 4 new integration tests in `tests/integration/test_permissions.py`
+    (already-has-ticket blocks lottery apply; pending/won lottery entries block direct checkout;
+    lost does not) over real HTTP against real fixture rows, not mocks — all 4 pass, and the full
+    `test_permissions.py` file (42 tests) passes with no regressions. A full `pytest tests` run in
+    the same session also showed 331 passed / 12 failed — **the 12 failures were pre-existing and
+    unrelated to this fix** (none touch tickets, lottery entries, or notifications; root cause was
+    the test suite running against the shared, non-empty dev database — since fixed for real, see
+    §3's dedicated writeup and item 20 below).
+
+20. ~~**`pytest tests` ran integration tests directly against the shared dev database**~~ —
+    **FIXED**. Full writeup in §3. `tests/conftest.py` redirects `DATABASE_URL` onto a dedicated
+    `<name>_test` database (a pure string rewrite, so `pytest tests/unit` still needs no live
+    Postgres at all); `tests/integration/conftest.py` drops, recreates, and fully migrates that
+    database once per session before any integration test can touch it. This was the actual cause
+    of the `test_main.py` `*_empty`/`*_never_404s` failures documented as "pre-existing" in items
+    18-19 above and in earlier `pytest tests` runs this project has logged — not 12 separate app
+    bugs, one shared root cause, now closed. Also deduplicated the identical `reset_rate_limits`
+    fixture out of `test_main.py`/`test_permissions.py` into one shared autouse fixture in the new
+    `tests/integration/conftest.py`. Verified: `343 passed` (`pytest tests`, unit + integration
+    together) against a database seeded with a full `scripts/seed.py` catalog beforehand,
+    confirming this can never again see or touch real dev/seed data — plus a direct check that the
+    real dev database's row counts were unchanged after the test run.
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't
@@ -600,6 +750,23 @@ accountable human action instead of an unattended scheduled job for something th
 inventory. `draw_at` stays on the schema as the fan-facing ETA; it does not have to be the instant
 the draw actually runs (see the open question below).
 
+**Refined: the trigger endpoint enqueues a Celery task rather than running the algorithm inline
+in the request.** The draw touches every campaign/entry/preference/ticket_type row for a concert —
+not something that belongs in an HTTP request/response cycle. `app/celery_app.py`'s `include` list
+only registers `app.tasks.example` today; an untracked `app/tasks/lottery.py` placeholder already
+exists (`draw_lottery`, mirrors `example.py`'s `ping` shape) but **isn't wired into `include` yet**,
+so the worker wouldn't discover it as-is — first concrete gap to close. The router's job stays
+synchronous and small: validate the concert/RBAC, confirm at least one campaign is actually `open`,
+then `draw_concert_lottery.delay(concert_id)` and return `202` with a "queued" message — no task-id
+polling endpoint needed, since a manager can just re-`GET` the campaign(s) and watch `status` flip
+`open` → `drawn`, reusing an endpoint that already exists rather than building new status-tracking
+infra. The task itself opens its own DB session directly via `app.db.session.session()` (not
+FastAPI's `get_db` generator, which only exists inside a request) and calls straight into
+`lottery_draw_service`'s algorithm below. The row-level `FOR UPDATE` + `status='open'` guard already
+designed in makes this safe even if two managers' clicks enqueue two messages for the same concert —
+Postgres serializes on the row lock regardless of which worker process picks each message up, so
+nothing extra is needed at the Celery layer for that case.
+
 **Trigger granularity: per concert, not per campaign.** `lottery_campaigns` is one row per
 `ticket_type` (one tier), but `database-design.md` §5.2's rank cascade requires every tier's
 campaign for one concert to be drawn together — a fan's "at most one ticket per concert" guarantee
@@ -643,10 +810,18 @@ there's no real cost to making a fairness-critical selection unpredictable rathe
 uniform. Sampling runs in Python (not SQL) since the cross-rank/cross-tier exclusion bookkeeping is
 already inherently procedural, not expressible as one query.
 
-**Explicitly deferred, not part of this job's own transaction**: winner-notification dispatch
-(payment link + deadline) — the Celery skeleton exists but has no real task yet (§2); coupling an
-email provider's latency to the draw's DB commit would risk the transaction on an unrelated external
-call. A reproducible/auditable draw (logging a seed + candidate snapshot per rank so a disputed
+**Update — partially built, not fully deferred any more**: the *in-app* notification rows (§2's
+Notifications bullet) now ARE written inside this job's own transaction — `draw_lottery` calls
+`create_notification()` for `lottery_result` (every winner and loser) and, for winners only,
+`lottery_payment_reminder` (fired once, at draw time, alongside `lottery_result` — not a scheduled
+nag closer to the deadline) — all before its one `commit_or_raise()`, since these are cheap
+same-database inserts, not external calls, so coupling them to the draw's commit costs nothing and
+buys atomicity (no "drew winners but the notification write failed separately" gap). What's still
+genuinely deferred, and out of scope for this phase specifically: a *second*, deadline-proximity
+reminder (that would need a periodic scan — a cron/Celery Beat job, deliberately not built this
+round) and actually *emailing* any notification at all (see §2's dedicated note — `notifications.
+status`/`sent_at` stay at their `pending`/`null` defaults forever right now). A reproducible/
+auditable draw (logging a seed + candidate snapshot per rank so a disputed
 result could be replayed) was considered and intentionally **not** planned in — nothing in this
 project's scope models a dispute process, and CLAUDE.md §7 flags exactly this kind of speculative
 scope addition to avoid; worth naming if asked, not worth building.

@@ -1,21 +1,26 @@
 import uuid
-from app import db
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session, selectinload
 from app.db.models.payment import Payment
 from app.schema.ticket import TicketCreate, TicketUpdate, TicketCheckoutCreate
 from app.db.models.ticket import Ticket
 from app.db.models.ticket_type import TicketType
+from app.db.models.direct_sale_campaign import DirectSaleCampaign
 from app.db.models.lottery_entry import LotteryEntry
+from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.user import Users
 from app.exception.checkout import (
     TicketTypeNotFoundError,
     WrongSaleMethodError,
     InsufficientTicketStockError,
+    NotOnSaleError,
     PaymentAmountMismatch,
     UnsupportedGatewayError,
+    LotteryEntryUnresolvedError,
 )
 from app.exception.db_triggers import DuplicateIdempotencyKeyError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError, DuplicateConcertTicketError
 from app.services.payment_service import create_ticket_payment
+from app.services.notification_service import create_notification
 from app.utils.tax import with_tax
 
 # ADMIN-ONLY STOPGAP for create/update/delete — see TicketCreate's docstring.
@@ -23,6 +28,7 @@ from app.utils.tax import with_tax
 # trg_tickets_one_per_concert (schema.sql) at the service layer.
 
 _LIVE_STATUSES = ("reserved", "pending_payment", "paid", "used")
+_UNRESOLVED_LOTTERY_STATUSES = ("pending", "won")
 
 def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
     return (
@@ -32,6 +38,25 @@ def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID
             Ticket.user_id == user_id,
             TicketType.concert_id == concert_id,
             Ticket.status.in_(_LIVE_STATUSES),
+        )
+        .first()
+    )
+
+def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
+    # A fan mid-lottery for this concert (still "pending", or "won" but
+    # hasn't paid/expired yet — a live ticket from that win is already
+    # caught by _existing_live_ticket above, but a *won* entry whose ticket
+    # since expired isn't, so this checks the entry itself, not just the
+    # ticket) shouldn't also be able to buy a direct-sale ticket for the
+    # same concert — only "lost" (or no entry at all) clears this gate.
+    return (
+        db.query(LotteryEntry)
+        .join(LotteryCampaign, LotteryEntry.campaign_id == LotteryCampaign.id)
+        .join(TicketType, LotteryCampaign.ticket_type_id == TicketType.id)
+        .filter(
+            LotteryEntry.user_id == user_id,
+            TicketType.concert_id == concert_id,
+            LotteryEntry.status.in_(_UNRESOLVED_LOTTERY_STATUSES),
         )
         .first()
     )
@@ -58,6 +83,21 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
         raise TicketTypeNotFoundError("Ticket type not found")
     if ticket_type.sale_method != "direct":
         raise WrongSaleMethodError("This ticket type is not sold directly — apply through the lottery instead")
+
+    now = datetime.now(timezone.utc)
+    on_sale = (
+        db.query(DirectSaleCampaign)
+        .filter(
+            DirectSaleCampaign.ticket_type_id == ticket_type.id,
+            DirectSaleCampaign.status == "open",
+            DirectSaleCampaign.sale_start_at <= now,
+            DirectSaleCampaign.sale_end_at >= now,
+        )
+        .first()
+    )
+    if not on_sale:
+        raise NotOnSaleError("This ticket type is not currently on sale")
+
     if ticket_type.sold_quantity >= ticket_type.total_quantity:
         raise InsufficientTicketStockError("No tickets left for this tier")
 
@@ -65,6 +105,11 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
         # Primary check for trg_tickets_one_per_concert — same reasoning as
         # add_ticket's own pre-check below.
         raise DuplicateConcertTicketError("You already hold a live ticket for this concert")
+
+    if _unresolved_lottery_entry(db, user_id, ticket_type.concert_id):
+        raise LotteryEntryUnresolvedError(
+            "You have a pending or won lottery application for this concert — resolve it before buying a direct-sale ticket"
+        )
 
     total_amount = with_tax(float(ticket_type.price))
     if data.amount != total_amount:
@@ -80,6 +125,7 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
 
     if ticket.status == "paid":
         ticket_type.sold_quantity += 1
+        create_notification(db, user_id, "ticket_confirmation", ticket_id=ticket.id)
 
     commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert / chk_ticket_types_capacity backstop
     db.refresh(ticket)
