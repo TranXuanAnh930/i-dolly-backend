@@ -33,3 +33,6 @@ class InsufficientTicketStockError(CartItemError):
 
 class NotOnSaleError(CartItemError):
     pass
+
+class LotteryEntryUnresolvedError(CartItemError):
+    pass

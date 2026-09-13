@@ -459,8 +459,11 @@ Enter a lottery campaign. Enforced by both a service-layer check and a DB trigge
 normal HTTP error, not a 500.
 - Request (`LotteryEntryApply`): `campaign_id` (uuid)
 - Response (`LotteryEntryRead`): `id`, `campaign_id`, `user_id`, `status`, `created_at`, `drawn_at`
+- Errors: `400` also covers a fan who already holds a live ticket for this concert (bought direct,
+  or won an earlier tier) — `"You already hold a ticket for this concert"`, not just the
+  cap/no-preference cases below
 - UI: "Apply" button on the lottery application page — disable/hide once the fan has already
-  entered, or once `entry_end_at` has passed
+  entered, already holds a ticket for the concert, or once `entry_end_at` has passed
 
 ### `GET /lottery_entries/mine` 🔒 fan
 - Response: `List[LotteryEntryRead]`
@@ -488,6 +491,23 @@ before applying to some lotteries (see the trigger note above).
 Clears the fan's ranking for that concert.
 - Response: `{"msg": "Preferences cleared successfully"}`
 - UI: "clear my ranking" control
+
+### `POST /tickets/checkout` 🔒 fan
+Buy a `sale_method="direct"` ticket tier directly — no lottery, no draw. This section is generally
+behind the shipped code (see `project_status.md`) — noted here only for the checks this round
+added; the full request/response contract isn't re-derived from the schema below.
+- Request (`TicketCheckoutCreate`): `ticket_type_id` (uuid, must be `sale_method="direct"`),
+  `amount`, `gateway`, `simulate_succ`, `idempotency_key` — same shape as `POST /order/checkout`'s
+  payment fields
+- Response (`TicketRead`)
+- Errors: `400` covers, among other things, a fan with an unresolved lottery application for this
+  concert — any of their `lottery_entries` still `pending` or `won` for a *different* tier under
+  the same concert blocks a direct purchase (`"You have a pending or won lottery application for
+  this concert — resolve it before buying a direct-sale ticket"`); only a `lost` entry (or none at
+  all) clears this. Also `400` for "already holds a live ticket for this concert"
+  (`trg_tickets_one_per_concert`), not on sale, sold out, or amount mismatch.
+- UI: direct-purchase ticket page — surface the lottery-conflict error distinctly, since "you're
+  still in the running for this concert's lottery" is a different message than "sold out"
 
 ### `POST /tickets/add` 🔒 admin
 The only way a ticket gets created today — manual issuance, since the lottery draw job doesn't

@@ -3,7 +3,7 @@ from fastapi import HTTPException, Depends, APIRouter
 from typing import List
 from sqlalchemy.orm import Session
 from app.cache.rate_limit import ip_key, rate_limit
-from app.deps.auth import require_manager_or_admin
+from app.deps.auth import require_manager_or_admin, get_current_user_optional
 from app.deps.db import get_db
 from app.db.models.user import Users
 from app.schema.concert import (
@@ -61,8 +61,8 @@ async def get_manager_events_page_data(db: Session = Depends(get_db)):
     return get_manager_events_page(db)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
-async def get_concert_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
-    result = get_concert_detail(db, id)
+async def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), db: Session = Depends(get_db)):
+    result = get_concert_detail(db, id, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="Concert not found")
     return result

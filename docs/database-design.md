@@ -397,6 +397,27 @@ a concert must not exceed `concerts.capacity` (§3.8). Enforced with a trigger
 (`fn_enforce_concert_ticket_capacity`, `schema.sql` §3) since a plain `CHECK` can't aggregate
 across sibling rows.
 
+**A fan can't hold both paths open on the same concert at once — service-layer checks, not
+triggers**, added alongside `ticket_service.checkout_ticket()`'s existing `trg_tickets_one_per_
+concert` backstop:
+- Applying to a lottery tier (`lottery_entry_service.apply_to_lottery`) now also rejects a fan who
+  already holds a *live* ticket for that concert (`Ticket.status` in `reserved`/`pending_payment`/
+  `paid`/`used`) — bought via `direct` sale, or won from an earlier tier's draw. Buying that ticket
+  already means they have a slot; applying for another tier's lottery on top of it has no upside
+  and would risk two tickets for one concert if they later won.
+- Buying a `direct` tier (`ticket_service.checkout_ticket`) now also rejects a fan with an
+  unresolved lottery application for that concert — any `lottery_entries` row of theirs still
+  `pending` or `won` for a tier under the same concert. Only `lost` (or no entry at all) clears
+  this gate. This catches a case `trg_tickets_one_per_concert` alone can't: a fan who **won** a
+  lottery tier but let the resulting ticket's `payment_deadline_at` lapse (`status` → `expired`) no
+  longer holds a *live* ticket, but their `lottery_entries.status` is still `won` — without this
+  check they could then buy the same concert direct, which the design doesn't intend to allow just
+  because they missed their payment window on the win.
+
+Both checks are ordinary business-rule validation, not money/fairness invariants in the sense §4.1
+uses for trigger-worthiness (no trigger backs either one) — same reasoning already applied to the
+lottery-preference/category-detail-table style checks elsewhere in this doc.
+
 ### 3.11 `lottery_preferences` (new)
 
 `id`, `concert_id` (FK), `user_id` (FK), `ticket_type_id` (FK — the tier being ranked), `rank`
@@ -879,9 +900,10 @@ sequenceDiagram
     API->>DB: Upsert lottery_preferences rows
 
     Fan->>API: Apply to a specific tier's lottery (free — no cart, no payment, no purchase of any kind)
+    API->>DB: Reject if the fan already holds a live ticket for this concert (direct sale, or an earlier lottery win)
     API->>DB: Check for a matching lottery_preferences row for this tier; reject the application if none exists
     API->>DB: Insert lottery_entries row (status=pending) — UNIQUE(campaign_id, user_id) rejects a duplicate application outright
-    Note over API,DB: fn_require_lottery_preference is the DB backstop for the rank check; the UNIQUE constraint is the DB backstop for "only one entry"
+    Note over API,DB: fn_require_lottery_preference is the DB backstop for the rank check; the UNIQUE constraint is the DB backstop for "only one entry"; the live-ticket check is service-layer only (below)
 
     Note over Job: At draw time — campaigns for ONE concert are drawn together, not independently, so the rank cascade below works
     loop rank = 1, 2, 3, ... (highest preference first, across every tier for this concert)

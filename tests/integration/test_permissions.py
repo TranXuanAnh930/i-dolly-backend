@@ -27,6 +27,8 @@ from app.db.models.concert import Concert
 from app.db.models.ticket_type import TicketType
 from app.db.models.direct_sale_campaign import DirectSaleCampaign
 from app.db.models.lottery_campaign import LotteryCampaign
+from app.db.models.lottery_preference import LotteryPreference
+from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.ticket import Ticket
 from app.db.models.category import Category
 from app.db.models.products import Product
@@ -138,6 +140,16 @@ class Factory:
         )
         campaign.status = status
         return self._save(campaign)
+
+    def lottery_preference(self, concert_id, user_id, ticket_type_id, rank=1):
+        return self._save(LotteryPreference(
+            concert_id=concert_id, user_id=user_id, ticket_type_id=ticket_type_id, rank=rank,
+        ))
+
+    def lottery_entry(self, campaign_id, user_id, status="pending"):
+        entry = LotteryEntry(campaign_id=campaign_id, user_id=user_id)
+        entry.status = status
+        return self._save(entry)
 
 
 @pytest.fixture
@@ -761,3 +773,95 @@ def test_checkout_ticket_rejected_outside_campaign_window(factory):
     )
     assert response.status_code == 400
     assert "not currently on sale" in response.json()["detail"].lower()
+
+
+# ─────────────────────────────────────────────────────────────
+# Cross-checks between the direct-sale and lottery paths — a fan shouldn't
+# be able to hold a claim on the same concert through both at once.
+# ─────────────────────────────────────────────────────────────
+
+def test_apply_to_lottery_rejected_when_fan_already_has_ticket(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    direct_tt = factory.ticket_type(concert.id, tier="regular", sale_method="direct", price=50.0, total_quantity=10)
+    factory.direct_sale_campaign(direct_tt.id)
+    checkout_resp = client.post(
+        "/tickets/checkout", json=_ticket_checkout_payload(direct_tt), headers=factory.token(fan),
+    )
+    assert checkout_resp.status_code == 200
+    factory.created.append(factory.db.get(Ticket, uuid.UUID(checkout_resp.json()["id"])))
+
+    lottery_tt = factory.ticket_type(concert.id, tier="vip", sale_method="lottery", price=100.0, total_quantity=10)
+    campaign = factory.lottery_campaign(lottery_tt.id)
+    factory.lottery_preference(concert.id, fan.id, lottery_tt.id, rank=1)
+
+    response = client.post(
+        "/lottery_entries/apply", json={"campaign_id": str(campaign.id)}, headers=factory.token(fan),
+    )
+    assert response.status_code == 400
+    assert "already hold a ticket" in response.json()["detail"].lower()
+
+
+def test_checkout_ticket_rejected_with_pending_lottery_entry(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    lottery_tt = factory.ticket_type(concert.id, tier="vip", sale_method="lottery", price=100.0, total_quantity=10)
+    campaign = factory.lottery_campaign(lottery_tt.id)
+    factory.lottery_preference(concert.id, fan.id, lottery_tt.id, rank=1)
+    factory.lottery_entry(campaign.id, fan.id, status="pending")
+
+    direct_tt = factory.ticket_type(concert.id, tier="regular", sale_method="direct", price=50.0, total_quantity=10)
+    factory.direct_sale_campaign(direct_tt.id)
+
+    response = client.post(
+        "/tickets/checkout", json=_ticket_checkout_payload(direct_tt), headers=factory.token(fan),
+    )
+    assert response.status_code == 400
+    assert "pending or won lottery application" in response.json()["detail"].lower()
+
+
+def test_checkout_ticket_rejected_with_won_lottery_entry(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    lottery_tt = factory.ticket_type(concert.id, tier="vip", sale_method="lottery", price=100.0, total_quantity=10)
+    campaign = factory.lottery_campaign(lottery_tt.id)
+    factory.lottery_preference(concert.id, fan.id, lottery_tt.id, rank=1)
+    # "won" without a live ticket behind it (e.g. the won ticket already
+    # expired unpaid) — _existing_live_ticket alone wouldn't catch this,
+    # which is exactly why the lottery-entry check is a separate query.
+    factory.lottery_entry(campaign.id, fan.id, status="won")
+
+    direct_tt = factory.ticket_type(concert.id, tier="regular", sale_method="direct", price=50.0, total_quantity=10)
+    factory.direct_sale_campaign(direct_tt.id)
+
+    response = client.post(
+        "/tickets/checkout", json=_ticket_checkout_payload(direct_tt), headers=factory.token(fan),
+    )
+    assert response.status_code == 400
+    assert "pending or won lottery application" in response.json()["detail"].lower()
+
+
+def test_checkout_ticket_allowed_with_lost_lottery_entry(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    lottery_tt = factory.ticket_type(concert.id, tier="vip", sale_method="lottery", price=100.0, total_quantity=10)
+    campaign = factory.lottery_campaign(lottery_tt.id)
+    factory.lottery_preference(concert.id, fan.id, lottery_tt.id, rank=1)
+    factory.lottery_entry(campaign.id, fan.id, status="lost")
+
+    direct_tt = factory.ticket_type(concert.id, tier="regular", sale_method="direct", price=50.0, total_quantity=10)
+    factory.direct_sale_campaign(direct_tt.id)
+
+    response = client.post(
+        "/tickets/checkout", json=_ticket_checkout_payload(direct_tt), headers=factory.token(fan),
+    )
+    assert response.status_code == 200
+    factory.created.append(factory.db.get(Ticket, uuid.UUID(response.json()["id"])))

@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
+from app.schema.ticket_type import TicketTypeRead
 
 class LotteryCampaignBase(BaseModel):
     entry_start_at: datetime
@@ -28,5 +29,10 @@ class LotteryCampaignRead(LotteryCampaignBase):
     # never client-supplied. NULL until this campaign is actually drawn.
     draw_at: datetime | None
     created_at: datetime
+    # Embedded (via the ORM relationship of the same name) so a caller that
+    # already has a campaign doesn't need a second round-trip just to learn
+    # its tier/price — see LotteryEntryRead's own comment for where this
+    # matters most.
+    ticket_type: TicketTypeRead
 
     model_config = {"from_attributes": True}

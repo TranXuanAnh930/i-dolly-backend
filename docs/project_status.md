@@ -507,6 +507,36 @@ newly introduced.
     since these bodies carry live auth tokens. Verified with `py_compile` and `import main` +
     `configure_mappers()`; not exercised against a live SendGrid call either way.
 
+19. ~~**A fan could hold both a direct-sale ticket and an active lottery claim on the same
+    concert**~~ — **FIXED**. Two gaps, both service-layer (neither is a money/fairness invariant in
+    §4.1's trigger-worthy sense): `lottery_entry_service.apply_to_lottery` didn't check whether the
+    fan already held a live ticket for the concert (`Ticket.status` in `reserved`/`pending_payment`/
+    `paid`/`used`) before letting them apply to another tier's lottery on top of it — now returns a
+    new `"already_has_ticket"` sentinel (400) if so, checked right after resolving the campaign's
+    `ticket_type`, before the preference/cap checks. `ticket_service.checkout_ticket` didn't check
+    the fan's lottery standing for the concert at all before letting them buy `direct` — now raises
+    a new `LotteryEntryUnresolvedError` (`app/exception/checkout.py`, a plain `CartItemError`
+    subclass, so no new router `except` clause was needed — it falls through to the existing generic
+    400 handler) if any of their `lottery_entries` for that concert are still `pending` or `won`;
+    only `lost` (or no entry) clears it. The `won`-without-a-live-ticket case is the one
+    `trg_tickets_one_per_concert`/`_existing_live_ticket` alone can't catch: a fan who won a tier but
+    let the resulting ticket's `payment_deadline_at` lapse (`status` → `expired`) no longer holds a
+    live ticket, but their entry is still `won` — this closes that gap specifically. Full reasoning:
+    `database-design.md`'s `ticket_types` section (§3.8-adjacent). Verified for real against the
+    live local Docker Postgres: 4 new integration tests in `tests/integration/test_permissions.py`
+    (already-has-ticket blocks lottery apply; pending/won lottery entries block direct checkout;
+    lost does not) over real HTTP against real fixture rows, not mocks — all 4 pass, and the full
+    `test_permissions.py` file (42 tests) passes with no regressions. A full `pytest tests` run
+    (331 passed, 12 failed) was also done in the same session — **the 12 failures are pre-existing
+    and unrelated to this fix**: `test_main.py`'s `*_empty`/`*_never_404s` tests assume the shared
+    dev database has zero rows in the companies/groups/idols/album/merch domains, which stopped
+    being true once this same session's earlier live-testing (registering fans, driving checkout)
+    left real rows behind — none of the 12 touch tickets, lottery entries, or notifications, so
+    they can't be a regression from this specific change; the actual cause is those tests needing a
+    genuinely empty database rather than tolerating a shared, already-used one. Not fixed here —
+    it's a pre-existing test-isolation gap (this suite has never guaranteed a clean DB between runs,
+    §3), out of scope for a lottery/ticket business-rule fix.
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't

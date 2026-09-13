@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.schema.lottery_campaign import LotteryCampaignCreate, LotteryCampaignUpdate
 from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.ticket_type import TicketType
@@ -37,7 +37,14 @@ def add_campaign(db: Session, data: LotteryCampaignCreate, current_user: Users):
     return db_campaign
 
 def get_campaigns(db: Session, ticket_type_id: uuid.UUID):
-    result = db.query(LotteryCampaign).filter(LotteryCampaign.ticket_type_id == ticket_type_id).all()
+    # joinedload since LotteryCampaignRead now embeds ticket_type — without
+    # it, serializing a multi-row result would lazy-load it once per row.
+    result = (
+        db.query(LotteryCampaign)
+        .options(joinedload(LotteryCampaign.ticket_type))
+        .filter(LotteryCampaign.ticket_type_id == ticket_type_id)
+        .all()
+    )
     if not result:
         return False
     return result
