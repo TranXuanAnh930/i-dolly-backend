@@ -42,7 +42,7 @@ exec python -m uvicorn main:app --host 0.0.0.0 --port $PORT\n' > /start.sh \
 RUN printf '#!/bin/sh\n\
 set -e\n\
 echo "Starting Celery worker..."\n\
-exec python -m celery -A app.celery_app worker --loglevel=info\n' > /start-worker.sh \
+exec python -m celery -A app.celery_app worker --concurrency=1 --loglevel=info\n' > /start-worker.sh \
  && chmod +x /start-worker.sh
 
 CMD ["/start.sh"]
