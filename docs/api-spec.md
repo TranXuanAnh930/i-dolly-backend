@@ -432,10 +432,11 @@ lottery or (once built — see `project_status.md` §5) direct purchase.
 - Response: `{"msg": "Ticket type deleted successfully"}`
 
 ### `POST /lottery_campaigns/add` 🔒 manager+
-- Request (`LotteryCampaignCreate`): `entry_start_at`, `entry_end_at`, `draw_at` (all datetime),
+- Request (`LotteryCampaignCreate`): `entry_start_at`, `entry_end_at` (both datetime),
   `payment_deadline_hours` (int, default 48), `max_entries_per_user` (int, default 1),
   `ticket_type_id` (uuid)
-- Response (`LotteryCampaignRead`): adds `id`, `status`, `created_at`
+- Response (`LotteryCampaignRead`): adds `id`, `status`, `draw_at` (null until actually drawn —
+  written only by the draw job, never client-supplied), `created_at`
 - UI: manager — set up a lottery for a ticket tier
 
 ### `GET /lottery_campaigns/ticket_type/{ticket_type_id}` 🔓
@@ -458,8 +459,11 @@ Enter a lottery campaign. Enforced by both a service-layer check and a DB trigge
 normal HTTP error, not a 500.
 - Request (`LotteryEntryApply`): `campaign_id` (uuid)
 - Response (`LotteryEntryRead`): `id`, `campaign_id`, `user_id`, `status`, `created_at`, `drawn_at`
+- Errors: `400` also covers a fan who already holds a live ticket for this concert (bought direct,
+  or won an earlier tier) — `"You already hold a ticket for this concert"`, not just the
+  cap/no-preference cases below
 - UI: "Apply" button on the lottery application page — disable/hide once the fan has already
-  entered, or once `entry_end_at` has passed
+  entered, already holds a ticket for the concert, or once `entry_end_at` has passed
 
 ### `GET /lottery_entries/mine` 🔒 fan
 - Response: `List[LotteryEntryRead]`
@@ -487,6 +491,23 @@ before applying to some lotteries (see the trigger note above).
 Clears the fan's ranking for that concert.
 - Response: `{"msg": "Preferences cleared successfully"}`
 - UI: "clear my ranking" control
+
+### `POST /tickets/checkout` 🔒 fan
+Buy a `sale_method="direct"` ticket tier directly — no lottery, no draw. This section is generally
+behind the shipped code (see `project_status.md`) — noted here only for the checks this round
+added; the full request/response contract isn't re-derived from the schema below.
+- Request (`TicketCheckoutCreate`): `ticket_type_id` (uuid, must be `sale_method="direct"`),
+  `amount`, `gateway`, `simulate_succ`, `idempotency_key` — same shape as `POST /order/checkout`'s
+  payment fields
+- Response (`TicketRead`)
+- Errors: `400` covers, among other things, a fan with an unresolved lottery application for this
+  concert — any of their `lottery_entries` still `pending` or `won` for a *different* tier under
+  the same concert blocks a direct purchase (`"You have a pending or won lottery application for
+  this concert — resolve it before buying a direct-sale ticket"`); only a `lost` entry (or none at
+  all) clears this. Also `400` for "already holds a live ticket for this concert"
+  (`trg_tickets_one_per_concert`), not on sale, sold out, or amount mismatch.
+- UI: direct-purchase ticket page — surface the lottery-conflict error distinctly, since "you're
+  still in the running for this concert's lottery" is a different message than "sold out"
 
 ### `POST /tickets/add` 🔒 admin
 The only way a ticket gets created today — manual issuance, since the lottery draw job doesn't
@@ -758,3 +779,37 @@ order** — read that carefully when wiring the success screen.
 ### `PATCH /payment/status/all` 🔒 fan
 - Response: `List[PaymentResponse]`
 - UI: "My payments" page, if surfaced separately from orders
+
+## 7. Notifications
+
+No WebSocket/SSE layer exists — this is a short-polling design (database-design.md §3.19). A
+client with no push mechanism should poll `GET /notifications/unread-count` on an interval (15-30s
+suggested; pause while the tab/app is backgrounded) and only fetch the heavier `GET
+/notifications/mine` when the count goes up, rather than re-fetching full notification bodies on
+every tick.
+
+### `GET /notifications/unread-count` 🔒 fan
+Cheap, meant to be polled — see above. Rate-limited at 30 req/60s per user, well above any sane
+poll interval; a `429` here means the client is polling too aggressively, not a real error to
+surface to the user.
+- Response (`NotificationUnreadCount`): `{"count": int}`
+- UI: nav bar notification bell badge
+
+### `GET /notifications/mine` 🔒 fan
+- Query: `unread_only` (bool, default `false`)
+- Response: `List[NotificationRead]` — `id`, `user_id`, `type`
+  (`"order_confirmation"|"ticket_confirmation"|"lottery_registered"|"lottery_result"|
+  "lottery_payment_reminder"|"lottery_payment_confirmation"|"event_reminder"|"password_reset"`),
+  `order_id`/`ticket_id`/`lottery_entry_id`/`concert_id` (exactly one set, depending on `type`),
+  `status`, `sent_at`, `is_read`, `read_at`, `created_at`
+- Errors: `404` if the fan has no notifications at all (not just none matching `unread_only`)
+- UI: notification feed/dropdown
+
+### `POST /notifications/{notification_id}/read` 🔒 fan
+- Response: `NotificationRead` (updated)
+- Errors: `404` (not found), `403` (belongs to another user)
+- UI: marking one notification read on click/dismiss
+
+### `POST /notifications/read-all` 🔒 fan
+- Response: `{"msg": "<n> notification(s) marked as read"}`
+- UI: "mark all as read" action

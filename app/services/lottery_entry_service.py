@@ -1,13 +1,16 @@
 import uuid
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.schema.lottery_entry import LotteryEntryApply
 from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.ticket_type import TicketType
 from app.db.models.concert import Concert
 from app.db.models.lottery_preference import LotteryPreference
+from app.db.models.ticket import Ticket
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
+
+_LIVE_TICKET_STATUSES = ("reserved", "pending_payment", "paid", "used")
 
 # Fan-facing / self-scoped, same as lottery_preferences: "applying" to a
 # lottery creates an entry owned by current_user. Mirrors the two DB triggers
@@ -27,6 +30,25 @@ def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users):
     ticket_type = db.get(TicketType, campaign.ticket_type_id)
     if not ticket_type:
         return "not_found"
+
+    # Mirrors ticket_service's own one-ticket-per-concert boundary
+    # (trg_tickets_one_per_concert) from the other direction: a fan who
+    # already holds a live ticket for this concert — bought directly, or won
+    # from an earlier lottery tier — has nothing to gain from also applying
+    # here, and letting them in would risk ending up with two tickets for
+    # one concert if they later win this tier too.
+    existing_ticket = (
+        db.query(Ticket)
+        .join(TicketType, Ticket.ticket_type_id == TicketType.id)
+        .filter(
+            Ticket.user_id == current_user.id,
+            TicketType.concert_id == ticket_type.concert_id,
+            Ticket.status.in_(_LIVE_TICKET_STATUSES),
+        )
+        .first()
+    )
+    if existing_ticket:
+        return "already_has_ticket"
 
     # trg_lottery_entries_require_preference: must have ranked this tier.
     has_preference = (
@@ -58,7 +80,17 @@ def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users):
     return db_entry
 
 def get_my_entries(db: Session, current_user: Users):
-    result = db.query(LotteryEntry).filter(LotteryEntry.user_id == current_user.id).all()
+    # joinedload both hops — LotteryEntryRead embeds campaign (which embeds
+    # ticket_type), and this list can span many different campaigns across
+    # a fan's whole history, so lazy-loading each would be its own N+1 at
+    # the DB layer (the frontend used to do this same N+1 over HTTP, once
+    # per entry — see lotteryEntries.js's old resolveContext).
+    result = (
+        db.query(LotteryEntry)
+        .options(joinedload(LotteryEntry.campaign).joinedload(LotteryCampaign.ticket_type))
+        .filter(LotteryEntry.user_id == current_user.id)
+        .all()
+    )
     if not result:
         return False
     return result

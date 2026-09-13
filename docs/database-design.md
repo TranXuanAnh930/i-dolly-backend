@@ -397,6 +397,27 @@ a concert must not exceed `concerts.capacity` (§3.8). Enforced with a trigger
 (`fn_enforce_concert_ticket_capacity`, `schema.sql` §3) since a plain `CHECK` can't aggregate
 across sibling rows.
 
+**A fan can't hold both paths open on the same concert at once — service-layer checks, not
+triggers**, added alongside `ticket_service.checkout_ticket()`'s existing `trg_tickets_one_per_
+concert` backstop:
+- Applying to a lottery tier (`lottery_entry_service.apply_to_lottery`) now also rejects a fan who
+  already holds a *live* ticket for that concert (`Ticket.status` in `reserved`/`pending_payment`/
+  `paid`/`used`) — bought via `direct` sale, or won from an earlier tier's draw. Buying that ticket
+  already means they have a slot; applying for another tier's lottery on top of it has no upside
+  and would risk two tickets for one concert if they later won.
+- Buying a `direct` tier (`ticket_service.checkout_ticket`) now also rejects a fan with an
+  unresolved lottery application for that concert — any `lottery_entries` row of theirs still
+  `pending` or `won` for a tier under the same concert. Only `lost` (or no entry at all) clears
+  this gate. This catches a case `trg_tickets_one_per_concert` alone can't: a fan who **won** a
+  lottery tier but let the resulting ticket's `payment_deadline_at` lapse (`status` → `expired`) no
+  longer holds a *live* ticket, but their `lottery_entries.status` is still `won` — without this
+  check they could then buy the same concert direct, which the design doesn't intend to allow just
+  because they missed their payment window on the win.
+
+Both checks are ordinary business-rule validation, not money/fairness invariants in the sense §4.1
+uses for trigger-worthiness (no trigger backs either one) — same reasoning already applied to the
+lottery-preference/category-detail-table style checks elsewhere in this doc.
+
 ### 3.11 `lottery_preferences` (new)
 
 `id`, `concert_id` (FK), `user_id` (FK), `ticket_type_id` (FK — the tier being ranked), `rank`
@@ -658,7 +679,9 @@ rather than only an enum value buried inside `album_details`.
 
 One row per notification event for one fan: `id`, `user_id` (FK, required), `type`
 (`notification_type_enum`: `order_confirmation` / `ticket_confirmation` / `lottery_registered` /
-`lottery_result` / `lottery_payment_reminder` / `lottery_payment_confirmation` / `event_reminder`),
+`lottery_result` / `lottery_payment_reminder` / `lottery_payment_confirmation` / `event_reminder` /
+`password_reset` — the last added by migration `a3f7c9e2b6d4`, the only type with no order/ticket/
+lottery_entry/concert FK at all, since it's about the user alone),
 `status` (`notification_status_enum`: `pending` / `sent` / `failed` — the send-log side, updated by
 whichever job eventually emails it), `sent_at`, `is_read`/`read_at` (the in-app-feed side — a fan
 viewing/dismissing their notification list), `created_at`.
@@ -673,15 +696,37 @@ set, the other three null). "Exactly one of these four is set, and it's the righ
 category ↔ details-table agreement (§3.15): ordinary cross-table validation, not a money/fairness
 invariant, so it stays a service-layer check rather than earning a trigger (§4.1's criteria).
 
-**Nothing writes to this table yet.** The ORM model and a fan-facing read/mark-read API exist
-(`GET /notifications/mine`, `POST /notifications/{id}/read`, `POST /notifications/read-all`,
-self-scoped to `current_user.id` via `get_current_user`, same shape as `lottery_entries`' `/mine`
-endpoint), but no service or job actually inserts a notification row on a purchase, a lottery
-result, a payment reminder, etc. — that wiring is deferred until the Celery skeleton
-(`docs/architecture.md` §1) has a real task, since a notification without a producer is just an
-empty table. Migration `df79d71c6a2c`, chained onto `10f9dfa05636`, has **not** been run against a
-live Postgres yet (`docs/project_status.md` §1) — same standing verification gap as every other
-migration in this repo.
+**Now has producers.** The fan-facing read/mark-read API (`GET /notifications/mine`,
+`GET /notifications/unread-count`, `POST /notifications/{id}/read`, `POST /notifications/read-all`,
+self-scoped to `current_user.id`, same shape as `lottery_entries`' `/mine` endpoint) is joined by
+`app/services/notification_service.create_notification()`, called from inside four existing
+transactions rather than as a separate write — the notification lands in the *same* commit as the
+event it describes, so there's no window where the business event succeeded but the notification
+was lost (or vice versa):
+- `order_service.checkout()` → `order_confirmation` (only when `order.status == confirmed`, i.e.
+  the mock payment succeeded — this phase has no `order_failed` type, matching §5.1's "payment
+  failure is out of scope" note).
+- `ticket_service.checkout_ticket()` → `ticket_confirmation` (only on `ticket.status == "paid"`).
+- `lottery_draw_service.draw_lottery()` → for every winner, both `lottery_result` (referencing
+  `lottery_entry_id`) *and* `lottery_payment_reminder` (referencing the new `ticket_id`), fired
+  once, together, at draw time — not a scheduled nag closer to the deadline. For every loser, just
+  `lottery_result`. The client tells win from loss apart on the `lottery_result` row by reading
+  that entry's `status`, rather than a second `type` value.
+- `user_service.verify_rtoken()` → `password_reset`, once the reset actually completes (not on the
+  reset *request*, which already emails a token separately).
+
+**Deliberately not built this phase**: a follow-up reminder closer to `payment_deadline_at` (as
+opposed to the one fired at draw time above) would need a periodic scan — a Celery Beat/cron job —
+which this phase is explicitly skipping (`docs/project_status.md` §5); the single at-draw-time
+`lottery_payment_reminder` is what "remind the fan to pay" means here for now, not a recurring
+nag. Revisit if a real deadline-proximity reminder becomes worth the scheduler infra it needs.
+
+Migration `df79d71c6a2c` (table) chained onto `10f9dfa05636`, plus `a3f7c9e2b6d4` (adds the
+`password_reset` enum value) chained onto `f8a3c1d9e4b2`, have now **run against a live Postgres
+and been exercised over real HTTP** (`docs/project_status.md` §1 has the full verification trail —
+registered a fan, drove a real password reset end to end, confirmed the resulting notification
+through `GET /notifications/mine`/`unread-count`/mark-read), unlike most migrations in this repo
+(§3's standing gap).
 
 ## 4. Role-based access
 
@@ -855,9 +900,10 @@ sequenceDiagram
     API->>DB: Upsert lottery_preferences rows
 
     Fan->>API: Apply to a specific tier's lottery (free — no cart, no payment, no purchase of any kind)
+    API->>DB: Reject if the fan already holds a live ticket for this concert (direct sale, or an earlier lottery win)
     API->>DB: Check for a matching lottery_preferences row for this tier; reject the application if none exists
     API->>DB: Insert lottery_entries row (status=pending) — UNIQUE(campaign_id, user_id) rejects a duplicate application outright
-    Note over API,DB: fn_require_lottery_preference is the DB backstop for the rank check; the UNIQUE constraint is the DB backstop for "only one entry"
+    Note over API,DB: fn_require_lottery_preference is the DB backstop for the rank check; the UNIQUE constraint is the DB backstop for "only one entry"; the live-ticket check is service-layer only (below)
 
     Note over Job: At draw time — campaigns for ONE concert are drawn together, not independently, so the rank cascade below works
     loop rank = 1, 2, 3, ... (highest preference first, across every tier for this concert)

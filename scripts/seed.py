@@ -71,6 +71,7 @@ from app.db.base import (
     Concert,
     ConcertPerformer,
     TicketType,
+    DirectSaleCampaign,
     Category,
     Product,
     AlbumDetail,
@@ -233,9 +234,53 @@ def seed(db):
         hashed_password=hash_password(SEED_PASSWORD), role="fan",
         is_active=True, is_verified=True,
     )
+    # Eight more fans, on top of the four above — a bigger applicant pool so
+    # the lottery draw endpoint has real competition to draw against (see
+    # the "lottery: preferences, campaigns, entries" section below).
+    fan_sofia = Users(
+        name="Sofia Rossi", email="sofia.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
+    fan_liam = Users(
+        name="Liam O'Connor", email="liam.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
+    fan_haruto = Users(
+        name="Haruto Mizushima", email="haruto.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
+    fan_emma = Users(
+        name="Emma Larsson", email="emma.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
+    fan_noah = Users(
+        name="Noah Kim", email="noah.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
+    fan_aiko = Users(
+        name="Aiko Fujiwara", email="aiko.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
+    fan_diego = Users(
+        name="Diego Fernandez", email="diego.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
+    fan_chloe = Users(
+        name="Chloe Dubois", email="chloe.fan@example.com",
+        hashed_password=hash_password(SEED_PASSWORD), role="fan",
+        is_active=True, is_verified=True,
+    )
     db.add_all([
         admin, manager_nova, manager_starlight, manager_kuroyuri,
         fan_alex, fan_priya, fan_marco, fan_yuki,
+        fan_sofia, fan_liam, fan_haruto, fan_emma, fan_noah, fan_aiko, fan_diego, fan_chloe,
     ])
     db.flush()
 
@@ -458,9 +503,25 @@ def seed(db):
         capacity=50000, event_datetime=now + timedelta(days=15),
         doors_open_at=now + timedelta(days=15, hours=-1), status="on_sale",
     )
+    # A concert dedicated to exercising the lottery draw end to end: three
+    # lottery tiers (vip/premium/regular — the first seeded use of
+    # "premium," everything else so far only ever used vip/regular), a
+    # small enough capacity per tier that 12 applicants produces real
+    # competition, and an entry_end_at already in the past so its campaigns
+    # are immediately drawable (see the lottery section below) rather than
+    # rejected with "campaign_not_ended" the way concert_sakura's/
+    # concert_kessho's existing campaigns still are (their entry windows
+    # are deliberately still open, for testing the apply/preference flow).
+    concert_countdown = Concert(
+        company_id=nova.id, venue_id=crescent_hall.id,
+        title="Sakura Prism: New Year Countdown Live",
+        description="A New Year's Eve countdown show — Sakura Prism's biggest lottery draw of the year.",
+        capacity=11000, event_datetime=now + timedelta(days=25),
+        doors_open_at=now + timedelta(days=25, hours=-1), status="on_sale",
+    )
     db.add_all([
         concert_sakura, concert_nagisa, concert_kessho,
-        concert_yozora, concert_program, concert_solo_showcase,
+        concert_yozora, concert_program, concert_solo_showcase, concert_countdown,
     ])
     db.flush()
 
@@ -473,6 +534,7 @@ def seed(db):
         ConcertPerformer(concert_id=concert_solo_showcase.id, idol_id=idol_rows["Rin Amane"].id),
         ConcertPerformer(concert_id=concert_solo_showcase.id, idol_id=idol_rows["Kaede Shirogane"].id),
         ConcertPerformer(concert_id=concert_solo_showcase.id, idol_id=idol_rows["Yoru Kuon"].id),
+        ConcertPerformer(concert_id=concert_countdown.id, group_id=sakura_prism.id),
     ])
     db.flush()
 
@@ -483,28 +545,54 @@ def seed(db):
         return row
 
     tt_sakura_vip = tt(concert_sakura, "vip", 15000, 400)
-    tt(concert_sakura, "regular", 7500, 6000)
-    tt(concert_sakura, "regular", 9000, 2000, sale_method="direct")
+    tt_sakura_premium_lottery = tt(concert_sakura, "premium", 7500, 6000)
+    tt_sakura_regular_direct = tt(concert_sakura, "regular", 9000, 2000, sale_method="direct")
 
     tt(concert_nagisa, "vip", 11000, 250)
     tt(concert_nagisa, "regular", 5500, 4000)
-    tt(concert_nagisa, "regular", 6800, 1500, sale_method="direct")
+    tt_nagisa_regular_direct = tt(concert_nagisa, "regular", 6800, 1500, sale_method="direct")
 
-    tt(concert_kessho, "vip", 18000, 600)
-    tt_kessho_regular_lottery = tt(concert_kessho, "regular", 8500, 20000)
-    tt(concert_kessho, "regular", 11000, 3000, sale_method="direct")
+    tt_kessho_vip_direct = tt(concert_kessho, "vip", 21500, 200, sale_method="direct")
+    tt_kessho_premium_lottery = tt(concert_kessho, "premium", 10000, 700)
+    tt_kessho_regular_lottery = tt(concert_kessho, "regular", 6000, 800)
 
     tt(concert_yozora, "vip", 16000, 500)
-    tt(concert_yozora, "regular", 8000, 25000)
-    tt(concert_yozora, "regular", 9800, 3500, sale_method="direct")
+    tt(concert_yozora, "premium", 8000, 25000)
+    tt_yozora_regular_direct = tt(concert_yozora, "regular", 9800, 3500, sale_method="direct")
 
     tt(concert_program, "vip", 17000, 450)
-    tt(concert_program, "regular", 8300, 8000)
-    tt(concert_program, "regular", 10500, 2500, sale_method="direct")
+    tt(concert_program, "premium", 8300, 8000)
+    tt_program_regular_direct = tt(concert_program, "regular", 10500, 2500, sale_method="direct")
 
     tt(concert_solo_showcase, "vip", 24000, 800)
-    tt(concert_solo_showcase, "regular", 11500, 40000)
+    tt(concert_solo_showcase, "premium", 11500, 40000)
     tt_showcase_regular_direct = tt(concert_solo_showcase, "regular", 13500, 4000, sale_method="direct")
+
+    # Deliberately small capacities — 12 applicants against vip=3/premium=3/
+    # regular=8 guarantees real competition at every tier, not just a
+    # formality (see the lottery section below for exactly who wins/loses).
+    tt_countdown_vip = tt(concert_countdown, "vip", 20000, 3)
+    tt_countdown_premium = tt(concert_countdown, "premium", 14000, 3)
+    tt_countdown_regular = tt(concert_countdown, "regular", 9000, 8)
+    db.flush()
+
+    # --- direct sale campaigns: every direct-sale ticket type needs one now
+    # (ticket_service.checkout_ticket) or it's simply unpurchasable — already
+    # on sale, staying open through each concert's own event_datetime.
+    for ticket_type, concert in [
+        (tt_sakura_regular_direct, concert_sakura),
+        (tt_nagisa_regular_direct, concert_nagisa),
+        (tt_kessho_vip_direct, concert_kessho),
+        (tt_yozora_regular_direct, concert_yozora),
+        (tt_program_regular_direct, concert_program),
+        (tt_showcase_regular_direct, concert_solo_showcase),
+    ]:
+        db.add(DirectSaleCampaign(
+            ticket_type_id=ticket_type.id,
+            sale_start_at=now - timedelta(days=10),
+            sale_end_at=concert.event_datetime,
+            status="open",
+        ))
     db.flush()
 
     # --- categories (get-or-create — shared lookup table, not migration-seeded) ---
@@ -627,9 +715,16 @@ def seed(db):
     db.flush()
 
     # --- lottery: preferences, campaigns, entries ---------------------------
+    # concert_sakura / concert_kessho: light data, entry windows still open —
+    # for testing the apply/preference flow, not the draw itself.
+    # tt_sakura_premium_lottery and tt_kessho_premium_lottery previously had
+    # no campaign at all despite being sale_method="lottery" — filled in
+    # here too. concert_kessho has no lottery vip tier at all (vip is
+    # direct-sale only there — see the ticket types section).
     db.add_all([
         LotteryPreference(concert_id=concert_sakura.id, user_id=fan_alex.id, ticket_type_id=tt_sakura_vip.id, rank=1),
-        LotteryPreference(concert_id=concert_kessho.id, user_id=fan_priya.id, ticket_type_id=tt_kessho_regular_lottery.id, rank=1),
+        LotteryPreference(concert_id=concert_sakura.id, user_id=fan_priya.id, ticket_type_id=tt_sakura_premium_lottery.id, rank=1),
+        LotteryPreference(concert_id=concert_kessho.id, user_id=fan_priya.id, ticket_type_id=tt_kessho_premium_lottery.id, rank=1),
         LotteryPreference(concert_id=concert_kessho.id, user_id=fan_yuki.id, ticket_type_id=tt_kessho_regular_lottery.id, rank=1),
     ])
     db.flush()
@@ -637,20 +732,93 @@ def seed(db):
     campaign_sakura_vip = LotteryCampaign(
         ticket_type_id=tt_sakura_vip.id,
         entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
-        draw_at=now + timedelta(days=6), status="open",
+        status="open",  # draw_at stays NULL — not drawn yet
+    )
+    campaign_sakura_regular = LotteryCampaign(
+        ticket_type_id=tt_sakura_premium_lottery.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
+        status="open",  # draw_at stays NULL — not drawn yet
+    )
+    campaign_kessho_premium = LotteryCampaign(
+        ticket_type_id=tt_kessho_premium_lottery.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
+        status="open",  # draw_at stays NULL — not drawn yet
     )
     campaign_kessho_regular = LotteryCampaign(
         ticket_type_id=tt_kessho_regular_lottery.id,
         entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
-        draw_at=now + timedelta(days=6), status="open",
+        status="open",  # draw_at stays NULL — not drawn yet
     )
-    db.add_all([campaign_sakura_vip, campaign_kessho_regular])
+    db.add_all([campaign_sakura_vip, campaign_sakura_regular, campaign_kessho_premium, campaign_kessho_regular])
     db.flush()
 
     db.add_all([
         LotteryEntry(campaign_id=campaign_sakura_vip.id, user_id=fan_alex.id),
+        LotteryEntry(campaign_id=campaign_sakura_regular.id, user_id=fan_priya.id),
         LotteryEntry(campaign_id=campaign_kessho_regular.id, user_id=fan_yuki.id),
+        # Was campaign_kessho_regular, but fan_priya's preference two blocks
+        # up (line ~705) ranks tt_kessho_premium_lottery, not
+        # tt_kessho_regular_lottery — trg_lottery_entries_require_preference
+        # correctly rejected the mismatch. Points at the matching campaign now.
+        LotteryEntry(campaign_id=campaign_kessho_premium.id, user_id=fan_priya.id),
     ])
+    db.flush()
+
+    # concert_countdown: entry_end_at already in the PAST — immediately
+    # drawable, for testing PUT /concerts/lottery-draw/{id} itself. 12
+    # applicants across 3 tiers, deliberately over capacity everywhere,
+    # exercising every rank-cascade case from the draw's own design:
+    #   - vip: pure single-tier competition (5 candidates, 3 slots).
+    #   - premium: a rank-1 crowd that already fills it (4 candidates, 3
+    #     slots) before any vip rank-2 fallback gets a turn — 2 of the vip
+    #     losers try their fallback here and find zero slots left.
+    #   - regular: a rank-1 crowd well under capacity (3 candidates, 8
+    #     slots), then 1 premium rank-1 loser's rank-2 fallback succeeds —
+    #     the "lost rank 1, won rank 2" case the cascade exists for.
+    campaign_countdown_vip = LotteryCampaign(
+        ticket_type_id=tt_countdown_vip.id,
+        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
+        status="open",  # draw_at stays NULL until PUT /concerts/lottery-draw/{id} actually runs
+    )
+    campaign_countdown_premium = LotteryCampaign(
+        ticket_type_id=tt_countdown_premium.id,
+        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
+        status="open",  # draw_at stays NULL until PUT /concerts/lottery-draw/{id} actually runs
+    )
+    campaign_countdown_regular = LotteryCampaign(
+        ticket_type_id=tt_countdown_regular.id,
+        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
+        status="open",  # draw_at stays NULL until PUT /concerts/lottery-draw/{id} actually runs
+    )
+    db.add_all([campaign_countdown_vip, campaign_countdown_premium, campaign_countdown_regular])
+    db.flush()
+
+    group_a = [fan_alex, fan_priya, fan_marco, fan_yuki, fan_sofia]  # ranks vip=1, premium=2
+    group_b = [fan_liam, fan_haruto, fan_emma, fan_noah]  # ranks premium=1, regular=2
+    group_c = [fan_aiko, fan_diego, fan_chloe]  # ranks regular=1 only
+
+    preferences = []
+    for fan in group_a:
+        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_vip.id, rank=1))
+        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_premium.id, rank=2))
+    for fan in group_b:
+        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_premium.id, rank=1))
+        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_regular.id, rank=2))
+    for fan in group_c:
+        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_regular.id, rank=1))
+    db.add_all(preferences)
+    db.flush()
+
+    entries = []
+    for fan in group_a:
+        entries.append(LotteryEntry(campaign_id=campaign_countdown_vip.id, user_id=fan.id))
+        entries.append(LotteryEntry(campaign_id=campaign_countdown_premium.id, user_id=fan.id))
+    for fan in group_b:
+        entries.append(LotteryEntry(campaign_id=campaign_countdown_premium.id, user_id=fan.id))
+        entries.append(LotteryEntry(campaign_id=campaign_countdown_regular.id, user_id=fan.id))
+    for fan in group_c:
+        entries.append(LotteryEntry(campaign_id=campaign_countdown_regular.id, user_id=fan.id))
+    db.add_all(entries)
 
     # --- one manually-issued ticket (admin stopgap path, see database-design.md §8) ---
     db.add(Ticket(
@@ -661,15 +829,21 @@ def seed(db):
     db.commit()
 
     print("Seed data created:")
-    print(f"  - 3 management companies, 8 users (password for all: {SEED_PASSWORD})")
+    print(f"  - 3 management companies, 16 users (password for all: {SEED_PASSWORD})")
     print("    admin@example.com (admin)")
     print("    manager.nova@example.com / manager.starlight@example.com / manager.kuroyuri@example.com (manager)")
-    print("    alex.fan@example.com / priya.fan@example.com / marco.fan@example.com / yuki.fan@example.com (fan)")
+    print("    alex/priya/marco/yuki/sofia/liam/haruto/emma/noah/aiko/diego/chloe.fan@example.com (12 fans)")
     print("  - 5 groups (Sakura Prism, Nagisa Melody, Kessho Stars, Yozora Requiem, Program:HEART),")
     print("    22 group idols + 3 solo idols = 25 idols total, each with a generated profile image")
-    print("  - 6 venues, 6 concerts, 18 ticket types across lottery + direct sale methods")
+    print("  - 6 venues, 7 concerts, 21 ticket types across lottery + direct sale methods")
+    print("    (concert_kessho's vip tier is direct-sale only, no lottery)")
+    print("  - 6 direct sale campaigns — one per direct-sale ticket type, already on sale via")
+    print("    POST /tickets/checkout (concert_countdown has no direct-sale tier at all)")
     print("  - 10 albums/singles/EPs with genres + cover art, 10 merch items (8 lightsticks + 2 group-branded), all owned")
-    print("  - 2 lottery campaigns with preferences + entries, 1 manually-issued ticket")
+    print("  - 7 lottery campaigns: 4 light ones (still-open entry windows, sakura vip+premium, kessho premium+regular) plus")
+    print("    3 for concert_countdown (vip/premium/regular, entry window already closed — ready to draw")
+    print("    via PUT /concerts/lottery-draw/{id}), with 12 fans' preferences + entries feeding the cascade")
+    print("  - 1 manually-issued ticket")
 
 
 def _slug(name: str) -> str:

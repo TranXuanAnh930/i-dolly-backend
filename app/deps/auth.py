@@ -7,6 +7,10 @@ from app.deps.db import get_db
 import uuid
 
 oauth_scheme = OAuth2PasswordBearer(tokenUrl="account/login")
+# auto_error=False so a missing/absent Authorization header just yields
+# token=None instead of a 401 — used by endpoints that are public but want
+# to personalize the response for whoever happens to be logged in.
+oauth_scheme_optional = OAuth2PasswordBearer(tokenUrl="account/login", auto_error=False)
 
 def get_current_user(request:Request, token:str=Depends(oauth_scheme), db:Session=Depends(get_db)):
     payload = decode_token(token)
@@ -17,6 +21,22 @@ def get_current_user(request:Request, token:str=Depends(oauth_scheme), db:Sessio
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
     request.state.user = user
+    return user
+
+def get_current_user_optional(request:Request, token:str|None=Depends(oauth_scheme_optional), db:Session=Depends(get_db)) -> Users|None:
+    """Gate for public endpoints that personalize their response when the
+    caller happens to be logged in (e.g. GET /concerts/{id}/detail flagging
+    whether THIS viewer already has a ticket). Never raises — a missing,
+    expired, or malformed token just resolves to None, same as a guest.
+    """
+    if not token:
+        return None
+    payload = decode_token(token)
+    if not payload:
+        return None
+    user = db.get(Users, uuid.UUID(payload.get("sub")))
+    if user:
+        request.state.user = user
     return user
 
 def require_admin(current_user:Users=Depends(get_current_user)) -> Users:

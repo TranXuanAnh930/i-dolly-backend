@@ -32,6 +32,8 @@ def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users
         tt = db.get(TicketType, tt_id)
         if not tt or tt.concert_id != data.concert_id:
             return "not_found"  # ticket type missing, or belongs to a different concert
+        if tt.sale_method != "lottery":
+            return "not_lottery_ticket_type"  # ranking a direct-sale tier makes no sense — no lottery exists for it
     db.query(LotteryPreference).filter(
         LotteryPreference.concert_id == data.concert_id,
         LotteryPreference.user_id == current_user.id,

@@ -12,6 +12,7 @@ from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.payment import PaymentCreate
 from app.services.payment_service import create_payment
 from app.services.product_service import resolve_product_company_ids
+from app.services.notification_service import create_notification
 from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
 from app.exception.db_triggers import DuplicateIdempotencyKeyError, ResaleCapExceededError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError
 from app.utils.tax import with_tax
@@ -82,6 +83,13 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
         db.add(order_item)
 
     db.query(Cart).filter(Cart.user_id==user_id).delete()
+
+    if order.status == OrderStatus.confirmed:
+        # Payment failure is out of scope for this phase (mock gateway,
+        # database-design.md §5.1) — only the success path gets a
+        # notification; there's no "order_failed" type to fire otherwise.
+        create_notification(db, user_id, "order_confirmation", order_id=order.id)
+
     commit_or_raise(db)  # trg_orders_fan_only / chk_products_capacity backstop
     db.refresh(order)
     return order

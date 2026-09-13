@@ -30,3 +30,9 @@ class WrongSaleMethodError(CartItemError):
 
 class InsufficientTicketStockError(CartItemError):
     pass
+
+class NotOnSaleError(CartItemError):
+    pass
+
+class LotteryEntryUnresolvedError(CartItemError):
+    pass

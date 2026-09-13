@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.schema.lottery_campaign import LotteryCampaignCreate, LotteryCampaignUpdate
 from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.ticket_type import TicketType
@@ -20,10 +20,15 @@ def _company_id_for_ticket_type(db: Session, ticket_type_id: uuid.UUID):
     return concert.company_id if concert else None
 
 def add_campaign(db: Session, data: LotteryCampaignCreate, current_user: Users):
-    company_id = _company_id_for_ticket_type(db, data.ticket_type_id)
-    if company_id is None:
+    ticket_type = db.get(TicketType, data.ticket_type_id)
+    if not ticket_type:
         return "not_found"
-    if _manager_scope_violation(current_user, company_id):
+    if ticket_type.sale_method != "lottery":
+        return "not_lottery_ticket_type"  # a campaign only ever makes sense for a lottery-sale tier
+    concert = db.get(Concert, ticket_type.concert_id)
+    if not concert:
+        return "not_found"
+    if _manager_scope_violation(current_user, concert.company_id):
         return "forbidden"
     db_campaign = LotteryCampaign(**data.model_dump())
     db.add(db_campaign)
@@ -32,7 +37,14 @@ def add_campaign(db: Session, data: LotteryCampaignCreate, current_user: Users):
     return db_campaign
 
 def get_campaigns(db: Session, ticket_type_id: uuid.UUID):
-    result = db.query(LotteryCampaign).filter(LotteryCampaign.ticket_type_id == ticket_type_id).all()
+    # joinedload since LotteryCampaignRead now embeds ticket_type — without
+    # it, serializing a multi-row result would lazy-load it once per row.
+    result = (
+        db.query(LotteryCampaign)
+        .options(joinedload(LotteryCampaign.ticket_type))
+        .filter(LotteryCampaign.ticket_type_id == ticket_type_id)
+        .all()
+    )
     if not result:
         return False
     return result
@@ -49,7 +61,6 @@ def update_campaign(db: Session, id: uuid.UUID, data: LotteryCampaignUpdate, cur
         return "forbidden"
     db_campaign.entry_start_at = data.entry_start_at
     db_campaign.entry_end_at = data.entry_end_at
-    db_campaign.draw_at = data.draw_at
     db_campaign.payment_deadline_hours = data.payment_deadline_hours
     db_campaign.max_entries_per_user = data.max_entries_per_user
     if data.status is not None:
