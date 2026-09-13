@@ -181,8 +181,9 @@ so the secret needs to be re-added for this repo:
 
 - No live-DB verification has happened before this deploy (§8) — treat the first deploy as a real
   test, not a formality.
-- The Celery worker (§5) is a bare skeleton — no real task exists yet, so there's nothing lost by
-  skipping that service entirely for a portfolio deploy.
+- The Celery worker (§5) now backs a real task (the manager-triggered lottery draw) — deploying it
+  is no longer optional the way it was when it was a bare skeleton; skipping it means
+  `PUT /concerts/lottery-draw/{id}` returns "scheduled" but the draw never actually runs.
 - The checkout/ticket-inventory race and non-idempotent webhook handling
   (`docs/project_status.md` §4 items 1 and 4) are unchanged by deploying — they're app-logic bugs,
   not deploy-environment issues.

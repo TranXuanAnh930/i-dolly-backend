@@ -227,6 +227,39 @@ specifically; the rest of the schema (everything before `df79d71c6a2c`) hasn't h
 live-HTTP treatment, only the `configure_mappers()`/`pytest tests/unit`-against-mocks level from
 earlier rounds — the general limitation described above still applies to those.
 
+**A real bug this same live-DB access surfaced: `pytest tests` was running integration tests
+directly against the shared dev database** — the one the running `app`/`worker` containers (and
+anyone's manual frontend testing, or `scripts/seed.py`) also use. `tests/integration/test_main.py`
+has always asserted several endpoints return `404`/empty on a table with zero rows
+(`test_list_companies_empty`, `test_list_groups_empty`, `test_get_manager_idols_page_never_404s`,
+9 others) — true the first time this test suite ever ran, against a genuinely empty database, and
+silently false ever since, the moment any real data (a seed run, a manually-created row) landed in
+those tables. Confirmed directly: `pytest tests` on this session's DB — which by then had a full
+`scripts/seed.py` catalog (`Sakura Prism`, `Yozora Requiem`, 3 more groups, seeded idols) —
+consistently produced exactly these 12 failures, none touching tickets/lottery/notifications, all
+failing because real rows existed where the test expected none.
+
+**Fixed at the root — integration tests no longer touch the dev database at all.**
+`tests/conftest.py` now redirects `DATABASE_URL` onto a dedicated `<name>_test` database as the
+very first thing in the whole test session (before anything imports `app.config.settings`, which
+caches whatever `DATABASE_URL` was current at *its* first import for the rest of the process — a
+subdirectory conftest would be too late). `tests/integration/conftest.py` then drops, recreates,
+and fully migrates that database (`alembic upgrade head`, all 52 migrations) once per test session,
+before any integration test module is even imported. Net effect: `pytest tests` is now safe to run
+at any time, against any dev-DB state, with a fully deterministic result — it can never see (or
+touch) real seeded/manually-created data again, and the 12 previously-flaky failures now pass
+reliably (confirmed: `343 passed` — 331 + the 12 — with the same command that used to show
+331 passed / 12 failed on a non-empty dev DB). `pytest tests/unit` needed no changes and still
+requires no live Postgres at all — the redirect is a pure string rewrite, and the actual
+DROP/CREATE/migrate only runs from `tests/integration/conftest.py`, which is never loaded unless
+an integration test is actually being collected. One real bug caught building this: `str(url)` on
+a SQLAlchemy `URL` object hides the password by default (`hide_password=True`) — the first version
+of this fix silently wrote `postgresql://user:***@host/db` into `DATABASE_URL`, which failed
+Postgres auth outright rather than connecting to the wrong place; fixed by using
+`url.render_as_string(hide_password=False)` everywhere a real connection string is needed. Also
+deduplicated `reset_rate_limits` (previously copy-pasted identically in `test_main.py` and
+`test_permissions.py`) into one shared autouse fixture in the new `tests/integration/conftest.py`.
+
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
 Ordered roughly by how much each matters to the idol-ticket domain specifically. Items marked
@@ -526,16 +559,25 @@ newly introduced.
     live local Docker Postgres: 4 new integration tests in `tests/integration/test_permissions.py`
     (already-has-ticket blocks lottery apply; pending/won lottery entries block direct checkout;
     lost does not) over real HTTP against real fixture rows, not mocks — all 4 pass, and the full
-    `test_permissions.py` file (42 tests) passes with no regressions. A full `pytest tests` run
-    (331 passed, 12 failed) was also done in the same session — **the 12 failures are pre-existing
-    and unrelated to this fix**: `test_main.py`'s `*_empty`/`*_never_404s` tests assume the shared
-    dev database has zero rows in the companies/groups/idols/album/merch domains, which stopped
-    being true once this same session's earlier live-testing (registering fans, driving checkout)
-    left real rows behind — none of the 12 touch tickets, lottery entries, or notifications, so
-    they can't be a regression from this specific change; the actual cause is those tests needing a
-    genuinely empty database rather than tolerating a shared, already-used one. Not fixed here —
-    it's a pre-existing test-isolation gap (this suite has never guaranteed a clean DB between runs,
-    §3), out of scope for a lottery/ticket business-rule fix.
+    `test_permissions.py` file (42 tests) passes with no regressions. A full `pytest tests` run in
+    the same session also showed 331 passed / 12 failed — **the 12 failures were pre-existing and
+    unrelated to this fix** (none touch tickets, lottery entries, or notifications; root cause was
+    the test suite running against the shared, non-empty dev database — since fixed for real, see
+    §3's dedicated writeup and item 20 below).
+
+20. ~~**`pytest tests` ran integration tests directly against the shared dev database**~~ —
+    **FIXED**. Full writeup in §3. `tests/conftest.py` redirects `DATABASE_URL` onto a dedicated
+    `<name>_test` database (a pure string rewrite, so `pytest tests/unit` still needs no live
+    Postgres at all); `tests/integration/conftest.py` drops, recreates, and fully migrates that
+    database once per session before any integration test can touch it. This was the actual cause
+    of the `test_main.py` `*_empty`/`*_never_404s` failures documented as "pre-existing" in items
+    18-19 above and in earlier `pytest tests` runs this project has logged — not 12 separate app
+    bugs, one shared root cause, now closed. Also deduplicated the identical `reset_rate_limits`
+    fixture out of `test_main.py`/`test_permissions.py` into one shared autouse fixture in the new
+    `tests/integration/conftest.py`. Verified: `343 passed` (`pytest tests`, unit + integration
+    together) against a database seeded with a full `scripts/seed.py` catalog beforehand,
+    confirming this can never again see or touch real dev/seed data — plus a direct check that the
+    real dev database's row counts were unchanged after the test run.
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a

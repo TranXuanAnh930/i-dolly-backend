@@ -17,7 +17,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import fake_redis
 from main import app
 from app.db.session import session as db_session
 from app.db.models.management_company import ManagementCompany
@@ -40,14 +39,8 @@ from app.utils.tax import with_tax
 
 client = TestClient(app)
 
-
-@pytest.fixture(autouse=True)
-def reset_rate_limits():
-    for key in fake_redis.scan_iter("rate:ip:*"):
-        fake_redis.delete(key)
-    for key in fake_redis.scan_iter("rate:user:*"):
-        fake_redis.delete(key)
-    yield
+# reset_rate_limits is shared, autouse, in tests/integration/conftest.py —
+# applies to every test module under this directory automatically.
 
 
 class Factory:
