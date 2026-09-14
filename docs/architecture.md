@@ -52,19 +52,32 @@ this same folder. For *what's built vs. still open*, see `project_status.md`.
 
 ## 2. Layered architecture — keep this shape for new domain code
 
-Every feature follows the same three-layer split:
+Every feature follows the same three-layer split. Each layer's directory is further split into
+the four domain subpackages from CLAUDE.md §4 (`identity/`, `talent/`, `events/`, `marketplace/`),
+plus a `shared/` subpackage for the one genuinely cross-domain feature (notifications — used by
+all four, owned by none). `cart`/`order`/`payment`/`shipping` live under `marketplace/` per
+CLAUDE.md §4's own framing ("Marketplace... reusing the original cart/order/payment/shipping
+machinery"), even though `events/`'s ticket checkout also depends on `payment_service` — that's an
+accepted cross-domain import, not a sign the file is misplaced. New domain code goes in whichever
+of the five subpackages its concept belongs to; if it's genuinely used by all four (like
+notifications), it goes in `shared/`, not force-fit into one:
 
-1. **`app/router/<feature>.py`** — FastAPI route functions only. Pulls `get_db`,
+1. **`app/router/<domain>/<feature>.py`** — FastAPI route functions only. Pulls `get_db`,
    `get_current_user`, `rate_limit(...)` as dependencies, calls exactly one service function, and
    translates the return value into an HTTP response/`HTTPException`. No ORM queries, no business
    logic here.
-2. **`app/services/<feature>_service.py`** — business logic + ORM queries. Takes a `Session` as
-   its first argument, never imports FastAPI. New domain logic (a lottery draw, seat allocation,
-   scoping checks) belongs here, not in the router.
-3. **`app/db/models/<feature>.py`** — SQLAlchemy models, all inheriting `Base`. `app/schema/
-   <feature>.py` holds the paired Pydantic schemas (`*Create`, `*Read`/`*Out`/`*Response`,
-   `*Update`) — request/response shapes are always separate classes from the ORM model, never the
-   ORM model returned directly.
+2. **`app/services/<domain>/<feature>_service.py`** — business logic + ORM queries. Takes a
+   `Session` as its first argument, never imports FastAPI. New domain logic (a lottery draw, seat
+   allocation, scoping checks) belongs here, not in the router.
+3. **`app/db/models/<domain>/<feature>.py`** — SQLAlchemy models, all inheriting `Base`.
+   `app/schema/<domain>/<feature>.py` holds the paired Pydantic schemas (`*Create`,
+   `*Read`/`*Out`/`*Response`, `*Update`) — request/response shapes are always separate classes
+   from the ORM model, never the ORM model returned directly.
+
+`app/db/base.py` still aggregates every model with a direct import (not moved — it isn't a
+feature of any one domain), so its own import lines are the one place that must stay in sync by
+hand whenever a model file moves or a new one is added; see its own CORRECTION comment for why
+this matters more than it looks (SQLAlchemy's string-based `relationship()` resolution).
 
 ### Error-handling: two conventions coexist — match whichever the code you're touching uses
 
@@ -184,8 +197,9 @@ migration-chain smoke check rather than a precondition pytest depends on.)
   `app/db/base.py` is a pure aggregator — it imports every model module (for Alembic's
   `Base.metadata` to see them) and re-exports `Base` from `base_class`. Importing `Base` back
   from `app.db.base` in a model file reopens a real circular-import bug that was fixed this way
-  (`app/deps/auth.py`/`app/router/products.py` import `app.db.models.user` directly, so whichever
-  module Python touches first re-entering the other mid-import throws `ImportError`).
+  (`app/deps/auth.py`/`app/router/marketplace/products.py` import `app.db.models.identity.user`
+  directly, so whichever module Python touches first re-entering the other mid-import throws
+  `ImportError`).
 - New model modules must also be added to `app/db/base.py`'s import list, or standalone scripts
   (unlike the live app, whose routers transitively import everything) can hit
   `InvalidRequestError: ... failed to locate a name` when SQLAlchemy tries to resolve a

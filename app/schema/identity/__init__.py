@@ -1,0 +1,26 @@
+"""Re-exports every public schema class in this domain, so callers can do `from app.schema.identity import X` instead of reaching into the individual submodule."""
+
+from .refresh_token import RefreshTokenCreate, RefreshTokenRead
+from .user import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    MakeAdminRequest,
+    ManagerCreate,
+    SetPasswordRequest,
+    User,
+    UserCreate,
+    UserOut,
+)
+
+__all__ = [
+    "RefreshTokenCreate",
+    "RefreshTokenRead",
+    "User",
+    "UserCreate",
+    "UserOut",
+    "ChangePasswordRequest",
+    "ForgotPasswordRequest",
+    "SetPasswordRequest",
+    "MakeAdminRequest",
+    "ManagerCreate",
+]

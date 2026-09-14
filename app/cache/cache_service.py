@@ -4,7 +4,7 @@ import msgpack
 from sqlalchemy.orm import Session
 
 from app.cache.redis_client import redis_client
-from app.services.product_service import List_of_products
+from app.services.marketplace.product_service import List_of_products
 
 
 def get_cached_products(db:Session):

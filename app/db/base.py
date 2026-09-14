@@ -1,18 +1,18 @@
 from app.db.base_class import Base
 
-from app.db.models.cart import Cart
-from app.db.models.products import Product
-from app.db.models.category import Category
-from app.db.models.order import Order, OrderItem
-from app.db.models.payment import Payment
-from app.db.models.shipping import ShippingAddress, ShippingStatus
-from app.db.models.user import Users
-from app.db.models.refresh_token import RefreshToken
-from app.db.models.management_company import ManagementCompany
-from app.db.models.idol_color import IdolColor
-from app.db.models.position import Position, IdolPosition
-from app.db.models.group import Group
-from app.db.models.idol import Idol
+from app.db.models.marketplace.cart import Cart
+from app.db.models.marketplace.products import Product
+from app.db.models.marketplace.category import Category
+from app.db.models.marketplace.order import Order, OrderItem
+from app.db.models.marketplace.payment import Payment
+from app.db.models.marketplace.shipping import ShippingAddress, ShippingStatus
+from app.db.models.identity.user import Users
+from app.db.models.identity.refresh_token import RefreshToken
+from app.db.models.talent.management_company import ManagementCompany
+from app.db.models.talent.idol_color import IdolColor
+from app.db.models.talent.position import Position, IdolPosition
+from app.db.models.talent.group import Group
+from app.db.models.talent.idol import Idol
 
 # CORRECTION: everything below was added by later migration rounds
 # (database-design.md §7.5/§8) but never registered here, so this file
@@ -27,15 +27,15 @@ from app.db.models.idol import Idol
 # This file is the one place that's supposed to guarantee every model is
 # registered regardless of what else got imported — keep it in sync with
 # app/db/models/ going forward.
-from app.db.models.venue import Venue
-from app.db.models.concert import Concert, ConcertPerformer
-from app.db.models.ticket_type import TicketType
-from app.db.models.direct_sale_campaign import DirectSaleCampaign
-from app.db.models.lottery_preference import LotteryPreference
-from app.db.models.lottery_campaign import LotteryCampaign
-from app.db.models.lottery_entry import LotteryEntry
-from app.db.models.ticket import Ticket
-from app.db.models.album_detail import AlbumDetail
-from app.db.models.genre import Genre, AlbumGenre
-from app.db.models.merch_detail import MerchDetail
-from app.db.models.notification import Notification
+from app.db.models.events.venue import Venue
+from app.db.models.events.concert import Concert, ConcertPerformer
+from app.db.models.events.ticket_type import TicketType
+from app.db.models.events.direct_sale_campaign import DirectSaleCampaign
+from app.db.models.events.lottery_preference import LotteryPreference
+from app.db.models.events.lottery_campaign import LotteryCampaign
+from app.db.models.events.lottery_entry import LotteryEntry
+from app.db.models.events.ticket import Ticket
+from app.db.models.marketplace.album_detail import AlbumDetail
+from app.db.models.marketplace.genre import Genre, AlbumGenre
+from app.db.models.marketplace.merch_detail import MerchDetail
+from app.db.models.shared.notification import Notification

@@ -31,7 +31,7 @@ real deploy — both are already fixed as of this doc:
 - **CORS** (`main.py`) — was a hardcoded `["http://localhost:8080"]`. Now reads a `CORS_ORIGINS`
   env var (comma-separated origins), defaulting to the same value so local dev is unaffected. Set
   this to your real frontend's origin(s) in Render (§6).
-- **Email verification link** (`app/services/auth_service.py`) — was hardcoded to a specific old
+- **Email verification link** (`app/services/identity/auth_service.py`) — was hardcoded to a specific old
   Render domain from before this project was renamed. Now reads `BASE_URL` (§6).
 
 Nothing else needs code changes to deploy — `Dockerfile` already runs `alembic upgrade head` then

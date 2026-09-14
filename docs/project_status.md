@@ -116,7 +116,7 @@ migrations (§3's standing gap was "no live DB reachable most sessions"; this se
   `get_storage().save()` pipeline from `tests/fixtures/{idols,products}/` — procedural
   placeholder art (Pillow gradients/patterns/monograms, no AI image generation was available in
   this environment), not real character art; see `tests/fixtures/README.md`.
-- **Notifications** (`app/db/models/notification.py`, migrations `df79d71c6a2c` + `a3f7c9e2b6d4` —
+- **Notifications** (`app/db/models/shared/notification.py`, migrations `df79d71c6a2c` + `a3f7c9e2b6d4` —
   **applied and live-verified this session**, see §1): a `notifications` table (`database-design.md` §3.19) covering 8
   event types (order/ticket/lottery confirmations, lottery result, payment reminder/confirmation,
   event reminder, password reset), one nullable FK per referenced entity kind. **Now has
@@ -131,7 +131,7 @@ migrations (§3's standing gap was "no live DB reachable most sessions"; this se
   facing read/poll API: `GET /notifications/mine` (`?unread_only=true`), `GET /notifications/
   unread-count` (cheap, meant to be polled — no WebSocket/SSE layer exists, see `docs/api-spec.md`
   §7), `POST /notifications/{id}/read`, `POST /notifications/read-all` — self-scoped to
-  `current_user.id`, all four now rate-limited (`app/router/notification.py`, previously had
+  `current_user.id`, all four now rate-limited (`app/router/shared/notification.py`, previously had
   none). Not yet built: `lottery_registered` (on lottery entry application) and `lottery_payment_
   confirmation`/`event_reminder` have no producer yet — flagged, not implemented speculatively.
   **Also not built, and out of scope for now by explicit decision**: actually emailing any of
@@ -456,7 +456,7 @@ newly introduced.
     migration has reached Supabase yet — this item is fixed for local dev only until it does.
 
 15. ~~**`DELETE /profile/delete` 500'd for any user with a `shipping_addresses` row**~~ —
-    **FIXED**. `Users.shippingadd`/`cart`/`user_order`/`paymentuser` (`app/db/models/user.py`)
+    **FIXED**. `Users.shippingadd`/`cart`/`user_order`/`paymentuser` (`app/db/models/identity/user.py`)
     had no `passive_deletes`, so on `db.delete(db_user)` SQLAlchemy's default unit-of-work tried
     to `UPDATE ... SET user_id = NULL` on each child row before deleting the parent — which
     raised a `NotNullViolation` since `shipping_addresses.user_id`/`cart.user_id`/
@@ -707,7 +707,7 @@ idempotency mechanism ended up being that status guard rather than a separate ev
    database from this session's environment** (`alembic upgrade head` needs the `postgres` Docker
    host, unreachable from outside the compose network); run it before relying on
    `pg_approval_url`.
-4. `PaymentGateway.paypal` in `app/schema/payment.py`; `PaymentResponse.pg_approval_url` added.
+4. `PaymentGateway.paypal` in `app/schema/marketplace/payment.py`; `PaymentResponse.pg_approval_url` added.
 5. `order_service.checkout()`/`ticket_service.checkout_ticket()`'s `paypal` branch: creates the
    Order/Ticket row pending, calls `create_order()`, stores `pg_order_id` + `pg_approval_url` — no
    stock decrement yet. `finalize_paypal_payment(db, pg_order_id, user_id)` in `payment_service.py`
@@ -715,7 +715,7 @@ idempotency mechanism ended up being that status guard rather than a separate ev
    calling `capture_order()` (an irreversible external side effect — checking after would let
    PayPal successfully take a buyer's money for an order that turns out unfulfillable), then marks
    `Payment`/`Order`/`Ticket` success and commits once. Two router endpoints in
-   `app/router/payment.py`: `POST /payment/paypal/capture/{pg_order_id}` (fast path, authenticated)
+   `app/router/marketplace/payment.py`: `POST /payment/paypal/capture/{pg_order_id}` (fast path, authenticated)
    and `POST /payment/paypal/webhook` (reconciliation path, signature-verified, no auth).
    `GET /payment/paypal/return` and `/cancel` are placeholder JSON responses standing in for the
    frontend routes PayPal's `return_url`/`cancel_url` need once one exists — see
@@ -801,7 +801,7 @@ campaign for one concert to be drawn together — a fan's "at most one ticket pe
 depends on the cascade seeing every tier's pending entries at once. A per-campaign trigger would let
 a manager draw VIP while Premium/Regular are still open, breaking that guarantee. Endpoint:
 `POST /lottery_campaigns/concerts/{concert_id}/draw`, added to the existing
-`app/router/lottery_campaign.py` (same `require_manager_or_admin` + string-sentinel/`_raise_for`
+`app/router/events/lottery_campaign.py` (same `require_manager_or_admin` + string-sentinel/`_raise_for`
 convention already there), draws every `status='open'` campaign under that concert's ticket types
 as one atomic unit.
 
@@ -854,7 +854,7 @@ result could be replayed) was considered and intentionally **not** planned in �
 project's scope models a dispute process, and CLAUDE.md §7 flags exactly this kind of speculative
 scope addition to avoid; worth naming if asked, not worth building.
 
-**Placement**: new `app/services/lottery_draw_service.py` rather than folding into
+**Placement**: new `app/services/events/lottery_draw_service.py` rather than folding into
 `lottery_campaign_service.py` — the draw is a meaningfully different concern (the "Job" actor in
 §5.2, touching `LotteryCampaign`/`LotteryEntry`/`LotteryPreference`/`TicketType`/`Ticket`) from plain
 campaign CRUD, and keeping it separate makes the interview-relevant file easy to point at directly.
