@@ -1,17 +1,31 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.user import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
 from app.schema.group import (
-    GroupCreate, GroupUpdate, GroupRead, GroupsPageRead, GroupDetailRead, ManagerGroupsPageRead,
+    GroupCreate,
+    GroupDetailRead,
+    GroupRead,
+    GroupsPageRead,
+    GroupUpdate,
+    ManagerGroupsPageRead,
 )
 from app.services.group_service import (
-    add_group, get_groups, get_group, update_group, delete_group, reactivate_group,
-    get_groups_page, get_group_detail, get_manager_groups_page,
+    add_group,
+    delete_group,
+    get_group,
+    get_group_detail,
+    get_groups,
+    get_groups_page,
+    get_manager_groups_page,
+    reactivate_group,
+    update_group,
 )
 
 # require_manager_or_admin per database-design.md §4's role table ("CRUD own

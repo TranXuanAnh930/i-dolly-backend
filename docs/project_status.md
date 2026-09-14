@@ -586,9 +586,9 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
 
 ## 5. Deliberately deferred — next phase, not forgotten
 
-- **Payment failure handling** — every trigger and flow so far assumes success (mock gateway).
-  A PayPal integration plan now exists — see §7 — but is deliberately left for hand-implementation
-  (interview-defensibility reasons, same as §6 item 2) rather than done by Claude.
+- **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
+  always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
+  implemented but not yet exercised against a real declined sandbox payment.
 - **The direct/"reservation" (non-lottery) checkout flow** — the schema supports it
   (`ticket_types.sale_method = 'direct'`), but only the lottery path has a sequence diagram
   (`database-design.md` §5.2) and only `tickets`' admin-only manual-issue endpoint exists so far.
@@ -673,67 +673,95 @@ repeated here — see git history / earlier `CLAUDE.md` versions if the detail i
    `add_to_cart`'s two existing tests once a real role check existed — given a `role="fan"` default,
    matching `Users.role`'s actual DB default.
 
-## 7. Planned next: PayPal gateway integration
+## 7. PayPal gateway integration — implemented, partially verified
 
-**Design drafted, not yet implemented** — deliberately left for hand-implementation (interview-
-defensibility reasons, same as §6 item 2: real gateway integration, webhook idempotency, and
-signature verification are exactly the class of correctness problem this portfolio is meant to
-demonstrate judgment on, not infrastructure to have generated). This is the item §4 item 4 and §5
-referred to as "next-phase work" — this section is that phase's plan.
+Hand-implemented by the project owner (interview-defensibility reasons, same as §6 item 2: real
+gateway integration, webhook idempotency, and signature verification are exactly the class of
+correctness problem this portfolio is meant to demonstrate judgment on), reviewed by Claude across
+several rounds. This is the item §4 item 4 and §5 referred to as "next-phase work."
 
-**The core problem the previous, removed Paypal integration (§4 item 4) didn't solve**: the mock
+**The core problem the previous, removed PayPal integration (§4 item 4) didn't solve**: the mock
 gateway resolves success/failure synchronously inside `checkout()`/`checkout_ticket()` via a
 `simulate_succ` flag. PayPal can't work that way — it's an async three-step handoff (create order →
 buyer approves in PayPal's UI → server captures) plus a webhook that can arrive before, after, or
-instead of the capture call, possibly more than once. Consequences that drive the plan below: stock/
-seat decrement must move to whenever payment is *actually* confirmed (not checkout time, or an
-abandoned PayPal order permanently holds inventory); the capture endpoint and the webhook handler
-are two entry points into the same "finalize this payment" logic, so it must be one shared function,
-not duplicated; and the webhook needs an idempotency guard before it touches anything, keyed on
-PayPal's event `id` — this is the same `idempotency_key` mechanism §4 item 16 already reasoned
-through without building, and PayPal is exactly the case it was designed for.
+instead of the capture call, possibly more than once. This is solved: stock/seat decrement happens
+only inside `finalize_paypal_payment` once payment is *actually* confirmed, not at checkout time;
+the capture endpoint and the webhook handler are two entry points into that one shared function,
+not duplicated logic; and re-running `finalize_paypal_payment` against an already-resolved payment
+is a no-op (`payment.status != PaymentStatus.pending` guard, first check in the function) — the
+idempotency mechanism ended up being that status guard rather than a separate event-id table (see
+"deviations from the original plan" below).
 
-Ordered plan:
+**What actually shipped**, roughly matching the original ordered plan:
+1. `app/config/settings.py`: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MODE`
+   (`sandbox`|`live`), `PAYPAL_WEBHOOK_ID`, `BASE_URL`. No new dependency — `httpx` only.
+2. `app/utils/paypal_client.py`: `get_access_token()` (OAuth2 client-credentials, cached
+   in-process), `create_order(amount, currency)`, `capture_order(paypal_order_id)`,
+   `verify_webhook_signature(headers, body)` (posts back to PayPal's own
+   `/v1/notifications/verify-webhook-signature` rather than reimplementing cert-chain verification),
+   `extract_approval_url(order_response)` (pulls the buyer-facing `payer-action`/`approve` HATEOAS
+   link out of `create_order`'s response).
+3. Migrations: `d4e6f2a8c1b9` adds `'paypal'` to `payment_gateway_enum`; `e8b4a1f0c5d7` adds
+   `payment.pg_approval_url` (persists the link `extract_approval_url` returns, so a frontend can
+   read it back off `PaymentResponse` without re-deriving it) — **not yet applied to a live
+   database from this session's environment** (`alembic upgrade head` needs the `postgres` Docker
+   host, unreachable from outside the compose network); run it before relying on
+   `pg_approval_url`.
+4. `PaymentGateway.paypal` in `app/schema/payment.py`; `PaymentResponse.pg_approval_url` added.
+5. `order_service.checkout()`/`ticket_service.checkout_ticket()`'s `paypal` branch: creates the
+   Order/Ticket row pending, calls `create_order()`, stores `pg_order_id` + `pg_approval_url` — no
+   stock decrement yet. `finalize_paypal_payment(db, pg_order_id, user_id)` in `payment_service.py`
+   re-locks the relevant rows (`with_for_update()`), check-then-decrements stock/capacity *before*
+   calling `capture_order()` (an irreversible external side effect — checking after would let
+   PayPal successfully take a buyer's money for an order that turns out unfulfillable), then marks
+   `Payment`/`Order`/`Ticket` success and commits once. Two router endpoints in
+   `app/router/payment.py`: `POST /payment/paypal/capture/{pg_order_id}` (fast path, authenticated)
+   and `POST /payment/paypal/webhook` (reconciliation path, signature-verified, no auth).
+   `GET /payment/paypal/return` and `/cancel` are placeholder JSON responses standing in for the
+   frontend routes PayPal's `return_url`/`cancel_url` need once one exists — see
+   `docs/api-spec.md` §6 "PayPal checkout flow" for the full frontend-facing sequence.
 
-1. **Settings**: `app/config/settings.py` gains `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`,
-   `PAYPAL_MODE` (`sandbox`|`live`, default `sandbox`), `PAYPAL_WEBHOOK_ID`. No new dependency —
-   `httpx` is already in `requirements.txt`; PayPal's REST API doesn't need their SDK.
-2. **`app/utils/paypal_client.py`** (new, thin httpx wrapper, same "swap backend, no call-site
-   changes" shape as `app/utils/storage.py`): `get_access_token()` (OAuth2 client-credentials,
-   cached in-process), `create_order(amount)`, `capture_order(paypal_order_id)`,
-   `verify_webhook_signature(headers, body)` — calls PayPal's own
-   `/v1/notifications/verify-webhook-signature` endpoint rather than reimplementing their
-   cert-chain check locally.
-3. **Two migrations**, one concern each (CLAUDE.md §6, atomic `DO $$...EXCEPTION` pattern):
-   add `'paypal'` to `payment_gateway_enum`; add a `processed_webhook_events` table
-   (`event_id UNIQUE`, `gateway`, `processed_at`) as the idempotency guard, enforced as a DB
-   constraint and translated through the existing `commit_or_raise`/`TriggerViolationError`
-   machinery — the same "DB backstop for money invariants" pattern `database-design.md` §4.1
-   already uses.
-4. **Schema**: `PaymentGateway.paypal` in `app/schema/payment.py`. No new `Payment` columns needed
-   — `pg_order_id`/`pg_payment_id`/`pg_signature` already map onto PayPal's order id / capture id /
-   webhook transmission id.
-5. **Checkout flow split**, `paypal` branch only (mock keeps its current synchronous shape
-   untouched): `checkout()`/`checkout_ticket()` create the Order/Ticket row **pending**, call
-   `create_order()`, store `pg_order_id`, return it to the client — no stock decrement yet. A new
-   shared `finalize_paypal_payment(db, pg_order_id)` in `payment_service.py` re-locks the same row
-   (`with_for_update()`, matching `ticket_service.checkout_ticket`'s pattern), check-then-decrements,
-   marks `Payment`/`Order`/`Ticket` success, commits once. Two new router endpoints in
-   `app/router/payment.py`: `POST /payment/paypal/capture/{pg_order_id}` (fast path — calls PayPal
-   capture then `finalize_paypal_payment`) and `POST /payment/paypal/webhook` (reconciliation path —
-   verifies signature, checks/inserts the event id from step 3 *before* calling
-   `finalize_paypal_payment`, since the webhook can double-fire or arrive after the client already
-   captured).
+**Deviations from the original plan**:
+- The planned `processed_webhook_events` table (idempotency keyed on PayPal's event `id`) was
+  dropped — `payment.status != PaymentStatus.pending` already makes `finalize_paypal_payment`
+  idempotent regardless of which caller (capture endpoint or webhook) reaches it first or how many
+  times the webhook re-delivers, without a second table to maintain.
+- `finalize_paypal_payment`'s webhook branch extracts `pg_order_id` from
+  `resource.supplementary_data.related_ids.order_id` — this was an unverified guess when written;
+  it's since been confirmed correct against a real `PAYMENT.CAPTURE.COMPLETED` sample payload from
+  PayPal's own webhook simulator.
 
-**Open questions, not decided yet** — resolve before implementing, don't pick speculatively:
-- How long a pending PayPal order holds implicit inventory intent before it's considered abandoned
-  — an expiry job, or is "never confirmed, stock never touched" sufficient for portfolio scope?
-- Whether `finalize_paypal_payment` needs its own lock against being called concurrently by both
-  the capture endpoint and the webhook for the same order.
+**Verified so far**: a real PayPal Sandbox ticket checkout end-to-end — create order → approve on
+PayPal's sandbox UI → `POST /payment/paypal/capture/{pg_order_id}` → `Payment`/`Ticket` both flip to
+success/paid correctly.
 
-**Verification plan**: no unit-testable "did money move" here — verify against a PayPal Sandbox
-account (developer.paypal.com) and its webhook simulator, the same standing-gap caveat as §3
-(needs real network access, not available in every session this project has been built in).
+**Not yet verified — known limitations, not silently assumed working**:
+- **The order-flow (marketplace) checkout has not been run end-to-end against real PayPal** — only
+  the ticket flow has. The code path is the same shape (see §7 point 5 above) and has been
+  reviewed, but "reviewed" isn't "observed working."
+- **The webhook path has never received a real or simulated delivery.** Both a real ngrok-forwarded
+  webhook and PayPal's own webhook-simulator "Send Test" were tried; ngrok's inspector shows zero
+  incoming requests either way, despite the tunnel being confirmed live and the registered webhook
+  URL confirmed to exactly match it. This lines up with a documented, PayPal-side pattern (their
+  developer community reports the simulator saying "queued" and never delivering, and PayPal is
+  known to silently drop delivery to domains it flags as tunnel/abuse-associated, which
+  `*.ngrok-free.dev` plausibly is) rather than a bug in `verify_webhook_signature` or the route
+  itself — but this is inference, not confirmation. If this matters later: try swapping the local
+  tunnel to `cloudflared` (different domain, no interstitial) before assuming the handler code is
+  at fault.
+- **The decline path** (`finalize_paypal_payment`'s `else` branches, marking `Payment`/`Order`/
+  `Ticket` failed/cancelled) has been code-reviewed but not exercised against a real declined
+  sandbox payment.
+- **No sweep for abandoned PayPal checkouts** — a `pending` order/ticket whose buyer never
+  approves or cancels stays `pending` indefinitely; nothing expires it or frees the stock it never
+  actually decremented (it never decremented stock in the first place, so no inventory is
+  incorrectly held — but the row itself lingers). Whether that needs an expiry job is still an open
+  question, not a decided no.
+- Whether `finalize_paypal_payment` needs a lock against being invoked concurrently by both the
+  capture endpoint and the webhook for the same order was flagged as open in the original plan;
+  the `with_for_update()` row locks plus the pending-status idempotency guard appear to close this
+  in practice (whichever caller wins the row lock first resolves the payment; the second sees
+  `status != pending` and returns `None`), but it hasn't been deliberately race-tested.
 
 ## 8. Planned next: manager-triggered lottery draw job
 

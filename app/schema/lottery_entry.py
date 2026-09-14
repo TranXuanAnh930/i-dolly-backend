@@ -1,7 +1,10 @@
 import uuid
 from datetime import datetime
+
 from pydantic import BaseModel
+
 from app.schema.lottery_campaign import LotteryCampaignRead
+
 
 class LotteryEntryApply(BaseModel):
     campaign_id: uuid.UUID

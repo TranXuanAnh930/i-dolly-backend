@@ -1,7 +1,10 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.category import CategoryBase, CategoryCreate, CategoryUpdate
+
 from app.db.models.category import Category
+from app.schema.category import CategoryBase, CategoryCreate, CategoryUpdate
+
 
 def add_categories(db:Session, category:CategoryBase):
     db_category = Category(**category.model_dump())

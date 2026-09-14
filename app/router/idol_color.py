@@ -1,13 +1,15 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.user import Users
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.idol_color import IdolColorCreate, IdolColorBase, IdolColorRead
-from app.services.idol_color_service import add_idol_color, get_idol_colors, update_idol_color, delete_idol_color
+from app.schema.idol_color import IdolColorBase, IdolColorCreate, IdolColorRead
+from app.services.idol_color_service import add_idol_color, delete_idol_color, get_idol_colors, update_idol_color
 
 # A lookup table, not an enum, specifically so it's manager/admin-extensible
 # without a migration (database-design.md §3.5) — create/update use

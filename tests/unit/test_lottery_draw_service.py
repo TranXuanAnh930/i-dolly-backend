@@ -3,10 +3,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from app.db.models.concert import Concert
-from app.db.models.ticket_type import TicketType
 from app.db.models.lottery_campaign import LotteryCampaign
-from app.db.models.lottery_preference import LotteryPreference
 from app.db.models.lottery_entry import LotteryEntry
+from app.db.models.lottery_preference import LotteryPreference
+from app.db.models.ticket_type import TicketType
 
 # ─────────────────────────────────────────────────────────────
 # Id sentinels — see test_services.py's own note: plain MagicMock-based

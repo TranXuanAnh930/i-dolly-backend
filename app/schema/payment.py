@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 from enum import Enum
+
 from pydantic import BaseModel
+
 
 class PaymentStatus(str, Enum):
     pending = "pending"
@@ -11,6 +13,7 @@ class PaymentStatus(str, Enum):
 
 class PaymentGateway(Enum):
     mock = "mock"
+    paypal = "paypal"
 
 class PaymentCreate(BaseModel):
     amount : int
@@ -37,6 +40,10 @@ class PaymentResponse(BaseModel):
     pg_order_id : str | None
     pg_payment_id : str | None
     pg_signature : str | None
+    # PayPal's buyer-facing redirect link (docs/api-spec.md §6) — set only
+    # for a pending paypal payment; a frontend sends the buyer here to
+    # approve before calling POST /payment/paypal/capture/{pg_order_id}.
+    pg_approval_url : str | None = None
     created_at : datetime
     updated_at : datetime
 

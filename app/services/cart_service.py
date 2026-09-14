@@ -1,11 +1,13 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from app.db.models.user import Users
-from app.schema.cart import CartItem
+
 from app.db.models.cart import Cart
 from app.db.models.products import Product
-from app.exception.db_triggers import commit_or_raise, FanOnlyPurchaseError
+from app.db.models.user import Users
+from app.exception.db_triggers import FanOnlyPurchaseError, commit_or_raise
+from app.schema.cart import CartItem
+
 
 def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID):
     user = db.get(Users, user_id)

@@ -1,9 +1,12 @@
 import uuid
-from app.db.base_class import Base
-from app.schema.payment import PaymentStatus, PaymentGateway
-from sqlalchemy import Boolean, Column, DateTime, Integer, ForeignKey, Enum, String, func
+
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
+from app.db.base_class import Base
+from app.schema.payment import PaymentGateway, PaymentStatus
+
 
 class Payment(Base):
 
@@ -25,6 +28,12 @@ class Payment(Base):
     pg_order_id = Column(String, nullable=True)
     pg_payment_id = Column(String, nullable=True)
     pg_signature = Column(String, nullable=True)
+    # PayPal's buyer-facing "payer-action"/"approve" redirect link from
+    # create_order()'s response — nothing else in this app can re-derive it,
+    # so it's persisted here rather than recomputed. Null for the mock
+    # gateway and for any paypal payment already resolved before this column
+    # existed.
+    pg_approval_url = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now(), nullable=False)
     # unique key to fix idempotency issues

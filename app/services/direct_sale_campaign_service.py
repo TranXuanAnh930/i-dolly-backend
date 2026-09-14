@@ -1,10 +1,12 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.direct_sale_campaign import DirectSaleCampaignCreate, DirectSaleCampaignUpdate
+
+from app.db.models.concert import Concert
 from app.db.models.direct_sale_campaign import DirectSaleCampaign
 from app.db.models.ticket_type import TicketType
-from app.db.models.concert import Concert
 from app.db.models.user import Users
+from app.schema.direct_sale_campaign import DirectSaleCampaignCreate, DirectSaleCampaignUpdate
 
 # Company-scoped via a two-level join: ticket_type_id -> concert_id ->
 # concert.company_id — same pattern as lottery_campaign_service.

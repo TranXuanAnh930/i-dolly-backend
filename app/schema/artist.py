@@ -1,5 +1,7 @@
 import uuid
+
 from pydantic import BaseModel
+
 
 # A product's resolved owner — exactly one of idol/group, same
 # convention as album_details/merch_details. color_hex is only ever

@@ -1,13 +1,15 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
 from app.deps.auth import get_current_user, require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.lottery_entry import LotteryEntryApply, LotteryEntryRead
-from app.services.lottery_entry_service import apply_to_lottery, get_my_entries, get_entries_for_campaign
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.lottery_entry import LotteryEntryApply, LotteryEntryRead
+from app.services.lottery_entry_service import apply_to_lottery, get_entries_for_campaign, get_my_entries
 
 router = APIRouter(prefix="/lottery_entries", tags=["Lottery Entries"])
 

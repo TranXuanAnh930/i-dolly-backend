@@ -1,9 +1,12 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.position import PositionBase, PositionCreate, IdolPositionAssign
-from app.db.models.position import Position, IdolPosition
+
 from app.db.models.idol import Idol
+from app.db.models.position import IdolPosition, Position
 from app.db.models.user import Users
+from app.schema.position import IdolPositionAssign, PositionBase, PositionCreate
+
 
 def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "manager" and current_user.company_id != company_id

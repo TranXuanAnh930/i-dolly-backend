@@ -100,6 +100,15 @@ class DuplicateIdempotencyKeyError(TriggerViolationError):
     status_code = 409
 
 
+class DuplicateTicketTypeError(TriggerViolationError):
+    """uq_ticket_types_concert_tier_method — a concert can only have one
+    ticket type per (tier, sale_method) pair. Also a plain UNIQUE
+    constraint, not a trigger — same reasoning as DuplicateIdempotencyKeyError
+    above. Without this, ManagerEventFormPage.vue's "add ticket type" form
+    hitting an already-used tier+method combo surfaced as an unhandled 500
+    (a raw psycopg2.errors.UniqueViolation) instead of a clean 400."""
+
+
 # (message substring, exception class) pairs, matched against the raw
 # Postgres error text. Each substring is chosen to be unique to one trigger
 # function's RAISE EXCEPTION wording (see the grep-able "RAISE EXCEPTION"
@@ -116,6 +125,7 @@ _MESSAGE_PATTERNS = [
     ("has not ranked ticket_type_id=", LotteryPreferenceRequiredError),
     ("would exceed concerts.capacity", ConcertTicketCapacityExceededError),
     ("uq_payment_idempotency_key", DuplicateIdempotencyKeyError),
+    ("uq_ticket_types_concert_tier_method", DuplicateTicketTypeError),
 ]
 
 

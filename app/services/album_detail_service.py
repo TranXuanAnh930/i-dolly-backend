@@ -1,12 +1,14 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.album_detail import AlbumDetailCreate, AlbumDetailUpdate
+
 from app.db.models.album_detail import AlbumDetail
-from app.db.models.products import Product
-from app.db.models.idol import Idol
 from app.db.models.group import Group
+from app.db.models.idol import Idol
+from app.db.models.products import Product
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
+from app.schema.album_detail import AlbumDetailCreate, AlbumDetailUpdate
 
 # Company-scoped via whichever of idol_id/group_id is set on the row (the
 # "dual-FK scoping" case flagged in database-design.md — more complex than

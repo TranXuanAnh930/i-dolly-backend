@@ -1,13 +1,15 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.lottery_preference import LotteryPreferenceSet, LotteryPreferenceRead
-from app.services.lottery_preference_service import set_preferences, get_my_preferences, clear_my_preferences
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.lottery_preference import LotteryPreferenceRead, LotteryPreferenceSet
+from app.services.lottery_preference_service import clear_my_preferences, get_my_preferences, set_preferences
 
 # Fan-facing / self-scoped — see lottery_preference_service for rationale.
 # Every endpoint operates on current_user's own rows only; there's no

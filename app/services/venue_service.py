@@ -1,7 +1,9 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.venue import VenueCreate, VenueUpdate
+
 from app.db.models.venue import Venue
+from app.schema.venue import VenueCreate, VenueUpdate
 
 # Not company-scoped: a venue is a physical location multiple companies'
 # concerts can use, so it was never a tenant-scoping candidate

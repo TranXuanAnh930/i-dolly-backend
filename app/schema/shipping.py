@@ -1,6 +1,8 @@
 import uuid
-from pydantic import BaseModel, Field
 from enum import Enum
+
+from pydantic import BaseModel, Field
+
 
 class ShippingBase(BaseModel):
     address_line1:str = Field(..., min_length=1, max_length=300)

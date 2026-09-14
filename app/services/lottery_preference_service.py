@@ -1,11 +1,13 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.lottery_preference import LotteryPreferenceSet
+
+from app.db.models.concert import Concert
 from app.db.models.lottery_preference import LotteryPreference
 from app.db.models.ticket_type import TicketType
-from app.db.models.concert import Concert
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
+from app.schema.lottery_preference import LotteryPreferenceSet
 
 # Fan-facing, self-scoped by user_id = current_user.id — not company-scoped,
 # since a fan (regardless of role) ranks their own tier preferences for a

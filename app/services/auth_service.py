@@ -1,18 +1,17 @@
-from sqlalchemy.orm import Session
-from fastapi import BackgroundTasks
-from app.schema.user import UserCreate
-from app.db.models.user import Users
-from app.db.models.refresh_token import RefreshToken
-from app.utils.hashing import hash_password, verify_password
-from app.utils.email_sender import send_email
-from app.utils.jwt_manager import (
-    create_access_token, 
-    verify_token_and_get_user_id, 
-    create_email_verification_token
-)
-from datetime import datetime, timedelta, timezone
-from app.config.settings import settings
 import uuid
+from datetime import datetime, timedelta, timezone
+
+from fastapi import BackgroundTasks
+from sqlalchemy.orm import Session
+
+from app.config.settings import settings
+from app.db.models.refresh_token import RefreshToken
+from app.db.models.user import Users
+from app.schema.user import UserCreate
+from app.utils.email_sender import send_email
+from app.utils.hashing import hash_password, verify_password
+from app.utils.jwt_manager import create_access_token, create_email_verification_token, verify_token_and_get_user_id
+
 
 def create_user(db:Session, user: UserCreate):
     check_existing_user = db.query(Users).filter(Users.email == user.email).first()

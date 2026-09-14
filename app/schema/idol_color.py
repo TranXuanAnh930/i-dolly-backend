@@ -1,5 +1,7 @@
 import uuid
+
 from pydantic import BaseModel, Field
+
 
 class IdolColorBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)

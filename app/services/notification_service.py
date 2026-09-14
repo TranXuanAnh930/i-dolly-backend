@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
+
 from app.db.models.notification import Notification
 from app.db.models.user import Users
 

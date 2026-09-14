@@ -1,7 +1,10 @@
-from jose import jwt, JWTError
-from datetime import datetime, timedelta, timezone
-from app.config.settings import settings
 import uuid
+from datetime import datetime, timedelta, timezone
+
+from jose import JWTError, jwt
+
+from app.config.settings import settings
+
 
 def create_access_token(data: dict):
     to_encode = data.copy()

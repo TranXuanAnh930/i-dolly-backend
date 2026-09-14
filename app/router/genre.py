@@ -1,14 +1,21 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.genre import GenreCreate, GenreRead, AlbumGenreAssign, AlbumGenreRead
+from app.schema.genre import AlbumGenreAssign, AlbumGenreRead, GenreCreate, GenreRead
 from app.services.genre_service import (
-    add_genre, get_genres, delete_genre,
-    assign_genre, get_album_genres, get_all_album_genres, remove_genre,
+    add_genre,
+    assign_genre,
+    delete_genre,
+    get_album_genres,
+    get_all_album_genres,
+    get_genres,
+    remove_genre,
 )
 
 # Same rationale as idol_colors/positions: a lookup table, manager/admin-
