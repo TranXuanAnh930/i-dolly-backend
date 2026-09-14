@@ -43,16 +43,16 @@ async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user
     # must come last or it swallows every more specific case as a 404.
     except PaymentFailedError as e:
         db.rollback()
-        raise HTTPException(status_code=402, detail=str(e))
+        raise HTTPException(status_code=402, detail=str(e)) from e
     except (InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except (CartItemError, AddressIdError) as e:
         db.rollback()
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except TriggerViolationError as e:
         db.rollback()
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     
 @router.get("/manager-orders-page", response_model=ManagerOrdersPageRead)
 async def get_manager_orders_page_data(

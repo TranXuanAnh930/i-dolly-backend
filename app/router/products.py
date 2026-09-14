@@ -114,7 +114,7 @@ async def add_new_product(
         try:
             image_url = await get_storage().save(image, subfolder="products")
         except StorageError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     product = ProductCreate(
         name=name, price=price, description=description, quantity=quantity,
@@ -158,14 +158,14 @@ async def add_new_product_with_detail(
             edition=edition, color_id=color_id,
         )
     except ValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     image_url = None
     if image is not None:
         try:
             image_url = await get_storage().save(image, subfolder="products")
         except StorageError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     result = add_product_with_detail(db, data, image_url, current_user)
     if result == "category_not_found":
@@ -200,7 +200,7 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
     try:
         image_url = await get_storage().save(image, subfolder="products")
     except StorageError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     db_product = set_product_image(db, id, image_url, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")

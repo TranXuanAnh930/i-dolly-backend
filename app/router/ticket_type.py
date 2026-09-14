@@ -40,7 +40,7 @@ async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depe
     try:
         result = add_ticket_type(db, data, current_user)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
         _raise_for(result, "Concert not found")
     return result
@@ -64,7 +64,7 @@ async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, cur
     try:
         result = update_ticket_type(db, id, data, current_user)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
         _raise_for(result, "Ticket type not found")
     return result

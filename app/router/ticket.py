@@ -61,16 +61,16 @@ async def checkout_new_ticket(data: TicketCheckoutCreate, user: Users = Depends(
     # same reasoning as order.py's checkout_order.
     except (InsufficientTicketStockError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except TicketTypeNotFoundError as e:
         db.rollback()
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except CartItemError as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except TriggerViolationError as e:
         db.rollback()
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/{ticket_id}/checkout", response_model=TicketRead)
 async def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheckoutCreate, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)):
@@ -80,20 +80,20 @@ async def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheck
     # generic CartItemError-family checks after the more specific ones.
     except TicketNotFoundError as e:
         db.rollback()
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except (TicketNotPayableError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except TriggerViolationError as e:
         db.rollback()
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/add", response_model=TicketRead)
 async def add_new_ticket(data: TicketCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
     try:
         result = add_ticket(db, data)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
         _raise_for(result, "Ticket type, user, or lottery entry not found")
     return result

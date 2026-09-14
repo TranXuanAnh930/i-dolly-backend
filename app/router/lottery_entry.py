@@ -32,7 +32,7 @@ async def apply_to_a_lottery(data: LotteryEntryApply, current_user: Users = Depe
     try:
         result = apply_to_lottery(db, data, current_user)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
         _raise_for(result)
     return result

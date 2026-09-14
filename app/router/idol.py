@@ -74,7 +74,7 @@ async def add_new_idol(
         try:
             profile_image_url = await get_storage().save(image, subfolder="idols")
         except StorageError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     idol = IdolCreate(
         name=name, company_id=company_id, group_id=group_id, date_of_birth=date_of_birth,
@@ -156,7 +156,7 @@ async def upload_idol_image(id: uuid.UUID, image: UploadFile = File(...), curren
     try:
         image_url = await get_storage().save(image, subfolder="idols")
     except StorageError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     result = set_idol_image(db, id, image_url, current_user)
     if isinstance(result, str):
         _raise_for(result, "Idol not found")

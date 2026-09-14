@@ -34,7 +34,7 @@ async def add_new_merch_detail(data: MerchDetailCreate, current_user: Users = De
     try:
         result = add_merch_detail(db, data, current_user)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
         _raise_for(result, "Product, idol, group, or color not found")
     return result

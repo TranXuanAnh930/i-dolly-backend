@@ -34,7 +34,7 @@ async def add_new_album_detail(data: AlbumDetailCreate, current_user: Users = De
     try:
         result = add_album_detail(db, data, current_user)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
         _raise_for(result, "Product, idol, or group not found")
     return result

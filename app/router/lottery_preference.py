@@ -29,7 +29,7 @@ async def set_my_preferences(data: LotteryPreferenceSet, current_user: Users = D
     try:
         result = set_preferences(db, data, current_user)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
         _raise_for(result)
     return result

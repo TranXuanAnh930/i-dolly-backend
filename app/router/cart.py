@@ -17,7 +17,7 @@ async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), 
     try:
         cart = add_to_cart(db, cart_item, user.id)
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if cart is None:
         raise HTTPException(status_code=404, detail="Insufficient stock or product not found")
     if cart is False:
