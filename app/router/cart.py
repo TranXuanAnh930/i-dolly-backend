@@ -1,12 +1,14 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.deps.db import get_db
-from app.deps.auth import get_current_user
-from app.schema.cart import CartItem
+
 from app.db.models.user import Users
-from app.services.cart_service import add_to_cart, remove_cart, see_cart
+from app.deps.auth import get_current_user
+from app.deps.db import get_db
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.cart import CartItem
+from app.services.cart_service import add_to_cart, remove_cart, see_cart
 
 router = APIRouter(prefix="/cart", tags=["Cart"])
 

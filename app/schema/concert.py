@@ -1,11 +1,14 @@
 import uuid
 from datetime import datetime
+
 from pydantic import BaseModel, Field
-from app.schema.venue import VenueRead
-from app.schema.ticket_type import TicketTypeRead
-from app.schema.lottery_campaign import LotteryCampaignRead
+
 from app.schema.direct_sale_campaign import DirectSaleCampaignRead
+from app.schema.lottery_campaign import LotteryCampaignRead
 from app.schema.lottery_preference import LotteryPreferenceRead
+from app.schema.ticket_type import TicketTypeRead
+from app.schema.venue import VenueRead
+
 
 class ConcertBase(BaseModel):
     venue_id: uuid.UUID

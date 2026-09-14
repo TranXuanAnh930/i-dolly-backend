@@ -1,7 +1,19 @@
 import uuid
-from sqlalchemy import String, Integer, Column, DateTime, ForeignKey, Enum, Numeric, CheckConstraint, UniqueConstraint, func
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
 
 ticket_tier_enum = Enum("vip", "premium", "regular", name="ticket_tier_enum")

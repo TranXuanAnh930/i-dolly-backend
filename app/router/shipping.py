@@ -1,13 +1,21 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.user import Users
-from app.deps.db import get_db
 from app.deps.auth import get_current_user
-from app.schema.shipping import ShippingBase, ShippingAddress
-from app.services.shipping_service import create_shipping_address, delete_address, fetch_address, get_address_by_id, update_address
+from app.deps.db import get_db
+from app.schema.shipping import ShippingAddress, ShippingBase
+from app.services.shipping_service import (
+    create_shipping_address,
+    delete_address,
+    fetch_address,
+    get_address_by_id,
+    update_address,
+)
 
 router = APIRouter(prefix="/shipping_addresses", tags=["Shipping"])
 

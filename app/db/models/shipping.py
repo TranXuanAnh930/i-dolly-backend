@@ -1,9 +1,12 @@
 import uuid
-from app.db.base_class import Base
-from app.schema.shipping import ShippingStatus as SchemaStatus
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Enum, func
+
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
+from app.db.base_class import Base
+from app.schema.shipping import ShippingStatus as SchemaStatus
+
 
 class ShippingAddress(Base):
 

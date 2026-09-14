@@ -1,11 +1,13 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.genre import GenreCreate, AlbumGenreAssign
-from app.db.models.genre import Genre, AlbumGenre
+
 from app.db.models.album_detail import AlbumDetail
-from app.db.models.idol import Idol
+from app.db.models.genre import AlbumGenre, Genre
 from app.db.models.group import Group
+from app.db.models.idol import Idol
 from app.db.models.user import Users
+from app.schema.genre import AlbumGenreAssign, GenreCreate
 
 # genres: a global lookup table, not company-scoped — same rationale as
 # idol_colors/positions (manager/admin-extensible without a migration).

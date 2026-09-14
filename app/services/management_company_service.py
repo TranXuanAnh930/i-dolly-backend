@@ -1,7 +1,10 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.management_company import ManagementCompanyBase, ManagementCompanyCreate
+
 from app.db.models.management_company import ManagementCompany
+from app.schema.management_company import ManagementCompanyBase, ManagementCompanyCreate
+
 
 def add_company(db: Session, company: ManagementCompanyCreate):
     db_company = ManagementCompany(**company.model_dump())

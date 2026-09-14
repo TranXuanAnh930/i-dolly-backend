@@ -1,8 +1,11 @@
 import uuid
-from app.db.base_class import Base
-from sqlalchemy import Column, Integer, ForeignKey, Float, UniqueConstraint
+
+from sqlalchemy import Column, Float, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
+from app.db.base_class import Base
+
 
 class Cart(Base):
 

@@ -1,13 +1,15 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
-from app.cache.rate_limit import ip_key, rate_limit
-from app.schema.category import CategoryBase, CategoryUpdate, CategoryRead
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.user import Users
 from app.deps.auth import require_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.services.category_service import add_categories, get_categories, update_category, delete_category
+from app.schema.category import CategoryBase, CategoryRead, CategoryUpdate
+from app.services.category_service import add_categories, delete_category, get_categories, update_category
 
 router = APIRouter(prefix="/categories", tags=["Category"])
 

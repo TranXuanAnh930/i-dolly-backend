@@ -1,15 +1,21 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.album_detail import AlbumDetailCreate, AlbumDetailUpdate, AlbumDetailRead
-from app.services.album_detail_service import (
-    add_album_detail, get_album_details, get_album_detail, update_album_detail, delete_album_detail,
-)
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.album_detail import AlbumDetailCreate, AlbumDetailRead, AlbumDetailUpdate
+from app.services.album_detail_service import (
+    add_album_detail,
+    delete_album_detail,
+    get_album_detail,
+    get_album_details,
+    update_album_detail,
+)
 
 router = APIRouter(prefix="/album_details", tags=["Album Details"])
 

@@ -1,15 +1,17 @@
 import uuid
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
-from app.schema.group import GroupCreate, GroupUpdate
-from app.db.models.group import Group
-from app.db.models.management_company import ManagementCompany
-from app.db.models.idol import Idol
+
 from app.db.models.concert import Concert, ConcertPerformer
+from app.db.models.group import Group
+from app.db.models.idol import Idol
+from app.db.models.management_company import ManagementCompany
 from app.db.models.products import Product
 from app.db.models.user import Users
-from app.services.product_service import _build_product_cards
+from app.schema.group import GroupCreate, GroupUpdate
 from app.services.idol_service import _with_positions_and_color
+from app.services.product_service import _build_product_cards
 
 # Sentinel convention for this module: "not_found" = a referenced row doesn't
 # exist (-> 404 in the router); "forbidden" = the row(s) exist but the caller

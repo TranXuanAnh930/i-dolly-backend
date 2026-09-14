@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
+
 from pydantic import BaseModel, model_validator
+
 
 class DirectSaleCampaignBase(BaseModel):
     sale_start_at: datetime

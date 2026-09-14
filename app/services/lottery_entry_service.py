@@ -1,14 +1,16 @@
 import uuid
+
 from sqlalchemy.orm import Session, joinedload
-from app.schema.lottery_entry import LotteryEntryApply
-from app.db.models.lottery_entry import LotteryEntry
-from app.db.models.lottery_campaign import LotteryCampaign
-from app.db.models.ticket_type import TicketType
+
 from app.db.models.concert import Concert
+from app.db.models.lottery_campaign import LotteryCampaign
+from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.lottery_preference import LotteryPreference
 from app.db.models.ticket import Ticket
+from app.db.models.ticket_type import TicketType
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
+from app.schema.lottery_entry import LotteryEntryApply
 
 _LIVE_TICKET_STATUSES = ("reserved", "pending_payment", "paid", "used")
 

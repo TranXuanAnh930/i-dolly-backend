@@ -1,9 +1,12 @@
 import uuid
 from datetime import date, datetime
+
 from pydantic import BaseModel, Field
-from app.schema.idol import IdolWithPositions
+
 from app.schema.concert import ConcertWithVenue
+from app.schema.idol import IdolWithPositions
 from app.schema.products import ProductCard
+
 
 class GroupBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)

@@ -1,22 +1,37 @@
 import uuid
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
+
 from app.db.models.cart import Cart
 from app.db.models.order import Order, OrderItem
 from app.db.models.payment import Payment
 from app.db.models.products import Product
-from app.db.models.shipping import ShippingStatus, ShippingAddress
+from app.db.models.shipping import ShippingAddress, ShippingStatus
 from app.db.models.user import Users
+from app.exception.checkout import (
+    AddressIdError,
+    CartItemError,
+    InsufficientStockError,
+    PaymentAmountMismatch,
+    UnsupportedGatewayError,
+)
+from app.exception.db_triggers import (
+    DuplicateIdempotencyKeyError,
+    FanOnlyPurchaseError,
+    ResaleCapExceededError,
+    commit_or_raise,
+    flush_or_raise,
+)
 from app.schema.order import OrderStatus
+from app.schema.payment import PaymentCreate, PaymentStatus
 from app.schema.shipping import ShippingStatus as SchemaShippingStatus
-from app.schema.payment import PaymentCreate
+from app.services.notification_service import create_notification
 from app.services.payment_service import create_payment
 from app.services.product_service import resolve_product_company_ids
-from app.services.notification_service import create_notification
-from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
-from app.exception.db_triggers import DuplicateIdempotencyKeyError, ResaleCapExceededError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError
-from app.utils.tax import with_tax
 from app.utils.resale import RESALE_CAP_QUANTITY
+from app.utils.tax import with_tax
+
 
 def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     user = db.get(Users, user_id)
@@ -60,20 +75,12 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
         
     order = Order(user_id=user_id, shipping_address_id=payment_data.shipping_address_id, total_price=float(total_amount))
     db.add(order)
-    flush_or_raise(db)  # trg_orders_fan_only fires here (fn_enforce_fan_only_purchase)
-    
-    payment_res = create_payment(db, user_id, order, payment_data)
-    if not payment_res:
-        raise UnsupportedGatewayError("Unsupported payment gateway!")
+    flush_or_raise(db)
 
-    for product in products:
-        item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
-        product.quantity-=item.quantity
-    
     for item in cart_items:
-        # Same tax-inclusive treatment as total_amount above — otherwise
-        # sum(order_item.price * quantity) drifts 10% below order.total_price,
-        # and the order-details line items would show pre-tax figures.
+    # Same tax-inclusive treatment as total_amount above — otherwise
+    # sum(order_item.price * quantity) drifts 10% below order.total_price,
+    # and the order-details line items would show pre-tax figures.
         order_item = OrderItem(
             order_id=order.id,
             product_id=item.product_id,
@@ -81,13 +88,17 @@ def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
             price=with_tax(item.price)
         )
         db.add(order_item)
+    flush_or_raise(db)
+    
+    payment = create_payment(db, user_id, order, payment_data)
+    if not payment:
+        raise UnsupportedGatewayError("Unsupported payment gateway!")
 
-    db.query(Cart).filter(Cart.user_id==user_id).delete()
-
-    if order.status == OrderStatus.confirmed:
-        # Payment failure is out of scope for this phase (mock gateway,
-        # database-design.md §5.1) — only the success path gets a
-        # notification; there's no "order_failed" type to fire otherwise.
+    if payment.status == PaymentStatus.success:
+        for product in products:
+            item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
+            product.quantity-=item.quantity
+        db.query(Cart).filter(Cart.user_id==payment.user_id, Cart.product_id.in_(product_ids)).delete()
         create_notification(db, user_id, "order_confirmation", order_id=order.id)
 
     commit_or_raise(db)  # trg_orders_fan_only / chk_products_capacity backstop

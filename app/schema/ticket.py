@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
+
 from pydantic import BaseModel
 
 from app.schema.payment import PaymentGateway
 from app.schema.ticket_type import TicketTypeRead
+
 
 class TicketCreate(BaseModel):
     """ADMIN-ONLY STOPGAP (database-design.md §7.4): the draw-job flow that
@@ -31,6 +33,16 @@ class TicketCheckoutCreate(BaseModel):
     simulate_succ: bool | None = None
     idempotency_key: uuid.UUID
 
+# A lottery winner paying for the ticket draw_lottery already created for
+# them (status="pending_payment", lottery_entry_id set) — no ticket_type_id
+# here, unlike TicketCheckoutCreate, since the ticket (and its type) already
+# exist; the path param identifies which one.
+class WonTicketCheckoutCreate(BaseModel):
+    amount: int
+    gateway: PaymentGateway = PaymentGateway.mock
+    simulate_succ: bool | None = None
+    idempotency_key: uuid.UUID
+
 class TicketRead(BaseModel):
     id: uuid.UUID
     ticket_type_id: uuid.UUID
@@ -51,3 +63,20 @@ class TicketRead(BaseModel):
     ticket_type: TicketTypeRead
 
     model_config = {"from_attributes": True}
+
+# --- manager-facing sales history (mirrors ProductSaleRead/ProductSalesPageRead
+# in schema/products.py) — one row per ticket, not per order, since a ticket
+# has no order/line-item concept of its own.
+class TicketSaleRead(BaseModel):
+    ticket_id: uuid.UUID
+    tier: str
+    status: str
+    price: float
+    source: str  # 'lottery' | 'direct' — derived from lottery_entry_id, not a stored column
+    created_at: datetime
+
+class TicketSalesPageRead(BaseModel):
+    page: int
+    limit: int
+    count: int
+    data: list[TicketSaleRead]

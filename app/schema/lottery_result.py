@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
+
 from pydantic import BaseModel
+
 
 class LotteryResult(BaseModel):
     concert_id: uuid.UUID

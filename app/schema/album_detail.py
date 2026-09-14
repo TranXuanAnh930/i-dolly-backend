@@ -1,6 +1,8 @@
 import uuid
 from datetime import date
+
 from pydantic import BaseModel, Field, model_validator
+
 
 class AlbumDetailBase(BaseModel):
     release_date: date | None = None

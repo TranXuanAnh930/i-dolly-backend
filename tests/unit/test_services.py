@@ -1,7 +1,6 @@
-import pytest
 import uuid
-from unittest.mock import MagicMock, patch, PropertyMock
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 # ─────────────────────────────────────────────────────────────
 # Id sentinels — ids are UUIDs now, not autoincrementing ints.
@@ -100,8 +99,8 @@ def model_get_side_effect(mapping: dict):
 class TestAuthService:
 
     def test_create_user_success(self):
-        from app.services.auth_service import create_user
         from app.schema.user import UserCreate
+        from app.services.auth_service import create_user
 
         db = MagicMock()
         db.query().filter().first.return_value = None
@@ -119,8 +118,8 @@ class TestAuthService:
         assert result is not False
 
     def test_create_user_duplicate_email(self):
-        from app.services.auth_service import create_user
         from app.schema.user import UserCreate
+        from app.services.auth_service import create_user
 
         db = MagicMock()
         db.query().filter().first.return_value = make_mock_user()
@@ -297,19 +296,19 @@ class TestProductService:
         assert result is False
 
     def test_add_product(self):
-        from app.services.product_service import add_product
         from app.schema.products import ProductCreate
+        from app.services.product_service import add_product
 
         db = MagicMock()
         product_data = ProductCreate(name="Laptop", price=1500.0, description="A laptop", quantity=5, category_id=DEFAULT_ID)
 
-        result = add_product(db, product_data)
+        add_product(db, product_data)
         db.add.assert_called_once()
         db.commit.assert_called_once()
 
     def test_update_product_found(self):
-        from app.services.product_service import update_product
         from app.schema.products import ProductCreate
+        from app.services.product_service import update_product
 
         db = MagicMock()
         mock_prod = make_mock_product()
@@ -325,8 +324,8 @@ class TestProductService:
         assert result is not False
 
     def test_update_product_not_found(self):
-        from app.services.product_service import update_product
         from app.schema.products import ProductCreate
+        from app.services.product_service import update_product
 
         db = MagicMock()
         db.get.return_value = None
@@ -344,7 +343,7 @@ class TestProductService:
         db.get.return_value = mock_prod
         admin = make_mock_user(role="admin")
 
-        result = delete_product(db, DEFAULT_ID, admin)
+        delete_product(db, DEFAULT_ID, admin)
         db.delete.assert_called_once_with(mock_prod)
         db.commit.assert_called_once()
 
@@ -376,8 +375,8 @@ class TestProductService:
 class TestCartService:
 
     def test_add_to_cart_new_item(self):
-        from app.services.cart_service import add_to_cart
         from app.schema.cart import CartItem
+        from app.services.cart_service import add_to_cart
 
         db = MagicMock()
         mock_user = make_mock_user()
@@ -392,14 +391,14 @@ class TestCartService:
         db.query().filter().with_for_update().first.return_value = None
 
         cart_data = CartItem(quantity=2, product_id=DEFAULT_ID)
-        result = add_to_cart(db, cart_data, DEFAULT_ID)
+        add_to_cart(db, cart_data, DEFAULT_ID)
 
         db.add.assert_called_once()
         db.commit.assert_called_once()
 
     def test_add_to_cart_insufficient_stock(self):
-        from app.services.cart_service import add_to_cart
         from app.schema.cart import CartItem
+        from app.services.cart_service import add_to_cart
 
         db = MagicMock()
         db.get.return_value = make_mock_user()
@@ -411,8 +410,8 @@ class TestCartService:
         assert result is None
 
     def test_add_to_cart_user_not_found(self):
-        from app.services.cart_service import add_to_cart
         from app.schema.cart import CartItem
+        from app.services.cart_service import add_to_cart
 
         db = MagicMock()
         db.get.return_value = None
@@ -523,8 +522,8 @@ class TestUserService:
         assert result is None
 
     def test_create_manager_success(self):
-        from app.services.user_service import create_manager_user
         from app.schema.user import ManagerCreate
+        from app.services.user_service import create_manager_user
 
         db = MagicMock()
         db.query().filter().first.return_value = None  # no existing user with this email
@@ -537,8 +536,8 @@ class TestUserService:
         db.commit.assert_called_once()
 
     def test_create_manager_email_taken(self):
-        from app.services.user_service import create_manager_user
         from app.schema.user import ManagerCreate
+        from app.services.user_service import create_manager_user
 
         db = MagicMock()
         db.query().filter().first.return_value = make_mock_user()
@@ -548,8 +547,8 @@ class TestUserService:
         assert result == "email_taken"
 
     def test_create_manager_company_not_found(self):
-        from app.services.user_service import create_manager_user
         from app.schema.user import ManagerCreate
+        from app.services.user_service import create_manager_user
 
         db = MagicMock()
         db.query().filter().first.return_value = None
@@ -636,13 +635,13 @@ class TestUserService:
 class TestCategoryService:
 
     def test_add_category(self):
-        from app.services.category_service import add_categories
         from app.schema.category import CategoryBase
+        from app.services.category_service import add_categories
 
         db = MagicMock()
         cat_data = CategoryBase(name="Electronics")
 
-        result = add_categories(db, cat_data)
+        add_categories(db, cat_data)
         db.add.assert_called_once()
         db.commit.assert_called_once()
 
@@ -665,8 +664,8 @@ class TestCategoryService:
         assert result is False
 
     def test_update_category_success(self):
-        from app.services.category_service import update_category
         from app.schema.category import CategoryUpdate
+        from app.services.category_service import update_category
 
         db = MagicMock()
         mock_cat = MagicMock()
@@ -677,8 +676,8 @@ class TestCategoryService:
         db.commit.assert_called_once()
 
     def test_update_category_not_found(self):
-        from app.services.category_service import update_category
         from app.schema.category import CategoryUpdate
+        from app.services.category_service import update_category
 
         db = MagicMock()
         db.get.return_value = None
@@ -714,8 +713,8 @@ class TestCategoryService:
 class TestShippingService:
 
     def test_create_shipping_address(self):
-        from app.services.shipping_service import create_shipping_address
         from app.schema.shipping import ShippingBase
+        from app.services.shipping_service import create_shipping_address
 
         db = MagicMock()
         data = ShippingBase(
@@ -723,7 +722,7 @@ class TestShippingService:
             postal_code=400001, state="MH", country="India"
         )
 
-        result = create_shipping_address(db, DEFAULT_ID, data)
+        create_shipping_address(db, DEFAULT_ID, data)
         db.add.assert_called_once()
         db.commit.assert_called_once()
 
@@ -774,8 +773,8 @@ class TestShippingService:
 class TestPaymentService:
 
     def test_create_mock_payment_success(self):
-        from app.services.payment_service import create_payment
         from app.schema.payment import PaymentCreate, PaymentGateway
+        from app.services.payment_service import create_payment
 
         db = MagicMock()
         def _refresh(obj):
@@ -798,8 +797,8 @@ class TestPaymentService:
         db.flush.assert_called()
 
     def test_create_mock_payment_failure(self):
-        from app.services.payment_service import create_payment
         from app.schema.payment import PaymentCreate, PaymentGateway
+        from app.services.payment_service import create_payment
 
         db = MagicMock()
         def _refresh(obj):
@@ -861,8 +860,8 @@ class TestPaymentService:
 class TestManagementCompanyService:
 
     def test_add_company_success(self):
-        from app.services.management_company_service import add_company
         from app.schema.management_company import ManagementCompanyCreate
+        from app.services.management_company_service import add_company
 
         db = MagicMock()
         data = ManagementCompanyCreate(name="Nova Entertainment")
@@ -910,8 +909,8 @@ class TestManagementCompanyService:
         assert result is None
 
     def test_update_company_success(self):
-        from app.services.management_company_service import update_company
         from app.schema.management_company import ManagementCompanyBase
+        from app.services.management_company_service import update_company
 
         db = MagicMock()
         db.get.return_value = make_mock_company()
@@ -923,8 +922,8 @@ class TestManagementCompanyService:
         assert result.name == "Renamed"
 
     def test_update_company_not_found(self):
-        from app.services.management_company_service import update_company
         from app.schema.management_company import ManagementCompanyBase
+        from app.services.management_company_service import update_company
 
         db = MagicMock()
         db.get.return_value = None
@@ -958,8 +957,8 @@ class TestManagementCompanyService:
 class TestIdolColorService:
 
     def test_add_idol_color_success(self):
-        from app.services.idol_color_service import add_idol_color
         from app.schema.idol_color import IdolColorCreate
+        from app.services.idol_color_service import add_idol_color
 
         db = MagicMock()
         data = IdolColorCreate(name="Sakura Pink", hex_code="#FFB7C5")
@@ -988,8 +987,8 @@ class TestIdolColorService:
         assert result is False
 
     def test_update_idol_color_success(self):
-        from app.services.idol_color_service import update_idol_color
         from app.schema.idol_color import IdolColorBase
+        from app.services.idol_color_service import update_idol_color
 
         db = MagicMock()
         db.get.return_value = MagicMock()
@@ -1000,8 +999,8 @@ class TestIdolColorService:
         assert result is not False
 
     def test_update_idol_color_not_found(self):
-        from app.services.idol_color_service import update_idol_color
         from app.schema.idol_color import IdolColorBase
+        from app.services.idol_color_service import update_idol_color
 
         db = MagicMock()
         db.get.return_value = None
@@ -1034,8 +1033,8 @@ class TestIdolColorService:
 class TestPositionService:
 
     def test_add_position_success(self):
-        from app.services.position_service import add_position
         from app.schema.position import PositionCreate
+        from app.services.position_service import add_position
 
         db = MagicMock()
         data = PositionCreate(name="Center")
@@ -1064,8 +1063,8 @@ class TestPositionService:
         assert result is False
 
     def test_update_position_success(self):
-        from app.services.position_service import update_position
         from app.schema.position import PositionBase
+        from app.services.position_service import update_position
 
         db = MagicMock()
         db.get.return_value = MagicMock()
@@ -1076,8 +1075,8 @@ class TestPositionService:
         assert result is not False
 
     def test_update_position_not_found(self):
-        from app.services.position_service import update_position
         from app.schema.position import PositionBase
+        from app.services.position_service import update_position
 
         db = MagicMock()
         db.get.return_value = None
@@ -1109,10 +1108,10 @@ class TestPositionService:
     # --- idol_positions join table ---
 
     def test_assign_idol_position_success(self):
-        from app.services.position_service import assign_idol_position
-        from app.schema.position import IdolPositionAssign
         from app.db.models.idol import Idol
-        from app.db.models.position import Position, IdolPosition
+        from app.db.models.position import IdolPosition, Position
+        from app.schema.position import IdolPositionAssign
+        from app.services.position_service import assign_idol_position
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=DEFAULT_ID)
@@ -1127,10 +1126,10 @@ class TestPositionService:
         assert not isinstance(result, str)
 
     def test_assign_idol_position_idol_or_position_not_found(self):
-        from app.services.position_service import assign_idol_position
-        from app.schema.position import IdolPositionAssign
         from app.db.models.idol import Idol
         from app.db.models.position import Position
+        from app.schema.position import IdolPositionAssign
+        from app.services.position_service import assign_idol_position
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({Idol: None, Position: MagicMock()})
@@ -1141,10 +1140,10 @@ class TestPositionService:
         assert result == "not_found"
 
     def test_assign_idol_position_forbidden(self):
-        from app.services.position_service import assign_idol_position
-        from app.schema.position import IdolPositionAssign
         from app.db.models.idol import Idol
         from app.db.models.position import Position
+        from app.schema.position import IdolPositionAssign
+        from app.services.position_service import assign_idol_position
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=OTHER_ID)
@@ -1156,10 +1155,10 @@ class TestPositionService:
         assert result == "forbidden"
 
     def test_assign_idol_position_conflict(self):
-        from app.services.position_service import assign_idol_position
-        from app.schema.position import IdolPositionAssign
         from app.db.models.idol import Idol
-        from app.db.models.position import Position, IdolPosition
+        from app.db.models.position import IdolPosition, Position
+        from app.schema.position import IdolPositionAssign
+        from app.services.position_service import assign_idol_position
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=DEFAULT_ID)
@@ -1288,8 +1287,8 @@ class TestPositionService:
 class TestGroupService:
 
     def test_add_group_success(self):
-        from app.services.group_service import add_group
         from app.schema.group import GroupCreate
+        from app.services.group_service import add_group
 
         db = MagicMock()
         db.get.return_value = make_mock_company()
@@ -1302,8 +1301,8 @@ class TestGroupService:
         assert not isinstance(result, str)
 
     def test_add_group_forbidden(self):
-        from app.services.group_service import add_group
         from app.schema.group import GroupCreate
+        from app.services.group_service import add_group
 
         db = MagicMock()
         current_user = make_mock_manager(company_id=OTHER_ID)
@@ -1314,8 +1313,8 @@ class TestGroupService:
         db.add.assert_not_called()
 
     def test_add_group_company_not_found(self):
-        from app.services.group_service import add_group
         from app.schema.group import GroupCreate
+        from app.services.group_service import add_group
 
         db = MagicMock()
         db.get.return_value = None
@@ -1354,8 +1353,8 @@ class TestGroupService:
         assert result == mock_group
 
     def test_update_group_success(self):
-        from app.services.group_service import update_group
         from app.schema.group import GroupUpdate
+        from app.services.group_service import update_group
 
         db = MagicMock()
         db.get.return_value = make_mock_group(company_id=DEFAULT_ID)
@@ -1367,8 +1366,8 @@ class TestGroupService:
         assert not isinstance(result, str)
 
     def test_update_group_not_found(self):
-        from app.services.group_service import update_group
         from app.schema.group import GroupUpdate
+        from app.services.group_service import update_group
 
         db = MagicMock()
         db.get.return_value = None
@@ -1379,8 +1378,8 @@ class TestGroupService:
         assert result == "not_found"
 
     def test_update_group_forbidden(self):
-        from app.services.group_service import update_group
         from app.schema.group import GroupUpdate
+        from app.services.group_service import update_group
 
         db = MagicMock()
         db.get.return_value = make_mock_group(company_id=OTHER_ID)
@@ -1548,8 +1547,8 @@ class TestGroupService:
 class TestIdolService:
 
     def test_add_idol_success(self):
-        from app.services.idol_service import add_idol
         from app.schema.idol import IdolCreate
+        from app.services.idol_service import add_idol
 
         db = MagicMock()
         db.get.return_value = make_mock_company()
@@ -1562,8 +1561,8 @@ class TestIdolService:
         assert not isinstance(result, str)
 
     def test_add_idol_forbidden(self):
-        from app.services.idol_service import add_idol
         from app.schema.idol import IdolCreate
+        from app.services.idol_service import add_idol
 
         db = MagicMock()
         current_user = make_mock_manager(company_id=OTHER_ID)
@@ -1574,8 +1573,8 @@ class TestIdolService:
         db.add.assert_not_called()
 
     def test_add_idol_company_not_found(self):
-        from app.services.idol_service import add_idol
         from app.schema.idol import IdolCreate
+        from app.services.idol_service import add_idol
 
         db = MagicMock()
         db.get.return_value = None
@@ -1586,10 +1585,10 @@ class TestIdolService:
         assert result == "not_found"
 
     def test_add_idol_group_not_found(self):
-        from app.services.idol_service import add_idol
-        from app.schema.idol import IdolCreate
-        from app.db.models.management_company import ManagementCompany
         from app.db.models.group import Group
+        from app.db.models.management_company import ManagementCompany
+        from app.schema.idol import IdolCreate
+        from app.services.idol_service import add_idol
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({ManagementCompany: make_mock_company(), Group: None})
@@ -1600,10 +1599,10 @@ class TestIdolService:
         assert result == "not_found"
 
     def test_add_idol_color_not_found(self):
-        from app.services.idol_service import add_idol
-        from app.schema.idol import IdolCreate
-        from app.db.models.management_company import ManagementCompany
         from app.db.models.idol_color import IdolColor
+        from app.db.models.management_company import ManagementCompany
+        from app.schema.idol import IdolCreate
+        from app.services.idol_service import add_idol
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({ManagementCompany: make_mock_company(), IdolColor: None})
@@ -1614,10 +1613,10 @@ class TestIdolService:
         assert result == "not_found"
 
     def test_add_idol_company_mismatch(self):
-        from app.services.idol_service import add_idol
-        from app.schema.idol import IdolCreate
-        from app.db.models.management_company import ManagementCompany
         from app.db.models.group import Group
+        from app.db.models.management_company import ManagementCompany
+        from app.schema.idol import IdolCreate
+        from app.services.idol_service import add_idol
 
         db = MagicMock()
         mismatched_group = make_mock_group(company_id=OTHER_ID, is_active=True)
@@ -1629,10 +1628,10 @@ class TestIdolService:
         assert result == "company_mismatch"
 
     def test_add_idol_group_inactive(self):
-        from app.services.idol_service import add_idol
-        from app.schema.idol import IdolCreate
-        from app.db.models.management_company import ManagementCompany
         from app.db.models.group import Group
+        from app.db.models.management_company import ManagementCompany
+        from app.schema.idol import IdolCreate
+        from app.services.idol_service import add_idol
 
         db = MagicMock()
         inactive_group = make_mock_group(company_id=DEFAULT_ID, is_active=False)
@@ -1672,10 +1671,10 @@ class TestIdolService:
         assert result == mock_idol
 
     def test_update_idol_success(self):
-        from app.services.idol_service import update_idol
-        from app.schema.idol import IdolUpdate
         from app.db.models.idol import Idol
         from app.db.models.management_company import ManagementCompany
+        from app.schema.idol import IdolUpdate
+        from app.services.idol_service import update_idol
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=DEFAULT_ID, group_id=None)
@@ -1688,8 +1687,8 @@ class TestIdolService:
         assert not isinstance(result, str)
 
     def test_update_idol_not_found(self):
-        from app.services.idol_service import update_idol
         from app.schema.idol import IdolUpdate
+        from app.services.idol_service import update_idol
 
         db = MagicMock()
         db.get.return_value = None
@@ -1700,9 +1699,9 @@ class TestIdolService:
         assert result == "not_found"
 
     def test_update_idol_forbidden(self):
-        from app.services.idol_service import update_idol
-        from app.schema.idol import IdolUpdate
         from app.db.models.idol import Idol
+        from app.schema.idol import IdolUpdate
+        from app.services.idol_service import update_idol
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=OTHER_ID)
@@ -1714,11 +1713,11 @@ class TestIdolService:
         assert result == "forbidden"
 
     def test_update_idol_company_mismatch(self):
-        from app.services.idol_service import update_idol
-        from app.schema.idol import IdolUpdate
+        from app.db.models.group import Group
         from app.db.models.idol import Idol
         from app.db.models.management_company import ManagementCompany
-        from app.db.models.group import Group
+        from app.schema.idol import IdolUpdate
+        from app.services.idol_service import update_idol
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=DEFAULT_ID, group_id=None)
@@ -1733,11 +1732,11 @@ class TestIdolService:
         assert result == "company_mismatch"
 
     def test_update_idol_group_inactive_blocks_new_assignment(self):
-        from app.services.idol_service import update_idol
-        from app.schema.idol import IdolUpdate
+        from app.db.models.group import Group
         from app.db.models.idol import Idol
         from app.db.models.management_company import ManagementCompany
-        from app.db.models.group import Group
+        from app.schema.idol import IdolUpdate
+        from app.services.idol_service import update_idol
 
         db = MagicMock()
         new_group_id = uuid.uuid4()
@@ -1753,11 +1752,11 @@ class TestIdolService:
         assert result == "group_inactive"
 
     def test_update_idol_group_inactive_allows_unchanged_group(self):
-        from app.services.idol_service import update_idol
-        from app.schema.idol import IdolUpdate
+        from app.db.models.group import Group
         from app.db.models.idol import Idol
         from app.db.models.management_company import ManagementCompany
-        from app.db.models.group import Group
+        from app.schema.idol import IdolUpdate
+        from app.services.idol_service import update_idol
 
         db = MagicMock()
         same_group_id = uuid.uuid4()
@@ -1848,7 +1847,7 @@ class TestIdolService:
         db.get.return_value = mock_idol
         current_user = make_mock_user(role="admin")
 
-        result = set_idol_image(db, DEFAULT_ID, "https://cdn.example.com/idol.png", current_user)
+        set_idol_image(db, DEFAULT_ID, "https://cdn.example.com/idol.png", current_user)
         assert mock_idol.profile_image_url == "https://cdn.example.com/idol.png"
         db.commit.assert_called_once()
 
@@ -1961,11 +1960,11 @@ class TestIdolService:
 class TestAlbumDetailService:
 
     def test_add_album_detail_success_with_idol(self):
-        from app.services.album_detail_service import add_album_detail
-        from app.schema.album_detail import AlbumDetailCreate
-        from app.db.models.products import Product
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.idol import Idol
+        from app.db.models.products import Product
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.services.album_detail_service import add_album_detail
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=True)
@@ -1979,11 +1978,11 @@ class TestAlbumDetailService:
         assert not isinstance(result, str)
 
     def test_add_album_detail_success_with_group(self):
-        from app.services.album_detail_service import add_album_detail
-        from app.schema.album_detail import AlbumDetailCreate
-        from app.db.models.products import Product
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.group import Group
+        from app.db.models.products import Product
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.services.album_detail_service import add_album_detail
 
         db = MagicMock()
         mock_group = make_mock_group(company_id=DEFAULT_ID, is_active=True)
@@ -1995,9 +1994,9 @@ class TestAlbumDetailService:
         assert not isinstance(result, str)
 
     def test_add_album_detail_product_not_found(self):
-        from app.services.album_detail_service import add_album_detail
-        from app.schema.album_detail import AlbumDetailCreate
         from app.db.models.products import Product
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.services.album_detail_service import add_album_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({Product: None})
@@ -2008,10 +2007,10 @@ class TestAlbumDetailService:
         assert result == "not_found"
 
     def test_add_album_detail_conflict(self):
-        from app.services.album_detail_service import add_album_detail
-        from app.schema.album_detail import AlbumDetailCreate
-        from app.db.models.products import Product
         from app.db.models.album_detail import AlbumDetail
+        from app.db.models.products import Product
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.services.album_detail_service import add_album_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({Product: MagicMock(), AlbumDetail: MagicMock()})
@@ -2022,11 +2021,11 @@ class TestAlbumDetailService:
         assert result == "conflict"
 
     def test_add_album_detail_artist_inactive(self):
-        from app.services.album_detail_service import add_album_detail
-        from app.schema.album_detail import AlbumDetailCreate
-        from app.db.models.products import Product
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.idol import Idol
+        from app.db.models.products import Product
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.services.album_detail_service import add_album_detail
 
         db = MagicMock()
         inactive_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=False)
@@ -2038,11 +2037,11 @@ class TestAlbumDetailService:
         assert result == "artist_inactive"
 
     def test_add_album_detail_forbidden(self):
-        from app.services.album_detail_service import add_album_detail
-        from app.schema.album_detail import AlbumDetailCreate
-        from app.db.models.products import Product
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.idol import Idol
+        from app.db.models.products import Product
+        from app.schema.album_detail import AlbumDetailCreate
+        from app.services.album_detail_service import add_album_detail
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=OTHER_ID, is_active=True)
@@ -2091,10 +2090,10 @@ class TestAlbumDetailService:
         assert result is False
 
     def test_update_album_detail_success(self):
-        from app.services.album_detail_service import update_album_detail
-        from app.schema.album_detail import AlbumDetailUpdate
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.idol import Idol
+        from app.schema.album_detail import AlbumDetailUpdate
+        from app.services.album_detail_service import update_album_detail
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2108,9 +2107,9 @@ class TestAlbumDetailService:
         assert not isinstance(result, str)
 
     def test_update_album_detail_not_found(self):
-        from app.services.album_detail_service import update_album_detail
-        from app.schema.album_detail import AlbumDetailUpdate
         from app.db.models.album_detail import AlbumDetail
+        from app.schema.album_detail import AlbumDetailUpdate
+        from app.services.album_detail_service import update_album_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({AlbumDetail: None})
@@ -2121,10 +2120,10 @@ class TestAlbumDetailService:
         assert result == "not_found"
 
     def test_update_album_detail_forbidden(self):
-        from app.services.album_detail_service import update_album_detail
-        from app.schema.album_detail import AlbumDetailUpdate
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.idol import Idol
+        from app.schema.album_detail import AlbumDetailUpdate
+        from app.services.album_detail_service import update_album_detail
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2137,9 +2136,9 @@ class TestAlbumDetailService:
         assert result == "forbidden"
 
     def test_delete_album_detail_success(self):
-        from app.services.album_detail_service import delete_album_detail
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.idol import Idol
+        from app.services.album_detail_service import delete_album_detail
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2152,8 +2151,8 @@ class TestAlbumDetailService:
         db.delete.assert_called_once_with(mock_album)
 
     def test_delete_album_detail_not_found(self):
-        from app.services.album_detail_service import delete_album_detail
         from app.db.models.album_detail import AlbumDetail
+        from app.services.album_detail_service import delete_album_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({AlbumDetail: None})
@@ -2163,9 +2162,9 @@ class TestAlbumDetailService:
         assert result == "not_found"
 
     def test_delete_album_detail_forbidden(self):
-        from app.services.album_detail_service import delete_album_detail
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.idol import Idol
+        from app.services.album_detail_service import delete_album_detail
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2184,11 +2183,11 @@ class TestAlbumDetailService:
 class TestMerchDetailService:
 
     def test_add_merch_detail_success(self):
-        from app.services.merch_detail_service import add_merch_detail
-        from app.schema.merch_detail import MerchDetailCreate
-        from app.db.models.products import Product
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol import Idol
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.products import Product
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.services.merch_detail_service import add_merch_detail
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=DEFAULT_ID, is_active=True)
@@ -2202,9 +2201,9 @@ class TestMerchDetailService:
         assert not isinstance(result, str)
 
     def test_add_merch_detail_product_not_found(self):
-        from app.services.merch_detail_service import add_merch_detail
-        from app.schema.merch_detail import MerchDetailCreate
         from app.db.models.products import Product
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.services.merch_detail_service import add_merch_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({Product: None})
@@ -2215,10 +2214,10 @@ class TestMerchDetailService:
         assert result == "not_found"
 
     def test_add_merch_detail_conflict(self):
-        from app.services.merch_detail_service import add_merch_detail
-        from app.schema.merch_detail import MerchDetailCreate
-        from app.db.models.products import Product
         from app.db.models.merch_detail import MerchDetail
+        from app.db.models.products import Product
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.services.merch_detail_service import add_merch_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({Product: MagicMock(), MerchDetail: MagicMock()})
@@ -2229,11 +2228,11 @@ class TestMerchDetailService:
         assert result == "conflict"
 
     def test_add_merch_detail_color_not_found(self):
-        from app.services.merch_detail_service import add_merch_detail
-        from app.schema.merch_detail import MerchDetailCreate
-        from app.db.models.products import Product
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol_color import IdolColor
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.products import Product
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.services.merch_detail_service import add_merch_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({Product: MagicMock(), MerchDetail: None, IdolColor: None})
@@ -2244,11 +2243,11 @@ class TestMerchDetailService:
         assert result == "not_found"
 
     def test_add_merch_detail_artist_inactive(self):
-        from app.services.merch_detail_service import add_merch_detail
-        from app.schema.merch_detail import MerchDetailCreate
-        from app.db.models.products import Product
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.group import Group
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.products import Product
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.services.merch_detail_service import add_merch_detail
 
         db = MagicMock()
         inactive_group = make_mock_group(company_id=DEFAULT_ID, is_active=False)
@@ -2260,11 +2259,11 @@ class TestMerchDetailService:
         assert result == "artist_inactive"
 
     def test_add_merch_detail_forbidden(self):
-        from app.services.merch_detail_service import add_merch_detail
-        from app.schema.merch_detail import MerchDetailCreate
-        from app.db.models.products import Product
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol import Idol
+        from app.db.models.merch_detail import MerchDetail
+        from app.db.models.products import Product
+        from app.schema.merch_detail import MerchDetailCreate
+        from app.services.merch_detail_service import add_merch_detail
 
         db = MagicMock()
         mock_idol = make_mock_idol(company_id=OTHER_ID, is_active=True)
@@ -2313,10 +2312,10 @@ class TestMerchDetailService:
         assert result is False
 
     def test_update_merch_detail_success(self):
-        from app.services.merch_detail_service import update_merch_detail
-        from app.schema.merch_detail import MerchDetailUpdate
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol import Idol
+        from app.db.models.merch_detail import MerchDetail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.services.merch_detail_service import update_merch_detail
 
         db = MagicMock()
         mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2330,9 +2329,9 @@ class TestMerchDetailService:
         assert not isinstance(result, str)
 
     def test_update_merch_detail_not_found(self):
-        from app.services.merch_detail_service import update_merch_detail
-        from app.schema.merch_detail import MerchDetailUpdate
         from app.db.models.merch_detail import MerchDetail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.services.merch_detail_service import update_merch_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({MerchDetail: None})
@@ -2343,10 +2342,10 @@ class TestMerchDetailService:
         assert result == "not_found"
 
     def test_update_merch_detail_forbidden(self):
-        from app.services.merch_detail_service import update_merch_detail
-        from app.schema.merch_detail import MerchDetailUpdate
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol import Idol
+        from app.db.models.merch_detail import MerchDetail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.services.merch_detail_service import update_merch_detail
 
         db = MagicMock()
         mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2359,11 +2358,11 @@ class TestMerchDetailService:
         assert result == "forbidden"
 
     def test_update_merch_detail_color_not_found(self):
-        from app.services.merch_detail_service import update_merch_detail
-        from app.schema.merch_detail import MerchDetailUpdate
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol import Idol
         from app.db.models.idol_color import IdolColor
+        from app.db.models.merch_detail import MerchDetail
+        from app.schema.merch_detail import MerchDetailUpdate
+        from app.services.merch_detail_service import update_merch_detail
 
         db = MagicMock()
         mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2376,9 +2375,9 @@ class TestMerchDetailService:
         assert result == "not_found"
 
     def test_delete_merch_detail_success(self):
-        from app.services.merch_detail_service import delete_merch_detail
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol import Idol
+        from app.db.models.merch_detail import MerchDetail
+        from app.services.merch_detail_service import delete_merch_detail
 
         db = MagicMock()
         mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2391,8 +2390,8 @@ class TestMerchDetailService:
         db.delete.assert_called_once_with(mock_merch)
 
     def test_delete_merch_detail_not_found(self):
-        from app.services.merch_detail_service import delete_merch_detail
         from app.db.models.merch_detail import MerchDetail
+        from app.services.merch_detail_service import delete_merch_detail
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({MerchDetail: None})
@@ -2402,9 +2401,9 @@ class TestMerchDetailService:
         assert result == "not_found"
 
     def test_delete_merch_detail_forbidden(self):
-        from app.services.merch_detail_service import delete_merch_detail
-        from app.db.models.merch_detail import MerchDetail
         from app.db.models.idol import Idol
+        from app.db.models.merch_detail import MerchDetail
+        from app.services.merch_detail_service import delete_merch_detail
 
         db = MagicMock()
         mock_merch = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2423,8 +2422,8 @@ class TestMerchDetailService:
 class TestGenreService:
 
     def test_add_genre_success(self):
-        from app.services.genre_service import add_genre
         from app.schema.genre import GenreCreate
+        from app.services.genre_service import add_genre
 
         db = MagicMock()
         data = GenreCreate(name="City Pop")
@@ -2474,11 +2473,11 @@ class TestGenreService:
         assert result is False
 
     def test_assign_genre_success(self):
-        from app.services.genre_service import assign_genre
-        from app.schema.genre import AlbumGenreAssign
         from app.db.models.album_detail import AlbumDetail
-        from app.db.models.genre import Genre, AlbumGenre
+        from app.db.models.genre import AlbumGenre, Genre
         from app.db.models.idol import Idol
+        from app.schema.genre import AlbumGenreAssign
+        from app.services.genre_service import assign_genre
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2495,9 +2494,9 @@ class TestGenreService:
         assert not isinstance(result, str)
 
     def test_assign_genre_album_not_found(self):
-        from app.services.genre_service import assign_genre
-        from app.schema.genre import AlbumGenreAssign
         from app.db.models.album_detail import AlbumDetail
+        from app.schema.genre import AlbumGenreAssign
+        from app.services.genre_service import assign_genre
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({AlbumDetail: None})
@@ -2508,11 +2507,11 @@ class TestGenreService:
         assert result == "not_found"
 
     def test_assign_genre_genre_not_found(self):
-        from app.services.genre_service import assign_genre
-        from app.schema.genre import AlbumGenreAssign
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.genre import Genre
         from app.db.models.idol import Idol
+        from app.schema.genre import AlbumGenreAssign
+        from app.services.genre_service import assign_genre
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2525,11 +2524,11 @@ class TestGenreService:
         assert result == "not_found"
 
     def test_assign_genre_forbidden(self):
-        from app.services.genre_service import assign_genre
-        from app.schema.genre import AlbumGenreAssign
         from app.db.models.album_detail import AlbumDetail
         from app.db.models.genre import Genre
         from app.db.models.idol import Idol
+        from app.schema.genre import AlbumGenreAssign
+        from app.services.genre_service import assign_genre
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2542,11 +2541,11 @@ class TestGenreService:
         assert result == "forbidden"
 
     def test_assign_genre_conflict(self):
-        from app.services.genre_service import assign_genre
-        from app.schema.genre import AlbumGenreAssign
         from app.db.models.album_detail import AlbumDetail
-        from app.db.models.genre import Genre, AlbumGenre
+        from app.db.models.genre import AlbumGenre, Genre
         from app.db.models.idol import Idol
+        from app.schema.genre import AlbumGenreAssign
+        from app.services.genre_service import assign_genre
 
         db = MagicMock()
         mock_album = MagicMock(idol_id=DEFAULT_ID, group_id=None)
@@ -2597,10 +2596,10 @@ class TestGenreService:
         assert result is False
 
     def test_remove_genre_success(self):
-        from app.services.genre_service import remove_genre
-        from app.db.models.genre import AlbumGenre
         from app.db.models.album_detail import AlbumDetail
+        from app.db.models.genre import AlbumGenre
         from app.db.models.idol import Idol
+        from app.services.genre_service import remove_genre
 
         db = MagicMock()
         link = MagicMock()
@@ -2616,8 +2615,8 @@ class TestGenreService:
         db.delete.assert_called_once_with(link)
 
     def test_remove_genre_not_found(self):
-        from app.services.genre_service import remove_genre
         from app.db.models.genre import AlbumGenre
+        from app.services.genre_service import remove_genre
 
         db = MagicMock()
         db.get.side_effect = model_get_side_effect({AlbumGenre: None})
@@ -2627,10 +2626,10 @@ class TestGenreService:
         assert result == "not_found"
 
     def test_remove_genre_forbidden(self):
-        from app.services.genre_service import remove_genre
-        from app.db.models.genre import AlbumGenre
         from app.db.models.album_detail import AlbumDetail
+        from app.db.models.genre import AlbumGenre
         from app.db.models.idol import Idol
+        from app.services.genre_service import remove_genre
 
         db = MagicMock()
         link = MagicMock()

@@ -1,18 +1,30 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.user import Users
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
 from app.schema.position import (
-    PositionCreate, PositionBase, PositionRead, IdolPositionAssign, IdolPositionRead,
+    IdolPositionAssign,
+    IdolPositionRead,
+    PositionBase,
+    PositionCreate,
+    PositionRead,
 )
 from app.services.position_service import (
-    add_position, get_positions, update_position, delete_position,
-    assign_idol_position, get_idol_positions, get_all_idol_positions,
-    update_idol_position_primary, remove_idol_position,
+    add_position,
+    assign_idol_position,
+    delete_position,
+    get_all_idol_positions,
+    get_idol_positions,
+    get_positions,
+    remove_idol_position,
+    update_idol_position_primary,
+    update_position,
 )
 
 # Same rationale as idol_colors: a lookup table, manager/admin-extensible

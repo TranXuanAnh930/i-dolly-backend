@@ -1,7 +1,9 @@
 import uuid
-from sqlalchemy import String, Column, DateTime, ForeignKey, Enum, func
+
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
 
 ticket_status_enum = Enum(

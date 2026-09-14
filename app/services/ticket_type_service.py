@@ -1,10 +1,12 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.ticket_type import TicketTypeCreate, TicketTypeUpdate
-from app.db.models.ticket_type import TicketType
+
 from app.db.models.concert import Concert
+from app.db.models.ticket_type import TicketType
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
+from app.schema.ticket_type import TicketTypeCreate, TicketTypeUpdate
 
 # Company-scoped via the parent concert's company_id, same pattern as
 # concert_performers (concert_service._manager_scope_violation).

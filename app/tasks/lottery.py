@@ -7,11 +7,11 @@ import uuid
 # without it, resolving Users' string-based relationships (e.g. "Cart")
 # fails with "failed to locate a name" the moment a query touches them.
 import app.db.base  # noqa: F401
-from app.db.models.user import Users
 from app.celery_app import celery_app
-from app.services.lottery_draw_service import draw_lottery
+from app.db.models.user import Users
 from app.db.session import session
 from app.schema.lottery_result import LotteryResult
+from app.services.lottery_draw_service import draw_lottery
 
 
 @celery_app.task(name="app.tasks.lottery.draw_lottery")

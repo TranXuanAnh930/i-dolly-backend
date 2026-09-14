@@ -1,16 +1,21 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.merch_detail import MerchDetailCreate, MerchDetailUpdate, MerchDetailRead
-from app.services.merch_detail_service import (
-    add_merch_detail, get_merch_details, get_merch_detail,
-    update_merch_detail, delete_merch_detail,
-)
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.merch_detail import MerchDetailCreate, MerchDetailRead, MerchDetailUpdate
+from app.services.merch_detail_service import (
+    add_merch_detail,
+    delete_merch_detail,
+    get_merch_detail,
+    get_merch_details,
+    update_merch_detail,
+)
 
 router = APIRouter(prefix="/merch_details", tags=["Merch Details"])
 

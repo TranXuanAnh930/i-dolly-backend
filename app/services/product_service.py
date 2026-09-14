@@ -1,17 +1,21 @@
 import uuid
-from sqlalchemy.orm import Session, selectinload, joinedload
-from app.db.models.products import Product
-from app.db.models.category import Category
-from app.db.models.album_detail import AlbumDetail
-from app.db.models.merch_detail import MerchDetail
-from app.db.models.genre import AlbumGenre
-from app.db.models.idol import Idol
-from app.db.models.group import Group
-from app.db.models.order import Order, OrderItem
-from app.db.models.user import Users
-from app.schema.products import ProductRead, ProductCreate
-from app.utils.resale import RESALE_CAP_QUANTITY
 from typing import List
+
+from sqlalchemy.orm import Session, joinedload, selectinload
+
+from app.db.models.album_detail import AlbumDetail
+from app.db.models.category import Category
+from app.db.models.genre import AlbumGenre
+from app.db.models.group import Group
+from app.db.models.idol import Idol
+from app.db.models.idol_color import IdolColor
+from app.db.models.merch_detail import MerchDetail
+from app.db.models.order import Order, OrderItem
+from app.db.models.products import Product
+from app.db.models.user import Users
+from app.exception.db_triggers import commit_or_raise, flush_or_raise
+from app.schema.products import ProductCreate, ProductRead, ProductWithDetailCreate
+from app.utils.resale import RESALE_CAP_QUANTITY
 
 # Company-scoping for update/delete/image-replace only (see docs/project_status.md
 # SS4 item 10). A product has no company_id column of its own; its owner, if any,
@@ -84,6 +88,75 @@ def add_product(db: Session, product:ProductCreate):
     db_product = Product(**product.model_dump())
     db.add(db_product)
     db.commit()
+    db.refresh(db_product)
+    return db_product
+
+# Same "which FK is set, then resolve its owner" shape as
+# album_detail_service/merch_detail_service's own _resolve_company_id /
+# _artist_active_or_missing — duplicated locally rather than importing
+# another module's private helpers, matching this project's existing
+# convention of a small scoping helper per service file (concert_service,
+# ticket_type_service, lottery_campaign_service all do the same).
+def _resolve_owner_company_id(db: Session, idol_id, group_id):
+    if idol_id is not None:
+        idol = db.get(Idol, idol_id)
+        return idol.company_id if idol else None
+    if group_id is not None:
+        group = db.get(Group, group_id)
+        return group.company_id if group else None
+    return None
+
+def _owner_active_or_missing(db: Session, idol_id, group_id) -> bool:
+    if idol_id is not None:
+        idol = db.get(Idol, idol_id)
+        return idol is None or idol.is_active
+    if group_id is not None:
+        group = db.get(Group, group_id)
+        return group is None or group.is_active
+    return True
+
+# The combined create ManagerProductFormPage.vue actually uses — creates
+# the Product and its AlbumDetail/MerchDetail row in one transaction (flush
+# for the product's generated id, one commit for both), so a rejected
+# detail (bad owner, wrong company, ...) rolls the product insert back too.
+# Unlike the bare add_product above (deliberately unscoped — see this
+# module's top comment), this is scoped from the start: the schema itself
+# requires idol_id/group_id, so there's always an owner to check against.
+def add_product_with_detail(db: Session, data: ProductWithDetailCreate, image_url: str | None, current_user: Users):
+    if not db.get(Category, data.category_id):
+        return "category_not_found"
+    if data.idol_id is not None and not db.get(Idol, data.idol_id):
+        return "owner_not_found"
+    if data.group_id is not None and not db.get(Group, data.group_id):
+        return "owner_not_found"
+    if data.detail_kind == "merch" and data.color_id is not None and not db.get(IdolColor, data.color_id):
+        return "owner_not_found"
+    if not _owner_active_or_missing(db, data.idol_id, data.group_id):
+        return "artist_inactive"
+
+    owner_company_id = _resolve_owner_company_id(db, data.idol_id, data.group_id)
+    if current_user.role == "manager" and current_user.company_id != owner_company_id:
+        return "forbidden"
+
+    db_product = Product(
+        name=data.name, price=data.price, description=data.description,
+        quantity=data.quantity, category_id=data.category_id, image_url=image_url,
+    )
+    db.add(db_product)
+    flush_or_raise(db)  # populates db_product.id for the detail row below, same transaction
+
+    if data.detail_kind == "album":
+        db_detail = AlbumDetail(
+            product_id=db_product.id, idol_id=data.idol_id, group_id=data.group_id,
+            release_date=data.release_date, track_count=data.track_count, format=data.format,
+        )
+    else:
+        db_detail = MerchDetail(
+            product_id=db_product.id, idol_id=data.idol_id, group_id=data.group_id,
+            edition=data.edition, color_id=data.color_id,
+        )
+    db.add(db_detail)
+    commit_or_raise(db)  # one commit for both rows — a rejected detail rolls the product back too
     db.refresh(db_product)
     return db_product
 
@@ -369,7 +442,21 @@ def get_manager_product_form_page(db: Session, company_id: uuid.UUID | None = No
         company_by_product = resolve_product_company_ids(db, products)
         products = [p for p in products if company_by_product[p.id] in (None, company_id)]
     categories = db.query(Category).all()
-    return {"products": [_product_read_dict(p) for p in products], "categories": categories}
+    # idols/groups/colors are for the "attach this product to one of my own
+    # idols/groups" step of creating a product (add_product_with_detail) —
+    # every idol/group is returned (not company-filtered server-side) since
+    # an admin's form needs every company's, same as ManagerIdolFormPageRead's
+    # own groups field; the manager form filters client-side by company_id.
+    idols = db.query(Idol).all()
+    groups = db.query(Group).all()
+    colors = db.query(IdolColor).all()
+    return {
+        "products": [_product_read_dict(p) for p in products],
+        "categories": categories,
+        "idols": idols,
+        "groups": groups,
+        "colors": colors,
+    }
 
 # --- sales history — replaces the manager products page's old hard-delete
 # action (deleting a Product with any order history would CASCADE-delete

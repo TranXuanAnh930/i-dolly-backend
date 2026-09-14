@@ -1,7 +1,9 @@
 import uuid
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Enum, func
+
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
 
 notification_type_enum = Enum(

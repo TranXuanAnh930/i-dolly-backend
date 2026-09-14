@@ -735,16 +735,22 @@ rename.)
 - Response: `{"msg": "Address deleted successfully"}`
 
 ### `POST /order/checkout` 🔒 fan
-Converts the cart into an order and a payment in one call. **Response is payment info, not the
-order** — read that carefully when wiring the success screen.
+Converts the cart into an order and a payment in one call. **Response is the `Order`, not the
+payment** — it has no `payment_id`/`pg_order_id` of its own, so a `gateway="paypal"` checkout must
+follow up with `PATCH /payment/status/order/{order_id}` (below) to fetch the payment and its
+`pg_approval_url`. See "PayPal checkout flow" below for the full redirect sequence.
 - Request (`PaymentCreate`): `amount` (int — must equal the cart's current total, checked
-  server-side), `shipping_address_id` (uuid), `gateway` (`"mock"`, default `"mock"` — the only
-  gateway today; real gateway integration is deferred to a later phase),
-  `simulate_succ` (bool, optional — forces a mock success/failure)
-- Response: not schema-enforced; `{"payment": PaymentResponse}`
-- Errors: `404` (empty cart / bad address), `402` (payment failed), `400` (stock/amount mismatch,
-  unsupported gateway, or a resale-cap trigger violation) — distinguish these in the UI rather
-  than showing one generic "checkout failed"
+  server-side), `shipping_address_id` (uuid), `gateway` (`"mock"` | `"paypal"`, default `"mock"`),
+  `simulate_succ` (bool, optional — mock gateway only, forces a mock success/failure),
+  `idempotency_key` (uuid, **required** — generate a fresh one per checkout attempt; retrying the
+  same key against an already-resolved payment returns `409`, not a duplicate order)
+- Response (`Order`): `id`, `user_id`, `shipping_address_id`, `total_price`, `status`
+  (`"pending"|"confirmed"|"cancelled"` — a `paypal` checkout comes back `"pending"`, not
+  `"confirmed"`, until the payment is captured), `created_at`, `items`, `shippingstatus`,
+  `shippingaddress`
+- Errors: `404` (empty cart / bad address), `402` (mock payment failed), `400` (stock/amount
+  mismatch, unsupported gateway, or a resale-cap trigger violation), `409` (idempotency key already
+  used) — distinguish these in the UI rather than showing one generic "checkout failed"
 - UI: checkout page's final "place order" action
 
 ### `GET /order/fetch_placed_order` 🔒 fan
@@ -770,15 +776,59 @@ order** — read that carefully when wiring the success screen.
 - Response: `Order`
 - UI: admin — fulfillment/shipping dashboard
 
-### `PATCH /payment/status/{order_id}` 🔒 fan
-- Response (`PaymentResponse`): `id`, `order_id`, `user_id`, `amount`, `status`
-  (`"pending"|"success"|"failed"|"cancelled"`), `payment_gateway` (`"mock"` — the only value
-  today), `is_paid`, `pg_order_id`, `pg_payment_id`, `pg_signature`, `created_at`, `updated_at`
+### `PATCH /payment/status/order/{order_id}` 🔒 fan
+Was `PATCH /payment/status/{order_id}` in an earlier revision of this doc — the path changed when
+tickets got their own lookup below, nothing else about the contract did.
+- Response (`PaymentResponse`): `id`, `order_id`, `ticket_id` (null here — set only for a ticket
+  payment), `user_id`, `amount`, `status` (`"pending"|"success"|"failed"|"cancelled"`),
+  `payment_gateway` (`"mock"|"paypal"`), `is_paid`, `pg_order_id`, `pg_payment_id`, `pg_signature`,
+  `pg_approval_url` (PayPal's redirect link — see below; always `null` for `"mock"` or once a
+  payment has resolved), `created_at`, `updated_at`
 - UI: order detail / checkout success page — poll this while waiting on an async gateway
+
+### `PATCH /payment/status/ticket/{ticket_id}` 🔒 fan
+Same `PaymentResponse` shape as above, looked up by `ticket_id` instead (`order_id` null,
+`ticket_id` set). Used the same way for a direct-sale ticket checkout.
 
 ### `PATCH /payment/status/all` 🔒 fan
 - Response: `List[PaymentResponse]`
 - UI: "My payments" page, if surfaced separately from orders
+
+### PayPal checkout flow (redirect + capture)
+Everything below only applies when `gateway="paypal"` was passed to `POST /order/checkout` or
+`POST /tickets/checkout`. The mock gateway resolves synchronously in that one call; PayPal doesn't
+— the fan has to leave the app to approve the payment on PayPal's site first.
+
+1. **Checkout** — `POST /order/checkout` (or `/tickets/checkout`) with `gateway="paypal"`. The
+   order/ticket comes back `"pending"` — no error, this is expected, not a stuck state.
+2. **Fetch the approval link** — `PATCH /payment/status/order/{order_id}` (or
+   `.../ticket/{ticket_id}`) and read `pg_approval_url` off the response.
+3. **Redirect the fan** to `pg_approval_url` (a `paypal.com` page, not this API). This is a full
+   page redirect, not an API call — treat it like sending the fan to a third-party checkout, same
+   as any other redirect-based payment flow.
+4. **Fan approves and PayPal redirects back** to whatever `return_url` the backend registered when
+   it created the order (currently `{BASE_URL}/payment/paypal/return` — a placeholder JSON
+   endpoint with no frontend to hand off to yet, see `project_status.md`). **Once a frontend
+   exists, this needs to become a frontend route instead**, and the backend's `return_url`/
+   `cancel_url` (`app/utils/paypal_client.py::create_order`) updated to point at it. PayPal appends
+   `token` (the PayPal order id — the same value as `pg_order_id`) and `PayerID` as query params.
+5. **Capture** — the frontend route from step 4 calls `POST /payment/paypal/capture/{pg_order_id}`
+   (using the `token` query param as `pg_order_id`) 🔒 fan. Response is the updated
+   `PaymentResponse` — `status` is now `"success"` or `"failed"`.
+   - `404` here means: not found, already resolved (e.g. the webhook below beat this call to it —
+     treat that as a normal race, not an error to surface), or the payment doesn't belong to the
+     caller.
+6. **Cancellation**: if the fan backs out on PayPal's side instead, PayPal redirects to
+   `cancel_url` (`{BASE_URL}/payment/paypal/cancel`, same placeholder-today caveat as step 4) with
+   `token` — no capture call needed, the order/ticket simply stays `"pending"` (it isn't
+   auto-cancelled; nothing currently sweeps up abandoned PayPal checkouts, see
+   `project_status.md`).
+
+**The frontend never calls `/payment/paypal/webhook` directly** — that endpoint exists purely for
+PayPal's own server-to-server delivery, as a reconciliation backstop for the same
+`finalize_paypal_payment` capture logic in case step 5 never happens (fan closes the tab after
+approving, etc.). It's mentioned here only so it isn't mistaken for something the frontend needs to
+implement.
 
 ## 7. Notifications
 

@@ -1,5 +1,7 @@
 import uuid
+
 from pydantic import BaseModel, Field
+
 
 class CartItem(BaseModel):
     quantity : int = Field(..., ge=1)

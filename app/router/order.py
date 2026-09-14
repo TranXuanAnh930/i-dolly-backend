@@ -1,31 +1,34 @@
 import uuid
-from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from app.cache.rate_limit import user_key, rate_limit
+
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.user import Users
-from app.deps.db import get_db
 from app.deps.auth import get_current_user, require_admin, require_manager_or_admin
-from app.schema.shipping import ShippingStatus as SchemaShippingStatus
-from app.schema.order import Order, ManagerOrdersPageRead
+from app.deps.db import get_db
+from app.exception.checkout import (
+    AddressIdError,
+    CartItemError,
+    InsufficientStockError,
+    PaymentAmountMismatch,
+    PaymentFailedError,
+    UnsupportedGatewayError,
+)
+from app.exception.db_triggers import TriggerViolationError
+from app.schema.order import ManagerOrdersPageRead, Order
 from app.schema.payment import PaymentCreate
+from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.services.order_service import (
-    cancel_placed_order, checkout,
+    cancel_placed_order,
+    checkout,
     fetch_placed_order,
     fetch_single_placed_order,
+    get_manager_orders_page,
     get_user_shipping_status,
     update_shipping_status,
-    get_manager_orders_page,
 )
-from app.exception.checkout import (
-    CartItemError,
-    PaymentFailedError,
-    InsufficientStockError,
-    AddressIdError,
-    PaymentAmountMismatch,
-    UnsupportedGatewayError
-)
-from app.exception.db_triggers import TriggerViolationError, commit_or_raise
 
 router = APIRouter(prefix="/order", tags=["Order"])
 

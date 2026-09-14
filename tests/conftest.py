@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 
@@ -37,8 +38,9 @@ os.environ["_ORIGINAL_DATABASE_URL"] = _original_url.render_as_string(hide_passw
 _test_url = _original_url.set(database=f"{_original_url.database}_test")
 os.environ["DATABASE_URL"] = _test_url.render_as_string(hide_password=False)
 
-import fakeredis
 from unittest.mock import patch
+
+import fakeredis
 
 # Every test file in here imports individual services/schemas lazily, inside
 # each test function, rather than the app's full router tree (main.py) — so

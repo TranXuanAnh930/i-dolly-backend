@@ -1,21 +1,37 @@
 import uuid
 from datetime import date
-from fastapi import HTTPException, Depends, APIRouter, Form, File, UploadFile
 from typing import List
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.user import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
 from app.schema.idol import (
-    IdolCreate, IdolUpdate, IdolRead, MembersPageRead, IdolDetailRead,
-    ManagerIdolsPageRead, ManagerIdolFormPageRead,
+    IdolCreate,
+    IdolDetailRead,
+    IdolRead,
+    IdolUpdate,
+    ManagerIdolFormPageRead,
+    ManagerIdolsPageRead,
+    MembersPageRead,
 )
 from app.services.idol_service import (
-    add_idol, get_idols, get_idol, update_idol, delete_idol, reactivate_idol, set_idol_image,
-    get_members_page, get_idol_detail, get_manager_idols_page, get_manager_idol_form_page,
+    add_idol,
+    delete_idol,
+    get_idol,
+    get_idol_detail,
+    get_idols,
+    get_manager_idol_form_page,
+    get_manager_idols_page,
+    get_members_page,
+    reactivate_idol,
+    set_idol_image,
+    update_idol,
 )
-from app.utils.storage import get_storage, StorageError
+from app.utils.storage import StorageError, get_storage
 
 # Same company-scoping as groups.py — see the comment there. add_idol/
 # update_idol also carry the pre-existing group/company cross-field check

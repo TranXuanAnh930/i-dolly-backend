@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
     DATABASE_URL : str
     JWT_SECRET_KEY : str
@@ -38,6 +39,12 @@ class Settings(BaseSettings):
     # Defaults to local dev; override per-environment via .env.
     BASE_URL: str = "http://localhost:8000"
 
+    # Public base URL of the frontend — used to build PayPal's return_url/
+    # cancel_url (app/utils/paypal_client.py's create_order) so the buyer
+    # lands back on the SPA, not this API. Defaults to the local Vite dev
+    # port; override per-environment via .env.
+    FRONTEND_BASE_URL: str = "http://localhost:8080"
+
     # Comma-separated list of frontend origins allowed to call this API
     # cross-origin (see main.py's CORSMiddleware). Defaults to the local Vue
     # dev port; set to the deployed frontend's real origin(s) in production —
@@ -65,6 +72,11 @@ class Settings(BaseSettings):
     S3_PUBLIC_URL_BASE: str | None = None  # CDN/custom domain fronting the bucket; falls back to a computed bucket URL when unset
     AWS_ACCESS_KEY_ID: str | None = None  # falls back to boto3's normal credential chain (env, shared config, IAM role) if unset
     AWS_SECRET_ACCESS_KEY: str | None = None
+
+    PAYPAL_CLIENT_ID: str | None = None
+    PAYPAL_CLIENT_SECRET: str | None = None
+    PAYPAL_MODE: str | None = None
+    PAYPAL_WEBHOOK_ID: str | None = None
 
     class Config:
         env_file = ".env"

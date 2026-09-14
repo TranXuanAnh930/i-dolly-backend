@@ -7,6 +7,23 @@ on:
     branches: ["main", "master", "develop"]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.8.6
+
+      - name: Run ruff
+        run: ruff check .
+
   test:
     runs-on: ubuntu-latest
 
@@ -93,7 +110,7 @@ jobs:
           fail_ci_if_error: false
 
   deploy:
-    needs: test
+    needs: [lint, test]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     environment: production

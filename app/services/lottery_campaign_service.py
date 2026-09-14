@@ -1,10 +1,12 @@
 import uuid
+
 from sqlalchemy.orm import Session, joinedload
-from app.schema.lottery_campaign import LotteryCampaignCreate, LotteryCampaignUpdate
+
+from app.db.models.concert import Concert
 from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.ticket_type import TicketType
-from app.db.models.concert import Concert
 from app.db.models.user import Users
+from app.schema.lottery_campaign import LotteryCampaignCreate, LotteryCampaignUpdate
 
 # Company-scoped via a two-level join: ticket_type_id -> concert_id ->
 # concert.company_id (database-design.md's dual-FK scoping note).

@@ -21,7 +21,11 @@ this same folder. For *what's built vs. still open*, see `project_status.md`.
   async email, the ETL pipeline) are still undecided/unbuilt on top of this.
 - **JWT** (python-jose, HS256): short-lived access tokens (`sub` = user id) + opaque UUID refresh
   tokens persisted in a `refresh_tokens` table, rotated on every login/refresh, delivered as an
-  httponly/secure/samesite=lax cookie. A *separate* JWT secret (`JWT_EMAIL_SECRET_KEY`) signs
+  httponly/secure/samesite=none cookie — samesite=none (not lax) because the frontend and this API
+  are deployed on different origins (e.g. Vercel + Render); a Lax cookie is never sent on the
+  cross-site XHR/fetch POST /account/refresh call the frontend makes after a page reload, only on
+  top-level navigations, so refresh always failed there and every reload logged fans out. A
+  *separate* JWT secret (`JWT_EMAIL_SECRET_KEY`) signs
   email-verification and password-reset tokens, discriminated by a `type` claim (`verify` vs.
   `reset`), checked on decode so one can't be replayed as the other.
 - **bcrypt** via passlib for password hashing.

@@ -1,20 +1,28 @@
-from fastapi import APIRouter,HTTPException, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit, user_key
-from app.deps.db import get_db
-from app.schema.user import UserOut, ChangePasswordRequest, ForgotPasswordRequest, SetPasswordRequest, MakeAdminRequest, ManagerCreate
+from app.db.models.user import Users
 from app.deps.auth import get_current_user, require_admin
+from app.deps.db import get_db
+from app.schema.user import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    MakeAdminRequest,
+    ManagerCreate,
+    SetPasswordRequest,
+    UserOut,
+)
 from app.services.user_service import (
     change_password_process,
-    reset_password_process,
-    verify_rtoken,
-    promote_admin,
-    revoke_token,
+    create_manager_user,
     delete_user,
-    create_manager_user
+    promote_admin,
+    reset_password_process,
+    revoke_token,
+    verify_rtoken,
 )
-from app.db.models.user import Users
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 

@@ -1,15 +1,21 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.ticket_type import TicketTypeCreate, TicketTypeUpdate, TicketTypeRead
-from app.services.ticket_type_service import (
-    add_ticket_type, get_ticket_types, get_ticket_type, update_ticket_type, delete_ticket_type,
-)
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.ticket_type import TicketTypeCreate, TicketTypeRead, TicketTypeUpdate
+from app.services.ticket_type_service import (
+    add_ticket_type,
+    delete_ticket_type,
+    get_ticket_type,
+    get_ticket_types,
+    update_ticket_type,
+)
 
 # Company-scoped via the parent concert (ticket_type_service). Nested under
 # /ticket_types rather than under /concerts since it's addressed by its own
