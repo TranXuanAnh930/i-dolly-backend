@@ -1,8 +1,11 @@
 import uuid
 from datetime import date, datetime
+
 from pydantic import BaseModel, Field
+
 from app.schema.idol_color import IdolColorRead
 from app.schema.position import IdolPositionRead
+
 
 class IdolBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)

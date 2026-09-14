@@ -1,19 +1,21 @@
 import uuid
-from sqlalchemy.orm import Session, selectinload, joinedload
-from app.db.models.products import Product
-from app.db.models.category import Category
-from app.db.models.album_detail import AlbumDetail
-from app.db.models.merch_detail import MerchDetail
-from app.db.models.genre import AlbumGenre
-from app.db.models.idol import Idol
-from app.db.models.group import Group
-from app.db.models.idol_color import IdolColor
-from app.db.models.order import Order, OrderItem
-from app.db.models.user import Users
-from app.schema.products import ProductRead, ProductCreate, ProductWithDetailCreate
-from app.utils.resale import RESALE_CAP_QUANTITY
-from app.exception.db_triggers import commit_or_raise, flush_or_raise
 from typing import List
+
+from sqlalchemy.orm import Session, joinedload, selectinload
+
+from app.db.models.album_detail import AlbumDetail
+from app.db.models.category import Category
+from app.db.models.genre import AlbumGenre
+from app.db.models.group import Group
+from app.db.models.idol import Idol
+from app.db.models.idol_color import IdolColor
+from app.db.models.merch_detail import MerchDetail
+from app.db.models.order import Order, OrderItem
+from app.db.models.products import Product
+from app.db.models.user import Users
+from app.exception.db_triggers import commit_or_raise, flush_or_raise
+from app.schema.products import ProductCreate, ProductRead, ProductWithDetailCreate
+from app.utils.resale import RESALE_CAP_QUANTITY
 
 # Company-scoping for update/delete/image-replace only (see docs/project_status.md
 # SS4 item 10). A product has no company_id column of its own; its owner, if any,

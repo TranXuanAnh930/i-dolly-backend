@@ -13,7 +13,7 @@ import hashlib
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 OUT_ROOT = os.path.dirname(os.path.abspath(__file__))
 FONT_DIR = "/usr/share/fonts/truetype/google-fonts"

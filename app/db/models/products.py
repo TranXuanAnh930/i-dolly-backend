@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, Integer, Float, String, ForeignKey
+
+from sqlalchemy import Column, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
+
 
 class Product(Base):
 

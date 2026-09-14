@@ -1,14 +1,17 @@
 import uuid
+
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
-from app.db.models.user import Users
-from app.db.models.refresh_token import RefreshToken
+
 from app.db.models.management_company import ManagementCompany
+from app.db.models.refresh_token import RefreshToken
+from app.db.models.user import Users
 from app.schema.user import ManagerCreate
+from app.services.notification_service import create_notification
 from app.utils.email_sender import send_email
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import create_password_reset_token, verify_rtoken_and_get_user_id
-from app.services.notification_service import create_notification
+
 
 def change_password_process(db: Session, user:Users, old_password: str, new_password: str):
     password_verification = verify_password(old_password, user.hashed_password)

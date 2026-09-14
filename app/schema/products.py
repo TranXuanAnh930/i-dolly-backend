@@ -1,12 +1,15 @@
 import uuid
 from datetime import date, datetime
+
 from pydantic import BaseModel, Field, model_validator
-from app.schema.genre import GenreRead
+
 from app.schema.artist import ArtistRef
-from app.schema.idol import GroupMini, IdolRead, GroupOptionForCompany
-from app.schema.idol_color import IdolColorRead
 from app.schema.category import CategoryRead
+from app.schema.genre import GenreRead
+from app.schema.idol import GroupMini, GroupOptionForCompany, IdolRead
+from app.schema.idol_color import IdolColorRead
 from app.schema.order import OrderStatus
+
 
 class ProductBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)

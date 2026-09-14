@@ -1,12 +1,15 @@
 import uuid
-from sqlalchemy.orm import Session, selectinload, joinedload
-from app.schema.idol import IdolCreate, IdolUpdate
-from app.db.models.idol import Idol
+
+from sqlalchemy.orm import Session, joinedload, selectinload
+
 from app.db.models.group import Group
-from app.db.models.management_company import ManagementCompany
+from app.db.models.idol import Idol
 from app.db.models.idol_color import IdolColor
+from app.db.models.management_company import ManagementCompany
 from app.db.models.position import IdolPosition
 from app.db.models.user import Users
+from app.schema.idol import IdolCreate, IdolUpdate
+
 
 # Eager-loads exactly what IdolWithPositions needs (idol.py schema) so a
 # page-shaped endpoint returns fully-formed idols in one query instead of

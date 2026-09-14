@@ -1,9 +1,12 @@
 import uuid
-from sqlalchemy.orm import relationship
-from sqlalchemy import DateTime, Enum, Column, Integer, ForeignKey, Float, func
+
+from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
 from app.schema.order import OrderStatus
+
 
 class Order(Base):
 

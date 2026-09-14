@@ -1,22 +1,37 @@
 import uuid
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
+
 from app.db.models.cart import Cart
 from app.db.models.order import Order, OrderItem
 from app.db.models.payment import Payment
 from app.db.models.products import Product
-from app.db.models.shipping import ShippingStatus, ShippingAddress
+from app.db.models.shipping import ShippingAddress, ShippingStatus
 from app.db.models.user import Users
+from app.exception.checkout import (
+    AddressIdError,
+    CartItemError,
+    InsufficientStockError,
+    PaymentAmountMismatch,
+    UnsupportedGatewayError,
+)
+from app.exception.db_triggers import (
+    DuplicateIdempotencyKeyError,
+    FanOnlyPurchaseError,
+    ResaleCapExceededError,
+    commit_or_raise,
+    flush_or_raise,
+)
 from app.schema.order import OrderStatus
-from app.schema.shipping import ShippingStatus as SchemaShippingStatus
 from app.schema.payment import PaymentCreate, PaymentStatus
+from app.schema.shipping import ShippingStatus as SchemaShippingStatus
+from app.services.notification_service import create_notification
 from app.services.payment_service import create_payment
 from app.services.product_service import resolve_product_company_ids
-from app.services.notification_service import create_notification
-from app.exception.checkout import AddressIdError, CartItemError, InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError
-from app.exception.db_triggers import DuplicateIdempotencyKeyError, ResaleCapExceededError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError
-from app.utils.tax import with_tax
 from app.utils.resale import RESALE_CAP_QUANTITY
+from app.utils.tax import with_tax
+
 
 def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
     user = db.get(Users, user_id)

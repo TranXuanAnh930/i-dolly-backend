@@ -124,7 +124,15 @@ types, and marketplace products. Idempotent — safe to re-run.
 docker compose exec app pytest --cov=app
 ```
 
-### 6. Stop the stack
+### 6. Run linting
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+```
+Runs outside the container (no DB/Redis needed) — `requirements-dev.txt` pulls in `ruff` on top of
+the regular dependencies. Same command CI runs on every push/PR.
+
+### 7. Stop the stack
 ```bash
 docker compose stop
 ```

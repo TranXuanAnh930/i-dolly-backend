@@ -1,22 +1,39 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit
-from app.deps.auth import require_manager_or_admin, get_current_user_optional
-from app.deps.db import get_db
+from app.celery_app import celery_app
 from app.db.models.user import Users
+from app.deps.auth import get_current_user_optional, require_manager_or_admin
+from app.deps.db import get_db
 from app.schema.concert import (
-    ConcertCreate, ConcertUpdate, ConcertRead, ConcertPerformerAssign, ConcertPerformerRead,
-    EventsPageRead, ConcertDetailRead, ManagerEventsPageRead
+    ConcertCreate,
+    ConcertDetailRead,
+    ConcertPerformerAssign,
+    ConcertPerformerRead,
+    ConcertRead,
+    ConcertUpdate,
+    EventsPageRead,
+    ManagerEventsPageRead,
 )
 from app.services.concert_service import (
-    add_concert, get_concerts, get_concert, update_concert, delete_concert,
-    assign_performer, get_performers, get_all_performers, remove_performer,
-    get_events_page, get_concert_detail, get_manager_events_page,
     _manager_scope_violation,
+    add_concert,
+    assign_performer,
+    delete_concert,
+    get_all_performers,
+    get_concert,
+    get_concert_detail,
+    get_concerts,
+    get_events_page,
+    get_manager_events_page,
+    get_performers,
+    remove_performer,
+    update_concert,
 )
-from app.celery_app import celery_app
 
 # Company-scoped exactly like groups/idols (database-design.md §4): a manager
 # may only create/edit/delete concerts for their own company_id; admins are

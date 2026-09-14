@@ -1,0 +1,54 @@
+[tool.ruff]
+target-version = "py311"
+# Generous on purpose — this codebase's existing style is intentionally
+# dense (compact type-hinted signatures, no space after `:`), and the goal
+# here is catching real bugs (undefined names, unused imports, mutable
+# default args), not forcing a reformat. Full pycodestyle E/W and the
+# bundled formatter are deliberately not enabled for the same reason.
+line-length = 120
+exclude = [
+    "alembic/versions",  # migration files — generated-ish, not worth strict linting
+]
+
+[tool.ruff.lint]
+select = [
+    "E4", "E7", "E9",  # pycodestyle: import placement, control-flow, syntax errors
+    "F",               # pyflakes — undefined names, unused imports/variables, etc.
+    "B",               # flake8-bugbear — real bug patterns (mutable defaults, bare except, ...)
+    "I",               # isort — import ordering
+]
+ignore = [
+    # E711/E712 want `Model.col is None` / `not Model.col` — correct for a
+    # plain bool/None, but WRONG for a SQLAlchemy query filter: `Column ==
+    # False`/`Column == None` is how this codebase (and SQLAlchemy itself)
+    # spells "IS FALSE"/"IS NULL" in generated SQL; `is`/`not` on a Column
+    # either raises TypeError or silently does the wrong thing. Ruff can't
+    # tell a SQLAlchemy filter clause from a plain bool, so this stays off
+    # rather than risk a real bug from ever applying its own "fix".
+    "E711", "E712",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# Without this, B008 (no function calls in a default argument — a real
+# footgun for an actually-mutable default) flags every single FastAPI
+# Depends()/Query()/Path()/Body() in every router, which is the framework's
+# own dependency-injection idiom, not a bug — 278 of this repo's first 567
+# findings were exactly this false positive.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.Header", "fastapi.Cookie", "fastapi.Form", "fastapi.File", "fastapi.Security",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# tests/conftest.py's DATABASE_URL rewrite has to run before app.config.settings
+# is ever imported (see that file's own comment) — the "late" imports below it
+# are deliberate, not a fixable ordering mistake.
+"tests/conftest.py" = ["E402"]
+# Every import in this file exists purely so SQLAlchemy registers the model
+# before mapper configuration runs (see the file's own CORRECTION comment) —
+# none of them are referenced by name here on purpose. A blind F401 autofix
+# deleted the entire file once already; never let that happen again. Import
+# order here is insertion order (when each model was added), not alphabetical
+# — meaningless functionally, but isort would keep re-flagging it, so I001
+# is off for this file too.
+"app/db/base.py" = ["F401", "I001"]

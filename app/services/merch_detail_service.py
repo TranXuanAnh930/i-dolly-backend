@@ -1,13 +1,15 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.merch_detail import MerchDetailCreate, MerchDetailUpdate
+
+from app.db.models.group import Group
+from app.db.models.idol import Idol
+from app.db.models.idol_color import IdolColor
 from app.db.models.merch_detail import MerchDetail
 from app.db.models.products import Product
-from app.db.models.idol import Idol
-from app.db.models.group import Group
-from app.db.models.idol_color import IdolColor
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
+from app.schema.merch_detail import MerchDetailCreate, MerchDetailUpdate
 
 # Same dual-FK scoping as album_details.
 

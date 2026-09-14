@@ -1,26 +1,44 @@
 import uuid
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile
 from typing import List
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
-from app.cache.rate_limit import ip_key, rate_limit, user_key
-from app.deps.db import get_db
-from app.deps.auth import require_manager_or_admin
-from app.schema.products import (
-    ProductRead, ProductCreate, StorePageRead, ProductDetailRead,
-    ManagerProductsPageRead, ManagerProductFormPageRead, ProductSalesPageRead,
-    ProductWithDetailCreate,
-)
-from app.db.models.user import Users
-from app.services.product_service import (
-    add_product, search_product, update_product, delete_product, add_bulk_products, pagination_process, filter_products, set_product_image,
-    get_store_page, get_product_detail, get_manager_products_page, get_manager_product_form_page, get_product_sales_page,
-    add_product_with_detail,
-)
-from app.cache.cache_service import get_cached_products, delete_cached_product
+
+from app.cache.cache_service import delete_cached_product, get_cached_products
+from app.cache.rate_limit import ip_key, rate_limit
 from app.cache.redis_client import redis_client
-from app.utils.storage import get_storage, StorageError
+from app.db.models.user import Users
+from app.deps.auth import require_manager_or_admin
+from app.deps.db import get_db
+from app.schema.products import (
+    ManagerProductFormPageRead,
+    ManagerProductsPageRead,
+    ProductCreate,
+    ProductDetailRead,
+    ProductRead,
+    ProductSalesPageRead,
+    ProductWithDetailCreate,
+    StorePageRead,
+)
+from app.services.product_service import (
+    add_bulk_products,
+    add_product,
+    add_product_with_detail,
+    delete_product,
+    filter_products,
+    get_manager_product_form_page,
+    get_manager_products_page,
+    get_product_detail,
+    get_product_sales_page,
+    get_store_page,
+    pagination_process,
+    search_product,
+    set_product_image,
+    update_product,
+)
+from app.utils.storage import StorageError, get_storage
 
 router = APIRouter(prefix="/products", tags=["Products"])
 

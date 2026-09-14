@@ -1,9 +1,12 @@
 import uuid
-from app.db.base_class import Base
-from app.schema.payment import PaymentStatus, PaymentGateway
-from sqlalchemy import Boolean, Column, DateTime, Integer, ForeignKey, Enum, String, func
+
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
+from app.db.base_class import Base
+from app.schema.payment import PaymentGateway, PaymentStatus
+
 
 class Payment(Base):
 

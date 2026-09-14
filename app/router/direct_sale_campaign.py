@@ -1,13 +1,19 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.direct_sale_campaign import DirectSaleCampaignCreate, DirectSaleCampaignUpdate, DirectSaleCampaignRead
+from app.schema.direct_sale_campaign import DirectSaleCampaignCreate, DirectSaleCampaignRead, DirectSaleCampaignUpdate
 from app.services.direct_sale_campaign_service import (
-    add_campaign, get_campaigns, get_campaign, update_campaign, delete_campaign,
+    add_campaign,
+    delete_campaign,
+    get_campaign,
+    get_campaigns,
+    update_campaign,
 )
 
 router = APIRouter(prefix="/direct_sale_campaigns", tags=["Direct Sale Campaigns"])

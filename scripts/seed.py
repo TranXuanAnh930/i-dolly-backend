@@ -48,10 +48,6 @@ from pathlib import Path
 # (`python scripts/seed.py` from any cwd, not just `python -m scripts.seed`).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.db.session import session as SessionLocal
-from app.utils.hashing import hash_password
-from app.utils.storage import get_storage
-
 # Importing from app.db.base (not the individual model modules) so every
 # model in the app is registered before SQLAlchemy configures its mappers —
 # see the CORRECTION comment in app/db/base.py. Hand-picking only the models
@@ -60,29 +56,32 @@ from app.utils.storage import get_storage
 # mapper configuration ran, because Users.cart's string-based relationship()
 # pointed at a class this script never imported.
 from app.db.base import (
-    ManagementCompany,
-    Users,
-    IdolColor,
-    Position,
-    IdolPosition,
-    Group,
-    Idol,
-    Venue,
+    AlbumDetail,
+    AlbumGenre,
+    Category,
     Concert,
     ConcertPerformer,
-    TicketType,
     DirectSaleCampaign,
-    Category,
-    Product,
-    AlbumDetail,
     Genre,
-    AlbumGenre,
-    MerchDetail,
-    LotteryPreference,
+    Group,
+    Idol,
+    IdolColor,
+    IdolPosition,
     LotteryCampaign,
     LotteryEntry,
+    LotteryPreference,
+    ManagementCompany,
+    MerchDetail,
+    Position,
+    Product,
     Ticket,
+    TicketType,
+    Users,
+    Venue,
 )
+from app.db.session import session as SessionLocal
+from app.utils.hashing import hash_password
+from app.utils.storage import get_storage
 
 SEED_PASSWORD = "Password123!"
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
@@ -154,6 +153,61 @@ def get_or_create_category(db, name, is_resale_capped):
     db.add(row)
     db.flush()
     return row
+
+
+def seed_ready_to_draw_lottery(db, concert, tt_vip, tt_premium, tt_regular, group_a, group_b, group_c):
+    """3 lottery campaigns (vip/premium/regular) whose entry window has
+    already closed — immediately drawable via PUT /concerts/lottery-draw/
+    {id}, no need to wait or fudge a campaign's entry_end_at first. Same
+    "rank-1 crowd, some fall through to rank 2" cascade shape as the
+    original concert_countdown data this was factored out of: group_a
+    ranks vip=1/premium=2, group_b ranks premium=1/regular=2, group_c ranks
+    regular=1 only — see the original block's comment (git history) for
+    exactly which rank-cascade case each transition exercises. Reusable so
+    every company gets at least one concert its own manager can draw
+    against, not just Nova's."""
+    now = datetime.now(timezone.utc)
+    campaign_vip = LotteryCampaign(
+        ticket_type_id=tt_vip.id,
+        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
+        status="open",  # draw_at stays NULL until PUT /concerts/lottery-draw/{id} actually runs
+    )
+    campaign_premium = LotteryCampaign(
+        ticket_type_id=tt_premium.id,
+        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
+        status="open",
+    )
+    campaign_regular = LotteryCampaign(
+        ticket_type_id=tt_regular.id,
+        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
+        status="open",
+    )
+    db.add_all([campaign_vip, campaign_premium, campaign_regular])
+    db.flush()
+
+    preferences = []
+    for fan in group_a:
+        preferences.append(LotteryPreference(concert_id=concert.id, user_id=fan.id, ticket_type_id=tt_vip.id, rank=1))
+        preferences.append(LotteryPreference(concert_id=concert.id, user_id=fan.id, ticket_type_id=tt_premium.id, rank=2))
+    for fan in group_b:
+        preferences.append(LotteryPreference(concert_id=concert.id, user_id=fan.id, ticket_type_id=tt_premium.id, rank=1))
+        preferences.append(LotteryPreference(concert_id=concert.id, user_id=fan.id, ticket_type_id=tt_regular.id, rank=2))
+    for fan in group_c:
+        preferences.append(LotteryPreference(concert_id=concert.id, user_id=fan.id, ticket_type_id=tt_regular.id, rank=1))
+    db.add_all(preferences)
+    db.flush()
+
+    entries = []
+    for fan in group_a:
+        entries.append(LotteryEntry(campaign_id=campaign_vip.id, user_id=fan.id))
+        entries.append(LotteryEntry(campaign_id=campaign_premium.id, user_id=fan.id))
+    for fan in group_b:
+        entries.append(LotteryEntry(campaign_id=campaign_premium.id, user_id=fan.id))
+        entries.append(LotteryEntry(campaign_id=campaign_regular.id, user_id=fan.id))
+    for fan in group_c:
+        entries.append(LotteryEntry(campaign_id=campaign_regular.id, user_id=fan.id))
+    db.add_all(entries)
+    db.flush()
 
 
 def seed(db):
@@ -519,9 +573,30 @@ def seed(db):
         capacity=11000, event_datetime=now + timedelta(days=25),
         doors_open_at=now + timedelta(days=25, hours=-1), status="on_sale",
     )
+    # Two more "ready to draw" concerts, one per remaining company — Nova's
+    # own manager already has concert_countdown above; without these,
+    # manager_starlight/manager_kuroyuri have nothing they can actually
+    # draw, which is exactly the gap that would leave the company-scoped
+    # RBAC check on PUT /concerts/lottery-draw/{id} (see project_status.md's
+    # fixed lottery-draw RBAC bug) untested for two of the three companies.
+    concert_kessho_finale = Concert(
+        company_id=starlight.id, venue_id=starlight_dome.id,
+        title="Kessho Stars: Eternal Oath Finale",
+        description="Kessho Stars' season finale — the anime tie-in franchise's climactic concert arc.",
+        capacity=28000, event_datetime=now + timedelta(days=40),
+        doors_open_at=now + timedelta(days=40, hours=-1), status="on_sale",
+    )
+    concert_program_closing = Concert(
+        company_id=kuroyuri.id, venue_id=skyline_arena.id,
+        title="Program:HEART: System Shutdown Finale",
+        description="Program:HEART's closing show for the Recompile era.",
+        capacity=13500, event_datetime=now + timedelta(days=42),
+        doors_open_at=now + timedelta(days=42, hours=-1), status="on_sale",
+    )
     db.add_all([
         concert_sakura, concert_nagisa, concert_kessho,
         concert_yozora, concert_program, concert_solo_showcase, concert_countdown,
+        concert_kessho_finale, concert_program_closing,
     ])
     db.flush()
 
@@ -535,6 +610,8 @@ def seed(db):
         ConcertPerformer(concert_id=concert_solo_showcase.id, idol_id=idol_rows["Kaede Shirogane"].id),
         ConcertPerformer(concert_id=concert_solo_showcase.id, idol_id=idol_rows["Yoru Kuon"].id),
         ConcertPerformer(concert_id=concert_countdown.id, group_id=sakura_prism.id),
+        ConcertPerformer(concert_id=concert_kessho_finale.id, group_id=kessho_stars.id),
+        ConcertPerformer(concert_id=concert_program_closing.id, group_id=program_heart.id),
     ])
     db.flush()
 
@@ -574,6 +651,17 @@ def seed(db):
     tt_countdown_vip = tt(concert_countdown, "vip", 20000, 3)
     tt_countdown_premium = tt(concert_countdown, "premium", 14000, 3)
     tt_countdown_regular = tt(concert_countdown, "regular", 9000, 8)
+
+    # Same deliberately-oversubscribed capacities as concert_countdown above
+    # — reused for concert_kessho_finale/concert_program_closing below so
+    # all three "ready to draw" concerts behave predictably the same way.
+    tt_kessho_finale_vip = tt(concert_kessho_finale, "vip", 22000, 3)
+    tt_kessho_finale_premium = tt(concert_kessho_finale, "premium", 12000, 3)
+    tt_kessho_finale_regular = tt(concert_kessho_finale, "regular", 7500, 8)
+
+    tt_program_closing_vip = tt(concert_program_closing, "vip", 18000, 3)
+    tt_program_closing_premium = tt(concert_program_closing, "premium", 9500, 3)
+    tt_program_closing_regular = tt(concert_program_closing, "regular", 6500, 8)
     db.flush()
 
     # --- direct sale campaigns: every direct-sale ticket type needs one now
@@ -764,10 +852,13 @@ def seed(db):
     ])
     db.flush()
 
-    # concert_countdown: entry_end_at already in the PAST — immediately
-    # drawable, for testing PUT /concerts/lottery-draw/{id} itself. 12
-    # applicants across 3 tiers, deliberately over capacity everywhere,
-    # exercising every rank-cascade case from the draw's own design:
+    # Three "ready to draw" concerts, one per company — entry_end_at already
+    # in the PAST on every campaign below, so each is immediately drawable
+    # via PUT /concerts/lottery-draw/{id} with no setup beyond running this
+    # script. Same 12-fan pool, same 3-group cascade shape reused across all
+    # three (seed_ready_to_draw_lottery, factored out from what used to be
+    # concert_countdown-only logic) so every company's manager gets a
+    # concert they can actually draw, not just Nova's:
     #   - vip: pure single-tier competition (5 candidates, 3 slots).
     #   - premium: a rank-1 crowd that already fills it (4 candidates, 3
     #     slots) before any vip rank-2 fallback gets a turn — 2 of the vip
@@ -775,50 +866,13 @@ def seed(db):
     #   - regular: a rank-1 crowd well under capacity (3 candidates, 8
     #     slots), then 1 premium rank-1 loser's rank-2 fallback succeeds —
     #     the "lost rank 1, won rank 2" case the cascade exists for.
-    campaign_countdown_vip = LotteryCampaign(
-        ticket_type_id=tt_countdown_vip.id,
-        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
-        status="open",  # draw_at stays NULL until PUT /concerts/lottery-draw/{id} actually runs
-    )
-    campaign_countdown_premium = LotteryCampaign(
-        ticket_type_id=tt_countdown_premium.id,
-        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
-        status="open",  # draw_at stays NULL until PUT /concerts/lottery-draw/{id} actually runs
-    )
-    campaign_countdown_regular = LotteryCampaign(
-        ticket_type_id=tt_countdown_regular.id,
-        entry_start_at=now - timedelta(days=20), entry_end_at=now - timedelta(days=1),
-        status="open",  # draw_at stays NULL until PUT /concerts/lottery-draw/{id} actually runs
-    )
-    db.add_all([campaign_countdown_vip, campaign_countdown_premium, campaign_countdown_regular])
-    db.flush()
-
     group_a = [fan_alex, fan_priya, fan_marco, fan_yuki, fan_sofia]  # ranks vip=1, premium=2
     group_b = [fan_liam, fan_haruto, fan_emma, fan_noah]  # ranks premium=1, regular=2
     group_c = [fan_aiko, fan_diego, fan_chloe]  # ranks regular=1 only
 
-    preferences = []
-    for fan in group_a:
-        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_vip.id, rank=1))
-        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_premium.id, rank=2))
-    for fan in group_b:
-        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_premium.id, rank=1))
-        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_regular.id, rank=2))
-    for fan in group_c:
-        preferences.append(LotteryPreference(concert_id=concert_countdown.id, user_id=fan.id, ticket_type_id=tt_countdown_regular.id, rank=1))
-    db.add_all(preferences)
-    db.flush()
-
-    entries = []
-    for fan in group_a:
-        entries.append(LotteryEntry(campaign_id=campaign_countdown_vip.id, user_id=fan.id))
-        entries.append(LotteryEntry(campaign_id=campaign_countdown_premium.id, user_id=fan.id))
-    for fan in group_b:
-        entries.append(LotteryEntry(campaign_id=campaign_countdown_premium.id, user_id=fan.id))
-        entries.append(LotteryEntry(campaign_id=campaign_countdown_regular.id, user_id=fan.id))
-    for fan in group_c:
-        entries.append(LotteryEntry(campaign_id=campaign_countdown_regular.id, user_id=fan.id))
-    db.add_all(entries)
+    seed_ready_to_draw_lottery(db, concert_countdown, tt_countdown_vip, tt_countdown_premium, tt_countdown_regular, group_a, group_b, group_c)
+    seed_ready_to_draw_lottery(db, concert_kessho_finale, tt_kessho_finale_vip, tt_kessho_finale_premium, tt_kessho_finale_regular, group_a, group_b, group_c)
+    seed_ready_to_draw_lottery(db, concert_program_closing, tt_program_closing_vip, tt_program_closing_premium, tt_program_closing_regular, group_a, group_b, group_c)
 
     # --- one manually-issued ticket (admin stopgap path, see database-design.md §8) ---
     db.add(Ticket(
@@ -835,14 +889,17 @@ def seed(db):
     print("    alex/priya/marco/yuki/sofia/liam/haruto/emma/noah/aiko/diego/chloe.fan@example.com (12 fans)")
     print("  - 5 groups (Sakura Prism, Nagisa Melody, Kessho Stars, Yozora Requiem, Program:HEART),")
     print("    22 group idols + 3 solo idols = 25 idols total, each with a generated profile image")
-    print("  - 6 venues, 7 concerts, 21 ticket types across lottery + direct sale methods")
+    print("  - 6 venues, 9 concerts, 27 ticket types across lottery + direct sale methods")
     print("    (concert_kessho's vip tier is direct-sale only, no lottery)")
     print("  - 6 direct sale campaigns — one per direct-sale ticket type, already on sale via")
-    print("    POST /tickets/checkout (concert_countdown has no direct-sale tier at all)")
+    print("    POST /tickets/checkout (concert_countdown/concert_kessho_finale/concert_program_closing")
+    print("    have no direct-sale tier at all)")
     print("  - 10 albums/singles/EPs with genres + cover art, 10 merch items (8 lightsticks + 2 group-branded), all owned")
-    print("  - 7 lottery campaigns: 4 light ones (still-open entry windows, sakura vip+premium, kessho premium+regular) plus")
-    print("    3 for concert_countdown (vip/premium/regular, entry window already closed — ready to draw")
-    print("    via PUT /concerts/lottery-draw/{id}), with 12 fans' preferences + entries feeding the cascade")
+    print("  - 13 lottery campaigns: 4 light ones (still-open entry windows, sakura vip+premium, kessho premium+regular) plus")
+    print("    9 across 3 'ready to draw' concerts — one per company (Sakura Prism/Kessho Stars/Program:HEART),")
+    print("    vip/premium/regular each, entry window already closed — draw any of them via")
+    print("    PUT /concerts/lottery-draw/{id} as that company's own manager, with the same 12 fans'")
+    print("    preferences + entries feeding the cascade in all three")
     print("  - 1 manually-issued ticket")
 
 

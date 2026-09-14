@@ -1,13 +1,17 @@
 import uuid
-from fastapi import APIRouter, HTTPException, Depends, Request
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from app.cache.rate_limit import user_key, rate_limit
+
+from app.cache.rate_limit import rate_limit, user_key
+from app.db.models.user import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
-from app.db.models.user import Users
 from app.schema.payment import PaymentResponse
 from app.services.payment_service import (
-    fetch_all_payments, fetch_payment_status, fetch_ticket_payment_status,
+    fetch_all_payments,
+    fetch_payment_status,
+    fetch_ticket_payment_status,
     finalize_paypal_payment,
 )
 from app.utils.paypal_client import verify_webhook_signature
@@ -51,9 +55,6 @@ async def check_ticket_payment_status(ticket_id:uuid.UUID, user:Users=Depends(ge
 # the webhook below has no current_user at all and must still work.
 @router.post("/paypal/capture/{pg_order_id}", response_model=PaymentResponse)
 async def capture_paypal_payment(pg_order_id: str, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)):
-    # TODO: finalize_paypal_payment should look up Payment by pg_order_id
-    # alone (PayPal-side identifiers only), then check payment.user_id ==
-    # user.id for ownership — not filter by user_id in the query itself.
     payment = finalize_paypal_payment(db, pg_order_id, user_id=user.id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found, already resolved, or not yours")
@@ -75,10 +76,6 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Webhook signature verification failed")
 
     webhook_event = await request.json()
-    # webhook_event["resource"]["id"] is PayPal's capture id, not the PayPal
-    # *order* id finalize_paypal_payment keys on — confirmed against a real
-    # PAYMENT.CAPTURE.COMPLETED sample payload (PayPal's webhook simulator)
-    # that this is where the order id actually lives.
     pg_order_id = webhook_event["resource"]["supplementary_data"]["related_ids"]["order_id"]
     finalize_paypal_payment(db, pg_order_id)
 
@@ -87,9 +84,3 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
     # duplicate delivery, etc.) — a non-2xx here just triggers a retry of
     # an event that was never going to do anything different next time.
     return {"msg": "ok"}
-
-# The GET /paypal/return and /paypal/cancel placeholder routes that used to
-# live here are gone — create_order's return_url/cancel_url now point at
-# the frontend's own /payment/paypal/return and /payment/paypal/cancel
-# pages (see docs/api-spec.md §6), which call the capture endpoint above
-# directly instead of bouncing through this API first.

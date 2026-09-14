@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
+
 from pydantic import BaseModel
 
 from app.schema.payment import PaymentGateway
 from app.schema.ticket_type import TicketTypeRead
+
 
 class TicketCreate(BaseModel):
     """ADMIN-ONLY STOPGAP (database-design.md §7.4): the draw-job flow that
@@ -26,6 +28,16 @@ class TicketUpdate(BaseModel):
 # shipping_address_id, since a ticket has nothing to ship.
 class TicketCheckoutCreate(BaseModel):
     ticket_type_id: uuid.UUID
+    amount: int
+    gateway: PaymentGateway = PaymentGateway.mock
+    simulate_succ: bool | None = None
+    idempotency_key: uuid.UUID
+
+# A lottery winner paying for the ticket draw_lottery already created for
+# them (status="pending_payment", lottery_entry_id set) — no ticket_type_id
+# here, unlike TicketCheckoutCreate, since the ticket (and its type) already
+# exist; the path param identifies which one.
+class WonTicketCheckoutCreate(BaseModel):
     amount: int
     gateway: PaymentGateway = PaymentGateway.mock
     simulate_succ: bool | None = None

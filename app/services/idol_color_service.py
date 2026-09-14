@@ -1,7 +1,10 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.idol_color import IdolColorBase, IdolColorCreate
+
 from app.db.models.idol_color import IdolColor
+from app.schema.idol_color import IdolColorBase, IdolColorCreate
+
 
 def add_idol_color(db: Session, color: IdolColorCreate):
     db_color = IdolColor(**color.model_dump())

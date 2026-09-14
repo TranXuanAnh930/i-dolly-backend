@@ -1,13 +1,21 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.user import Users
 from app.deps.auth import require_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.management_company import ManagementCompanyCreate, ManagementCompanyBase, ManagementCompanyRead
-from app.services.management_company_service import add_company, get_companies, get_company, update_company, delete_company
+from app.schema.management_company import ManagementCompanyBase, ManagementCompanyCreate, ManagementCompanyRead
+from app.services.management_company_service import (
+    add_company,
+    delete_company,
+    get_companies,
+    get_company,
+    update_company,
+)
 
 # Company management stays admin-only (unlike groups/idols, which a manager
 # CRUDs for their own company): a manager account is scoped BY a company_id,

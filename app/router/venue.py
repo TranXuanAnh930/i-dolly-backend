@@ -1,13 +1,15 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.user import Users
 from app.deps.auth import require_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.venue import VenueCreate, VenueUpdate, VenueRead
-from app.services.venue_service import add_venue, get_venues, get_venue, update_venue, delete_venue
+from app.schema.venue import VenueCreate, VenueRead, VenueUpdate
+from app.services.venue_service import add_venue, delete_venue, get_venue, get_venues, update_venue
 
 # Admin-only, like management_companies/categories: a venue is shared,
 # platform-level data, not owned by one company (database-design.md §3.7).

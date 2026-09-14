@@ -1,7 +1,9 @@
 import uuid
-from sqlalchemy import Integer, Column, DateTime, ForeignKey, Enum, CheckConstraint, func
+
+from sqlalchemy import CheckConstraint, Column, DateTime, Enum, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
 
 campaign_status_enum = Enum("open", "drawn", "completed", "cancelled", name="campaign_status_enum")

@@ -1,7 +1,10 @@
 import uuid
+
 from sqlalchemy.orm import Session
-from app.schema.shipping import ShippingBase
+
 from app.db.models.shipping import ShippingAddress
+from app.schema.shipping import ShippingBase
+
 
 def create_shipping_address(db:Session, user_id:uuid.UUID, data:ShippingBase):
     address = ShippingAddress(**data.model_dump(), user_id=user_id)

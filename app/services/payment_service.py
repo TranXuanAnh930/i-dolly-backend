@@ -1,26 +1,24 @@
 import uuid
-from sqlalchemy.orm import Session, selectinload
-from app.db.models.order import Order
+from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session
+
+from app.db.models.cart import Cart
+from app.db.models.order import Order, OrderItem
+from app.db.models.payment import Payment
+from app.db.models.products import Product
+from app.db.models.shipping import ShippingStatus as ModelShipStatus
 from app.db.models.ticket import Ticket
 from app.db.models.ticket_type import TicketType
-from app.db.models.shipping import ShippingStatus as ModelShipStatus
+from app.exception.db_triggers import commit_or_raise
 from app.schema.order import OrderStatus
 from app.schema.payment import PaymentCreate, PaymentGateway, PaymentStatus
-from app.schema.ticket import TicketCheckoutCreate
-from app.db.models.payment import Payment
 from app.schema.shipping import ShippingStatus as SchemaShipStatus
-from app.utils.mock_id import generate_mock_id
-from app.utils.paypal_client import create_order, capture_order, extract_approval_url
+from app.schema.ticket import TicketCheckoutCreate
 from app.services.notification_service import create_notification
-from app.exception.db_triggers import commit_or_raise
-from app.db.models.cart import Cart
-from app.db.models.products import Product
-from app.db.models.order import Order, OrderItem
+from app.utils.mock_id import generate_mock_id
+from app.utils.paypal_client import capture_order, create_order, extract_approval_url
 
-# Real gateway integration (Paypal or otherwise) is next-phase work — see
-# docs/project_status.md. PaymentGateway currently has only one member
-# (mock), kept as an enum rather than collapsed away so a real gateway has
-# somewhere to slot in later without reshaping this function's contract.
 
 def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> Payment | bool:
     # Deliberately does not commit
@@ -87,9 +85,11 @@ def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:Tic
     if gateway == PaymentGateway.mock:
         is_success = data.simulate_succ
         if not is_success:
+            if ticket.ticket_type.sale_method == "direct":
+                ticket.status = "cancelled"
             payment_status = PaymentStatus.failed
             pg_order_id = pg_payment_id = pg_signature = None
-            ticket.status = "cancelled"
+            
         else:
             payment_status = PaymentStatus.success
             ids = generate_mock_id()
@@ -103,7 +103,6 @@ def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:Tic
         pg_order_id = order_response["id"]
         pg_approval_url = extract_approval_url(order_response)
         pg_payment_id = pg_signature = None
-        ticket.status = "pending_payment"
 
     payment = Payment(
         order_id=None,
@@ -151,8 +150,21 @@ def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | No
         if not ticket or ticket.status != "pending_payment" or (user_id and ticket.user_id != user_id):
             return None
         ticket_type = db.query(TicketType).filter(TicketType.id == ticket.ticket_type_id).with_for_update().first()
-        if not ticket_type or ticket_type.total_quantity - ticket_type.sold_quantity <= 0:
+        if not ticket_type:
             return None
+        if ticket_type.sale_method == "direct" and ticket_type.total_quantity - ticket_type.sold_quantity <= 0:
+            return None        
+        elif ticket_type.sale_method == "lottery":
+            if ticket.payment_deadline_at and ticket.payment_deadline_at < datetime.now(timezone.utc):
+                # Lazily discovered past the deadline — no sweep job exists yet
+                # (database-design.md §5.2's "deliberately not built this phase")
+                # to release this slot otherwise, so this is the one place that
+                # does it: expire the ticket and free the seat it was holding.
+                ticket.status = "expired"
+                ticket_type.sold_quantity -= 1
+                commit_or_raise(db)
+                return None
+        
         paypal_payment = capture_order(pg_order_id)
         if paypal_payment["status"] == "COMPLETED":
             payment.status = PaymentStatus.success
@@ -161,12 +173,16 @@ def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | No
             payment.pg_payment_id = ids["payment_id"]
             payment.pg_signature = ids["signature_id"]
             ticket.status = "paid"
-            ticket_type.sold_quantity += 1
             ticket.payment_id = payment.id
-            create_notification(db, ticket.user_id, "ticket_confirmation", ticket_id=ticket.id)
+            if ticket_type.sale_method == "direct":
+                ticket_type.sold_quantity += 1        
+                create_notification(db, ticket.user_id, "ticket_confirmation", ticket_id=ticket.id)
+            elif ticket_type.sale_method == "lottery":
+                create_notification(db, ticket.user_id, "lottery_payment_confirmation", ticket_id=ticket.id)
         else:
             payment.status = PaymentStatus.failed
-            ticket.status = "cancelled"
+            if ticket_type.sale_method == "direct":
+                ticket.status = "cancelled"
     elif payment.order_id:
         order = db.query(Order).filter(Order.id == payment.order_id).with_for_update().first()
         if not order or (user_id and order.user_id != user_id) or (order.status != OrderStatus.pending):

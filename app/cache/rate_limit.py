@@ -1,5 +1,7 @@
-from fastapi import Request, HTTPException
+from fastapi import HTTPException, Request
+
 from app.cache.redis_client import redis_client
+
 
 def _route_key(request: Request) -> str:
     # The route's raw path template (e.g. "/order/single_placed_order/{order_id}"),

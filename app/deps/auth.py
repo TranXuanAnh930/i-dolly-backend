@@ -1,10 +1,12 @@
-from fastapi.security import OAuth2PasswordBearer
-from fastapi import Depends, HTTPException, Request
-from sqlalchemy.orm import Session
-from app.db.models.user import Users
-from app.utils.jwt_manager import decode_token
-from app.deps.db import get_db
 import uuid
+
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+
+from app.db.models.user import Users
+from app.deps.db import get_db
+from app.utils.jwt_manager import decode_token
 
 oauth_scheme = OAuth2PasswordBearer(tokenUrl="account/login")
 # auto_error=False so a missing/absent Authorization header just yields

@@ -1,7 +1,9 @@
 import uuid
-from sqlalchemy import Column, DateTime, ForeignKey, Enum, CheckConstraint, func
+
+from sqlalchemy import CheckConstraint, Column, DateTime, Enum, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
 
 direct_sale_campaign_status_enum = Enum("open", "cancelled", name="direct_sale_campaign_status_enum")

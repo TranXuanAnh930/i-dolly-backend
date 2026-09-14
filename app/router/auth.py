@@ -1,19 +1,20 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
-from app.cache.rate_limit import ip_key, rate_limit, user_key
-from app.deps.db import get_db
-from app.deps.auth import get_current_user
-from app.schema.user import UserOut, UserCreate
-from app.services.auth_service import (
-    create_user, 
-    authenticate_user, 
-    create_tokens, 
-    verify_refresh_token,  
-    email_verification_process,
-    verify_email_token
-)
-from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+
+from app.cache.rate_limit import ip_key, rate_limit, user_key
+from app.deps.auth import get_current_user
+from app.deps.db import get_db
+from app.schema.user import UserCreate, UserOut
+from app.services.auth_service import (
+    authenticate_user,
+    create_tokens,
+    create_user,
+    email_verification_process,
+    verify_email_token,
+    verify_refresh_token,
+)
 
 router = APIRouter(prefix="/account", tags=["Account"])
 

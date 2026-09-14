@@ -1,28 +1,38 @@
 import uuid
 from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session, selectinload
-from app.db.models.payment import Payment
-from app.schema.ticket import TicketCreate, TicketUpdate, TicketCheckoutCreate
-from app.schema.payment import PaymentStatus
-from app.db.models.ticket import Ticket
-from app.db.models.ticket_type import TicketType
+
 from app.db.models.concert import Concert
 from app.db.models.direct_sale_campaign import DirectSaleCampaign
-from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.lottery_campaign import LotteryCampaign
+from app.db.models.lottery_entry import LotteryEntry
+from app.db.models.payment import Payment
+from app.db.models.ticket import Ticket
+from app.db.models.ticket_type import TicketType
 from app.db.models.user import Users
 from app.exception.checkout import (
-    TicketTypeNotFoundError,
-    WrongSaleMethodError,
     InsufficientTicketStockError,
+    LotteryEntryUnresolvedError,
     NotOnSaleError,
     PaymentAmountMismatch,
+    TicketNotFoundError,
+    TicketNotPayableError,
+    TicketTypeNotFoundError,
     UnsupportedGatewayError,
-    LotteryEntryUnresolvedError,
+    WrongSaleMethodError,
 )
-from app.exception.db_triggers import DuplicateIdempotencyKeyError, commit_or_raise, flush_or_raise, FanOnlyPurchaseError, DuplicateConcertTicketError
-from app.services.payment_service import create_ticket_payment
+from app.exception.db_triggers import (
+    DuplicateConcertTicketError,
+    DuplicateIdempotencyKeyError,
+    FanOnlyPurchaseError,
+    commit_or_raise,
+    flush_or_raise,
+)
+from app.schema.payment import PaymentStatus
+from app.schema.ticket import TicketCheckoutCreate, TicketCreate, TicketUpdate, WonTicketCheckoutCreate
 from app.services.notification_service import create_notification
+from app.services.payment_service import create_ticket_payment
 from app.utils.tax import with_tax
 
 # ADMIN-ONLY STOPGAP for create/update/delete — see TicketCreate's docstring.
@@ -133,6 +143,54 @@ def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate)
     db.refresh(ticket)
     return ticket
 
+# Pays for a ticket draw_lottery already created (status="pending_payment",
+# lottery_entry_id set, ticket_type.sold_quantity already incremented at
+# draw time — database-design.md §5.2) — distinct from checkout_ticket
+# above, which creates a brand-new direct-sale ticket and only counts
+# sold_quantity on payment success. Reuses create_ticket_payment unchanged
+# (it doesn't care how the ticket came to exist, only that ticket.id is
+# already populated), but deliberately does NOT touch sold_quantity on
+# success the way checkout_ticket does — that would double-count a seat
+# this function's caller already holds.
+def checkout_won_ticket(db: Session, user_id: uuid.UUID, ticket_id: uuid.UUID, data: WonTicketCheckoutCreate) -> Ticket:
+    if db.query(Payment).filter(Payment.idempotency_key == data.idempotency_key).first():
+        raise DuplicateIdempotencyKeyError()
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).with_for_update().first()
+    if not ticket or ticket.user_id != user_id:
+        raise TicketNotFoundError("Ticket not found")
+
+    ticket_type = db.query(TicketType).filter(TicketType.id == ticket.ticket_type_id).with_for_update().first()
+    if not ticket_type:
+        raise TicketNotPayableError("This ticket isn't a payable lottery win")
+
+    if ticket_type.sale_method == "direct" or ticket.status != "pending_payment":
+        raise TicketNotPayableError("This ticket isn't a payable lottery win")
+    
+    if ticket.payment_deadline_at and ticket.payment_deadline_at < datetime.now(timezone.utc):
+        # Lazily discovered past the deadline — no sweep job exists yet
+        # (database-design.md §5.2's "deliberately not built this phase")
+        # to release this slot otherwise, so this is the one place that
+        # does it: expire the ticket and free the seat it was holding.
+        ticket.status = "expired"
+        ticket_type.sold_quantity -= 1
+        commit_or_raise(db)
+        raise TicketNotPayableError("The payment deadline for this ticket has passed")
+
+    total_amount = with_tax(float(ticket_type.price))
+    if data.amount != total_amount:
+        raise PaymentAmountMismatch("Payment amount does not match ticket price!")
+
+    payment = create_ticket_payment(db, user_id, ticket, data)
+    if not payment:
+        raise UnsupportedGatewayError("Unsupported payment gateway!")
+    if payment.status == PaymentStatus.success:
+        create_notification(db, user_id, "lottery_payment_confirmation", ticket_id=ticket.id)
+
+    commit_or_raise(db)
+    db.refresh(ticket)
+    return ticket
+
 def add_ticket(db: Session, data: TicketCreate):
     ticket_type = db.get(TicketType, data.ticket_type_id)
     if not ticket_type:
@@ -205,7 +263,7 @@ def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: U
             "tier": ticket.ticket_type.tier,
             "status": ticket.status,
             "price": ticket.ticket_type.price,
-            "source": "lottery" if ticket.lottery_entry_id else "direct",
+            "source": "lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
             "created_at": ticket.created_at,
         }
         for ticket in rows

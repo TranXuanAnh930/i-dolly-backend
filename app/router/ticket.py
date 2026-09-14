@@ -1,24 +1,41 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter, Query
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from app.cache.rate_limit import user_key, rate_limit
+
+from app.cache.rate_limit import rate_limit, user_key
+from app.db.models.user import Users
 from app.deps.auth import get_current_user, require_admin, require_manager_or_admin
 from app.deps.db import get_db
-from app.db.models.user import Users
-from app.schema.ticket import TicketCreate, TicketUpdate, TicketRead, TicketCheckoutCreate, TicketSalesPageRead
-from app.services.ticket_service import (
-    add_ticket, checkout_ticket, get_my_tickets, get_ticket, update_ticket, delete_ticket,
-    get_concert_ticket_sales,
-)
 from app.exception.checkout import (
     CartItemError,
     InsufficientTicketStockError,
     PaymentAmountMismatch,
-    UnsupportedGatewayError,
+    TicketNotFoundError,
+    TicketNotPayableError,
     TicketTypeNotFoundError,
+    UnsupportedGatewayError,
 )
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.ticket import (
+    TicketCheckoutCreate,
+    TicketCreate,
+    TicketRead,
+    TicketSalesPageRead,
+    TicketUpdate,
+    WonTicketCheckoutCreate,
+)
+from app.services.ticket_service import (
+    add_ticket,
+    checkout_ticket,
+    checkout_won_ticket,
+    delete_ticket,
+    get_concert_ticket_sales,
+    get_my_tickets,
+    get_ticket,
+    update_ticket,
+)
 
 # add/update/delete below stay the ADMIN-ONLY stopgap until the lottery
 # draw job exists (see TicketCreate's docstring and database-design.md
@@ -49,6 +66,22 @@ async def checkout_new_ticket(data: TicketCheckoutCreate, user: Users = Depends(
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e))
     except CartItemError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except TriggerViolationError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+@router.post("/{ticket_id}/checkout", response_model=TicketRead)
+async def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheckoutCreate, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)):
+    try:
+        return checkout_won_ticket(db, user.id, ticket_id, data)
+    # Same ordering reasoning as checkout_new_ticket above: catch the
+    # generic CartItemError-family checks after the more specific ones.
+    except TicketNotFoundError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    except (TicketNotPayableError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     except TriggerViolationError as e:

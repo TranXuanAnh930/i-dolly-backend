@@ -1,5 +1,6 @@
 import uuid
 
+
 def generate_mock_id():
     rand = uuid.uuid4()
     return {

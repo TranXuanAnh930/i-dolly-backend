@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import String, Column, DateTime, ForeignKey, Date, Boolean, func
+
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
+
 
 class Group(Base):
 

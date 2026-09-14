@@ -1,13 +1,15 @@
 import uuid
-from fastapi import HTTPException, Depends, APIRouter
 from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.cache.rate_limit import rate_limit, user_key
+from app.db.models.user import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
-from app.db.models.user import Users
 from app.schema.notification import NotificationRead, NotificationUnreadCount
-from app.services.notification_service import get_my_notifications, mark_as_read, mark_all_as_read, count_unread
+from app.services.notification_service import count_unread, get_my_notifications, mark_all_as_read, mark_as_read
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 

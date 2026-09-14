@@ -1,6 +1,8 @@
-from app.config.settings import settings
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+
+from app.config.settings import settings
+
 
 def send_email(to_email:str, subject:str, body:str):
     # Dev convenience (settings.DEBUG, default false — see its own comment):

@@ -2,9 +2,9 @@ import os
 
 import pytest
 import sqlalchemy
+
 from alembic import command
 from alembic.config import Config
-
 from tests.conftest import fake_redis
 
 

@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import String, Column, CheckConstraint
+
+from sqlalchemy import CheckConstraint, Column, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.db.base_class import Base
+
 
 class IdolColor(Base):
 

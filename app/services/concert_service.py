@@ -1,18 +1,21 @@
 import uuid
+
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
-from app.schema.concert import ConcertCreate, ConcertUpdate, ConcertPerformerAssign
+
 from app.db.models.concert import Concert, ConcertPerformer
-from app.db.models.management_company import ManagementCompany
-from app.db.models.venue import Venue
-from app.db.models.ticket_type import TicketType
-from app.db.models.idol import Idol
-from app.db.models.group import Group
-from app.db.models.user import Users
-from app.db.models.ticket import Ticket
-from app.db.models.lottery_entry import LotteryEntry
-from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.direct_sale_campaign import DirectSaleCampaign
+from app.db.models.group import Group
+from app.db.models.idol import Idol
+from app.db.models.lottery_campaign import LotteryCampaign
+from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.lottery_preference import LotteryPreference
+from app.db.models.management_company import ManagementCompany
+from app.db.models.ticket import Ticket
+from app.db.models.ticket_type import TicketType
+from app.db.models.user import Users
+from app.db.models.venue import Venue
+from app.schema.concert import ConcertCreate, ConcertPerformerAssign, ConcertUpdate
 
 # Same sentinel convention as group_service/idol_service: "not_found" (404),
 # "forbidden" (403, manager acting outside their own company_id).
@@ -212,6 +215,24 @@ def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = 
         .all()
     )
 
+    # How many fans have applied, total — distinct from ticket_type.
+    # sold_quantity (only incremented once the draw actually allocates a
+    # seat), and not capped by total_quantity the way a direct-sale tier's
+    # sold count is. Attached as a plain attribute (not a mapped column) so
+    # LotteryCampaignRead's from_attributes pickup just works; a manager's
+    # own concert-detail page reads this to show "entries" instead of
+    # "sold" for a lottery tier (see ManagerEventFormPage.vue) — public
+    # too, same as every other field on this already-public bundle.
+    campaign_ids = [campaign.id for campaign in lottery_campaigns]
+    entry_counts = dict(
+        db.query(LotteryEntry.campaign_id, func.count(LotteryEntry.id))
+        .filter(LotteryEntry.campaign_id.in_(campaign_ids))
+        .group_by(LotteryEntry.campaign_id)
+        .all()
+    ) if campaign_ids else {}
+    for campaign in lottery_campaigns:
+        campaign.entry_count = entry_counts.get(campaign.id, 0)
+
     # Only meaningful for a logged-in viewer — a guest gets False/empty for
     # all four rather than the endpoint requiring auth, since the rest of
     # this page is public. "Bought" means an actually-paid ticket, not a
@@ -247,7 +268,6 @@ def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = 
             .first()
             is not None
         )
-        campaign_ids = [campaign.id for campaign in lottery_campaigns]
         if campaign_ids:
             entered_campaign_ids = [
                 row[0]

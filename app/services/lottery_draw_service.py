@@ -1,17 +1,19 @@
+import secrets
 import uuid
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy.orm import Session, selectinload
+
 from app.db.models.concert import Concert
+from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.lottery_entry import LotteryEntry
 from app.db.models.lottery_preference import LotteryPreference
-from app.db.models.lottery_campaign import LotteryCampaign
 from app.db.models.ticket import Ticket
 from app.db.models.ticket_type import TicketType
 from app.db.models.user import Users
 from app.exception.db_triggers import commit_or_raise
 from app.services.notification_service import create_notification
-from sqlalchemy.orm import Session, selectinload
-from datetime import datetime, timedelta
-import secrets
+
 
 def _user_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
     return current_user.role == "fan" or (current_user.role == "manager" and current_user.company_id != company_id)
