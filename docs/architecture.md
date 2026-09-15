@@ -63,16 +63,38 @@ of the five subpackages its concept belongs to; if it's genuinely used by all fo
 notifications), it goes in `shared/`, not force-fit into one:
 
 1. **`app/router/<domain>/<feature>.py`** — FastAPI route functions only. Pulls `get_db`,
-   `get_current_user`, `rate_limit(...)` as dependencies, calls exactly one service function, and
+   `get_current_user`, `rate_limit(...)` as dependencies, calls exactly one service method, and
    translates the return value into an HTTP response/`HTTPException`. No ORM queries, no business
    logic here.
-2. **`app/services/<domain>/<feature>_service.py`** — business logic + ORM queries. Takes a
-   `Session` as its first argument, never imports FastAPI. New domain logic (a lottery draw, seat
-   allocation, scoping checks) belongs here, not in the router.
+2. **`app/services/<domain>/<feature>_service.py`** — every function for one feature grouped into
+   a single class of `@staticmethod`s, e.g. `class TicketService: @staticmethod def
+   checkout_ticket(db: Session, ...): ...`, called as `TicketService.checkout_ticket(db, ...)` —
+   the class is a pure namespace, not an instance: `db: Session` is still passed into each call
+   like before, nothing is bound at construction (there is no `__init__`, and these are never
+   instantiated). Private helpers (`_manager_scope_violation` and friends) are `@staticmethod`s on
+   the same class too — call them via `ClassName._helper(...)`, a bare `_helper(...)` no longer
+   resolves once it's a method. Module-level constants a file's methods reference (e.g.
+   `_LIVE_STATUSES`) stay outside the class, sitting above it — moving them in would need
+   `ClassName._LIVE_STATUSES` everywhere for no benefit, since a bare name inside a method already
+   resolves fine via the module's globals regardless of whether the method is classed. Business
+   logic + ORM queries live here, never FastAPI. New domain logic (a lottery draw, seat allocation,
+   scoping checks) belongs here, not in the router.
 3. **`app/db/models/<domain>/<feature>.py`** — SQLAlchemy models, all inheriting `Base`.
    `app/schema/<domain>/<feature>.py` holds the paired Pydantic schemas (`*Create`,
    `*Read`/`*Out`/`*Response`, `*Update`) — request/response shapes are always separate classes
    from the ORM model, never the ORM model returned directly.
+
+Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, not a
+bare `create_ticket_payment(...)`) — every router and every service-to-service reference imports
+the class, not individual function names. The two exceptions worth knowing about: two service
+files can legitimately define a same-named private helper or public function independently (e.g.
+`direct_sale_campaign_service.add_campaign` and `lottery_campaign_service.add_campaign` are
+unrelated functions that happen to share a name) — this is harmless as long as no single call site
+ever needs both at once, so nothing was renamed to avoid it. And `unittest.mock.patch()` calls in
+`tests/unit/test_services.py` that target a cross-service function by its old dotted path (e.g.
+patching `_build_product_cards`, called by `group_service` but defined on `ProductService`) now
+need the fully-qualified `"app.services.<domain>.<file>.<ClassName>.<method>"` string instead —
+`mock.patch` supports patching a class attribute this way, same as patching a module-level name.
 
 `app/db/base.py` still aggregates every model with a direct import (not moved — it isn't a
 feature of any one domain), so its own import lines are the one place that must stay in sync by

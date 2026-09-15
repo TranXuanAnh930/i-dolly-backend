@@ -5,11 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.cache.rate_limit import rate_limit, user_key
-from app.db.models.identity.user import Users
+from app.db.models.identity import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
-from app.schema.shared.notification import NotificationRead, NotificationUnreadCount
-from app.services.shared.notification_service import count_unread, get_my_notifications, mark_all_as_read, mark_as_read
+from app.schema.shared import NotificationRead, NotificationUnreadCount
+from app.services.shared.notification_service import NotificationService
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -27,23 +27,23 @@ def _raise_for(result):
 # per-user endpoint is exactly what a runaway/misbehaving poller would hit.
 @router.get("/unread-count", response_model=NotificationUnreadCount)
 async def get_unread_count(current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)):
-    return {"count": count_unread(db, current_user)}
+    return {"count": NotificationService.count_unread(db, current_user)}
 
 @router.get("/mine", response_model=List[NotificationRead])
 async def list_my_notifications(unread_only: bool = False, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(10, 60, user_key)), db: Session = Depends(get_db)):
-    result = get_my_notifications(db, current_user, unread_only)
+    result = NotificationService.get_my_notifications(db, current_user, unread_only)
     if not result:
         raise HTTPException(status_code=404, detail="You have no notifications")
     return result
 
 @router.post("/{notification_id}/read", response_model=NotificationRead)
 async def mark_notification_read(notification_id: uuid.UUID, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(10, 60, user_key)), db: Session = Depends(get_db)):
-    result = mark_as_read(db, notification_id, current_user)
+    result = NotificationService.mark_as_read(db, notification_id, current_user)
     if isinstance(result, str):
         _raise_for(result)
     return result
 
 @router.post("/read-all")
 async def mark_all_notifications_read(current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)):
-    count = mark_all_as_read(db, current_user)
+    count = NotificationService.mark_all_as_read(db, current_user)
     return {"msg": f"{count} notification(s) marked as read"}

@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
-from app.schema.marketplace.order import OrderStatus
+from app.schema.marketplace import OrderStatus
 
 
 class Order(Base):

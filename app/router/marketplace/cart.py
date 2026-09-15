@@ -3,19 +3,19 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.db.models.identity.user import Users
+from app.db.models.identity import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
 from app.exception.db_triggers import TriggerViolationError
-from app.schema.marketplace.cart import CartItem
-from app.services.marketplace.cart_service import add_to_cart, remove_cart, see_cart
+from app.schema.marketplace import CartItem
+from app.services.marketplace.cart_service import CartService
 
 router = APIRouter(prefix="/cart", tags=["Cart"])
 
 @router.post("/add_cart")
 async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
     try:
-        cart = add_to_cart(db, cart_item, user.id)
+        cart = CartService.add_to_cart(db, cart_item, user.id)
     except TriggerViolationError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if cart is None:
@@ -26,14 +26,14 @@ async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), 
 
 @router.get("/see_cart")
 async def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    cart = see_cart(db, user.id)
+    cart = CartService.see_cart(db, user.id)
     if not cart:
         raise HTTPException(status_code=404, detail="Cart is empty")
     return cart
 
 @router.delete("/delete_cart/{cart_id}")
 async def delete_cart(cart_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
-    cart = remove_cart(db, user.id, cart_id)
+    cart = CartService.remove_cart(db, user.id, cart_id)
     if not cart:
         raise HTTPException(status_code=404, detail="Cart item not found")
     return {"msg":"Cart item deleted successfully"}

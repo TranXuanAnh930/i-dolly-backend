@@ -4,18 +4,12 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.db.models.identity.user import Users
+from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.db_triggers import TriggerViolationError
-from app.schema.events.ticket_type import TicketTypeCreate, TicketTypeRead, TicketTypeUpdate
-from app.services.events.ticket_type_service import (
-    add_ticket_type,
-    delete_ticket_type,
-    get_ticket_type,
-    get_ticket_types,
-    update_ticket_type,
-)
+from app.schema.events import TicketTypeCreate, TicketTypeRead, TicketTypeUpdate
+from app.services.events.ticket_type_service import TicketTypeService
 
 # Company-scoped via the parent concert (ticket_type_service). Nested under
 # /ticket_types rather than under /concerts since it's addressed by its own
@@ -38,7 +32,7 @@ def _raise_for(result, not_found_detail: str):
 @router.post("/add", response_model=TicketTypeRead)
 async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     try:
-        result = add_ticket_type(db, data, current_user)
+        result = TicketTypeService.add_ticket_type(db, data, current_user)
     except TriggerViolationError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
@@ -47,14 +41,14 @@ async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depe
 
 @router.get("/concert/{concert_id}", response_model=List[TicketTypeRead])
 async def list_ticket_types(concert_id: uuid.UUID, db: Session = Depends(get_db)):
-    result = get_ticket_types(db, concert_id)
+    result = TicketTypeService.get_ticket_types(db, concert_id)
     if not result:
         raise HTTPException(status_code=404, detail="No ticket types found for this concert")
     return result
 
 @router.get("/{id}", response_model=TicketTypeRead)
 async def get_ticket_type_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
-    ticket_type = get_ticket_type(db, id)
+    ticket_type = TicketTypeService.get_ticket_type(db, id)
     if not ticket_type:
         raise HTTPException(status_code=404, detail="Ticket type not found")
     return ticket_type
@@ -62,7 +56,7 @@ async def get_ticket_type_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
 @router.put("/update/{id}", response_model=TicketTypeRead)
 async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     try:
-        result = update_ticket_type(db, id, data, current_user)
+        result = TicketTypeService.update_ticket_type(db, id, data, current_user)
     except TriggerViolationError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if isinstance(result, str):
@@ -71,7 +65,7 @@ async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, cur
 
 @router.delete("/delete/{id}")
 async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
-    result = delete_ticket_type(db, id, current_user)
+    result = TicketTypeService.delete_ticket_type(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Ticket type not found")
     return {"msg": "Ticket type deleted successfully"}

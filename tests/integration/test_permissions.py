@@ -17,20 +17,19 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.models.events.concert import Concert
-from app.db.models.events.direct_sale_campaign import DirectSaleCampaign
-from app.db.models.events.lottery_campaign import LotteryCampaign
-from app.db.models.events.lottery_entry import LotteryEntry
-from app.db.models.events.lottery_preference import LotteryPreference
-from app.db.models.events.ticket import Ticket
-from app.db.models.events.ticket_type import TicketType
-from app.db.models.events.venue import Venue
-from app.db.models.identity.user import Users
-from app.db.models.marketplace.category import Category
-from app.db.models.marketplace.merch_detail import MerchDetail
-from app.db.models.marketplace.products import Product
-from app.db.models.talent.idol import Idol
-from app.db.models.talent.management_company import ManagementCompany
+from app.db.models.events import (
+    Concert,
+    DirectSaleCampaign,
+    LotteryCampaign,
+    LotteryEntry,
+    LotteryPreference,
+    Ticket,
+    TicketType,
+    Venue,
+)
+from app.db.models.identity import Users
+from app.db.models.marketplace import Category, MerchDetail, Product
+from app.db.models.talent import Idol, ManagementCompany
 from app.db.session import session as db_session
 from app.utils.hashing import hash_password
 from app.utils.jwt_manager import create_access_token

@@ -32,7 +32,7 @@ from app.router.talent.idol import router as idol_router
 from app.router.talent.idol_color import router as idol_color_router
 from app.router.talent.management_company import router as management_company_router
 from app.router.talent.position import router as position_router
-from app.services.identity.auth_service import cleanup_expired_tokens
+from app.services.identity.auth_service import AuthService
 
 
 @asynccontextmanager
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     # Startup: clean up expired refresh tokens
     db = SessionLocal()
     try:
-        cleanup_expired_tokens(db)
+        AuthService.cleanup_expired_tokens(db)
     finally:
         db.close()
     yield

@@ -4,7 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.schema.events.ticket_type import TicketTypeRead
-from app.schema.marketplace.payment import PaymentGateway
+from app.schema.marketplace import PaymentGateway
 
 
 class TicketCreate(BaseModel):

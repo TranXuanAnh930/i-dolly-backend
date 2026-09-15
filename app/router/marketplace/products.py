@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from app.cache.cache_service import delete_cached_product, get_cached_products
 from app.cache.rate_limit import ip_key, rate_limit
 from app.cache.redis_client import redis_client
-from app.db.models.identity.user import Users
+from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.schema.marketplace.products import (
+from app.schema.marketplace import (
     ManagerProductFormPageRead,
     ManagerProductsPageRead,
     ProductCreate,
@@ -22,22 +22,7 @@ from app.schema.marketplace.products import (
     ProductWithDetailCreate,
     StorePageRead,
 )
-from app.services.marketplace.product_service import (
-    add_bulk_products,
-    add_product,
-    add_product_with_detail,
-    delete_product,
-    filter_products,
-    get_manager_product_form_page,
-    get_manager_products_page,
-    get_product_detail,
-    get_product_sales_page,
-    get_store_page,
-    pagination_process,
-    search_product,
-    set_product_image,
-    update_product,
-)
+from app.services.marketplace.product_service import ProductService
 from app.utils.storage import StorageError, get_storage
 
 router = APIRouter(prefix="/products", tags=["Products"])
@@ -51,25 +36,25 @@ async def List_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:
 
 @router.get("/store-page", response_model=StorePageRead)
 async def get_store_page_data(db: Session = Depends(get_db)):
-    result = get_store_page(db)
+    result = ProductService.get_store_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No products found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
 async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
-    result = get_product_detail(db, id)
+    result = ProductService.get_product_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
 
 @router.get("/manager-products-page", response_model=ManagerProductsPageRead)
 async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)):
-    return get_manager_products_page(db, company_id)
+    return ProductService.get_manager_products_page(db, company_id)
 
 @router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
 async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)):
-    return get_manager_product_form_page(db, company_id)
+    return ProductService.get_manager_product_form_page(db, company_id)
 
 @router.get("/{id}/sales", response_model=ProductSalesPageRead)
 async def get_product_sales(
@@ -79,7 +64,7 @@ async def get_product_sales(
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
 ):
-    result = get_product_sales_page(db, id, current_user, page, limit)
+    result = ProductService.get_product_sales_page(db, id, current_user, page, limit)
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only view sales for products belonging to their own company's idols/groups")
     if result == "not_found":
@@ -88,7 +73,7 @@ async def get_product_sales(
 
 @router.get("/search/{id:uuid}")
 async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)):
-    db_product = search_product(db, id)
+    db_product = ProductService.search_product(db, id)
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     return db_product
@@ -120,7 +105,7 @@ async def add_new_product(
         name=name, price=price, description=description, quantity=quantity,
         category_id=category_id, image_url=image_url,
     )
-    db_product = add_product(db, product)
+    db_product = ProductService.add_product(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add product")
     redis_client.delete("products:list")
@@ -167,7 +152,7 @@ async def add_new_product_with_detail(
         except StorageError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    result = add_product_with_detail(db, data, image_url, current_user)
+    result = ProductService.add_product_with_detail(db, data, image_url, current_user)
     if result == "category_not_found":
         raise HTTPException(status_code=400, detail="category_id does not reference an existing category")
     if result == "owner_not_found":
@@ -181,7 +166,7 @@ async def add_new_product_with_detail(
 
 @router.put("/update/{id}")
 async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
-    db_product = update_product(db, id, product, current_user)
+    db_product = ProductService.update_product(db, id, product, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if db_product == "category_not_found":
@@ -201,7 +186,7 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
         image_url = await get_storage().save(image, subfolder="products")
     except StorageError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    db_product = set_product_image(db, id, image_url, current_user)
+    db_product = ProductService.set_product_image(db, id, image_url, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
@@ -211,7 +196,7 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
 
 @router.delete("/delete/{id}")
 async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
-    db_product = delete_product(db, id, current_user)
+    db_product = ProductService.delete_product(db, id, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
@@ -221,7 +206,7 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
 
 @router.post("/bulk_products")
 async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
-    db_product = add_bulk_products(db, product)
+    db_product = ProductService.add_bulk_products(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add products")
     redis_client.delete("products:list")
@@ -229,7 +214,7 @@ async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=
 
 @router.get("/pagination")
 async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)):
-    db_product = pagination_process(db, page, limit)
+    db_product = ProductService.pagination_process(db, page, limit)
     return {
         "page":page,
         "limit":limit,
@@ -247,7 +232,7 @@ async def filter_product(
     page:int=Query(1, ge=1),
     db:Session=Depends(get_db)
     ):
-    products = filter_products(db, category, name, min_price, max_price, limit, page)
+    products = ProductService.filter_products(db, category, name, min_price, max_price, limit, page)
     return {
         "page":page,
         "limit":limit,

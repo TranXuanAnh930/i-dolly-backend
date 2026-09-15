@@ -6,10 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.cache.rate_limit import ip_key, rate_limit
 from app.celery_app import celery_app
-from app.db.models.identity.user import Users
+from app.db.models.identity import Users
 from app.deps.auth import get_current_user_optional, require_manager_or_admin
 from app.deps.db import get_db
-from app.schema.events.concert import (
+from app.schema.events import (
     ConcertCreate,
     ConcertDetailRead,
     ConcertPerformerAssign,
@@ -19,21 +19,7 @@ from app.schema.events.concert import (
     EventsPageRead,
     ManagerEventsPageRead,
 )
-from app.services.events.concert_service import (
-    _manager_scope_violation,
-    add_concert,
-    assign_performer,
-    delete_concert,
-    get_all_performers,
-    get_concert,
-    get_concert_detail,
-    get_concerts,
-    get_events_page,
-    get_manager_events_page,
-    get_performers,
-    remove_performer,
-    update_concert,
-)
+from app.services.events.concert_service import ConcertService
 
 # Company-scoped exactly like groups/idols (database-design.md §4): a manager
 # may only create/edit/delete concerts for their own company_id; admins are
@@ -54,46 +40,46 @@ def _raise_for(result, not_found_detail: str):
 
 @router.post("/add", response_model=ConcertRead)
 async def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
-    result = add_concert(db, concert, current_user)
+    result = ConcertService.add_concert(db, concert, current_user)
     if isinstance(result, str):
         _raise_for(result, "Management company or venue not found")
     return result
 
 @router.get("/all", response_model=List[ConcertRead])
 async def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)):
-    result = get_concerts(db)
+    result = ConcertService.get_concerts(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/events-page", response_model=EventsPageRead)
 async def get_events_page_data(db: Session = Depends(get_db)):
-    result = get_events_page(db)
+    result = ConcertService.get_events_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/manager-events-page", response_model=ManagerEventsPageRead)
 async def get_manager_events_page_data(db: Session = Depends(get_db)):
-    return get_manager_events_page(db)
+    return ConcertService.get_manager_events_page(db)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
 async def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), db: Session = Depends(get_db)):
-    result = get_concert_detail(db, id, current_user)
+    result = ConcertService.get_concert_detail(db, id, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="Concert not found")
     return result
 
 @router.get("/{id}", response_model=ConcertRead)
 async def get_concert_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
-    concert = get_concert(db, id)
+    concert = ConcertService.get_concert(db, id)
     if not concert:
         raise HTTPException(status_code=404, detail="Concert not found")
     return concert
 
 @router.put("/update/{id}", response_model=ConcertRead)
 async def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
-    result = update_concert(db, id, data, current_user)
+    result = ConcertService.update_concert(db, id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Concert or venue not found")
     return result
@@ -105,7 +91,7 @@ async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(r
     # stability with existing clients; a manager can move the status off
     # "cancelled" again via PUT /concerts/update/{id} same as any other
     # status change.
-    result = delete_concert(db, id, current_user)
+    result = ConcertService.delete_concert(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Concert not found")
     return {"msg": "Concert cancelled successfully"}
@@ -118,14 +104,14 @@ async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(r
 
 @router.post("/performers/assign", response_model=ConcertPerformerRead)
 async def assign_concert_performer(data: ConcertPerformerAssign, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
-    result = assign_performer(db, data, current_user)
+    result = ConcertService.assign_performer(db, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Concert, idol, or group not found")
     return result
 
 @router.get("/performers/concert/{concert_id}", response_model=List[ConcertPerformerRead])
 async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)):
-    result = get_performers(db, concert_id)
+    result = ConcertService.get_performers(db, concert_id)
     if not result:
         raise HTTPException(status_code=404, detail="This concert has no performers assigned")
     return result
@@ -135,14 +121,14 @@ async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(g
 # in one request instead of looping over every concert.
 @router.get("/performers/all", response_model=List[ConcertPerformerRead])
 async def list_all_concert_performers(db: Session = Depends(get_db)):
-    result = get_all_performers(db)
+    result = ConcertService.get_all_performers(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
 @router.delete("/performers/{id}")
 async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
-    result = remove_performer(db, id, current_user)
+    result = ConcertService.remove_performer(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Performer assignment not found")
     return {"msg": "Performer unassigned from concert successfully"}
@@ -157,10 +143,10 @@ async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(
     # this, a manager from a different company got a 200 for a task that
     # silently no-oped in the worker (caught by
     # test_permissions.py::test_draw_lottery_cross_company_manager_forbidden).
-    concert = get_concert(db, id)
+    concert = ConcertService.get_concert(db, id)
     if not concert:
         raise HTTPException(status_code=404, detail="Concert not found")
-    if _manager_scope_violation(current_user, concert.company_id):
+    if ConcertService._manager_scope_violation(current_user, concert.company_id):
         raise HTTPException(status_code=403, detail="Managers can only manage concerts for their own company")
 
     # Fire-and-forget from here on: the actual draw (LotteryResult) runs

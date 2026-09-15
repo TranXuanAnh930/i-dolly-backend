@@ -92,16 +92,15 @@ class ProductCard(BaseModel):
     # order_service.checkout and app/utils/resale.RESALE_CAP_QUANTITY).
     resale_cap_quantity: int | None = None
 
-# Deliberately not up with the other imports at the top of this file: ANY
-# `app.schema.talent.*` import here — idol_color included, not just idol —
-# triggers talent/__init__.py, which eagerly loads group.py first
-# (alphabetically), which imports ProductCard back from this module. If
-# that happens before ProductCard is defined below, a marketplace-first
-# import chain re-enters this still-partially-loaded module and fails with
-# "cannot import name 'ProductCard' from partially initialized module".
-# Nothing above this line needs anything from talent; this is the first
-# thing that does, so both imports only need to land before here, not at
-# the top.
+# Deliberately not up with the other imports at the top of this file, AND
+# deliberately direct-submodule (not the app.schema.talent package shortcut):
+# talent needs marketplace back (group.py imports ProductCard), so a
+# package-level import on either side of that cycle needs the whole other
+# package's __init__ to have finished first — true regardless of which side
+# is entered first, confirmed by testing every domain as the first import in
+# a fresh process, not just the one order that happened to work. Nothing
+# above this line needs anything from talent; this is the first thing that
+# does, so both imports only need to land before here, not at the top.
 from app.schema.talent.idol import GroupMini, GroupOptionForCompany, IdolRead  # noqa: E402
 from app.schema.talent.idol_color import IdolColorRead  # noqa: E402
 

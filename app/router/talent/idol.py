@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.cache.rate_limit import ip_key, rate_limit
-from app.db.models.identity.user import Users
+from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
-from app.schema.talent.idol import (
+from app.schema.talent import (
     IdolCreate,
     IdolDetailRead,
     IdolRead,
@@ -18,19 +18,7 @@ from app.schema.talent.idol import (
     ManagerIdolsPageRead,
     MembersPageRead,
 )
-from app.services.talent.idol_service import (
-    add_idol,
-    delete_idol,
-    get_idol,
-    get_idol_detail,
-    get_idols,
-    get_manager_idol_form_page,
-    get_manager_idols_page,
-    get_members_page,
-    reactivate_idol,
-    set_idol_image,
-    update_idol,
-)
+from app.services.talent.idol_service import IdolService
 from app.utils.storage import StorageError, get_storage
 
 # Same company-scoping as groups.py — see the comment there. add_idol/
@@ -81,14 +69,14 @@ async def add_new_idol(
         hometown=hometown, color_id=color_id, short_intro=short_intro,
         long_description=long_description, profile_image_url=profile_image_url,
     )
-    result = add_idol(db, idol, current_user)
+    result = IdolService.add_idol(db, idol, current_user)
     if isinstance(result, str):
         _raise_for(result, "Management company, group, or idol color not found")
     return result
 
 @router.get("/all", response_model=List[IdolRead])
 async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)):
-    result = get_idols(db)
+    result = IdolService.get_idols(db)
     if not result:
         raise HTTPException(status_code=404, detail="No idols found")
     return result
@@ -97,14 +85,14 @@ async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session 
 # segment isn't swallowed by the {id}: uuid.UUID route.
 @router.get("/members-page", response_model=MembersPageRead)
 async def get_members_page_data(db: Session = Depends(get_db)):
-    result = get_members_page(db)
+    result = IdolService.get_members_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No idols found")
     return result
 
 @router.get("/{id}/detail", response_model=IdolDetailRead)
 async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
-    result = get_idol_detail(db, id)
+    result = IdolService.get_idol_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Idol not found")
     return result
@@ -114,22 +102,22 @@ async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
 # registered before /{id} for the same reason as the routes above.
 @router.get("/manager-idols-page", response_model=ManagerIdolsPageRead)
 async def get_manager_idols_page_data(db: Session = Depends(get_db)):
-    return get_manager_idols_page(db)
+    return IdolService.get_manager_idols_page(db)
 
 @router.get("/manager-idol-form-page", response_model=ManagerIdolFormPageRead)
 async def get_manager_idol_form_page_data(db: Session = Depends(get_db)):
-    return get_manager_idol_form_page(db)
+    return IdolService.get_manager_idol_form_page(db)
 
 @router.get("/{id}", response_model=IdolRead)
 async def get_idol_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
-    idol = get_idol(db, id)
+    idol = IdolService.get_idol(db, id)
     if not idol:
         raise HTTPException(status_code=404, detail="Idol not found")
     return idol
 
 @router.put("/update/{id}", response_model=IdolRead)
 async def update_existing_idol(id: uuid.UUID, data: IdolUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
-    result = update_idol(db, id, data, current_user)
+    result = IdolService.update_idol(db, id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Idol, group, or idol color not found")
     return result
@@ -137,14 +125,14 @@ async def update_existing_idol(id: uuid.UUID, data: IdolUpdate, current_user: Us
 @router.delete("/delete/{id}")
 async def delete_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
     # Soft delete (sets is_active=False) — see idol_service.delete_idol.
-    result = delete_idol(db, id, current_user)
+    result = IdolService.delete_idol(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Idol not found")
     return {"msg": "Idol deleted successfully"}
 
 @router.patch("/activate/{id}", response_model=IdolRead)
 async def activate_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
-    result = reactivate_idol(db, id, current_user)
+    result = IdolService.reactivate_idol(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Idol not found")
     return result
@@ -157,7 +145,7 @@ async def upload_idol_image(id: uuid.UUID, image: UploadFile = File(...), curren
         image_url = await get_storage().save(image, subfolder="idols")
     except StorageError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    result = set_idol_image(db, id, image_url, current_user)
+    result = IdolService.set_idol_image(db, id, image_url, current_user)
     if isinstance(result, str):
         _raise_for(result, "Idol not found")
     return result

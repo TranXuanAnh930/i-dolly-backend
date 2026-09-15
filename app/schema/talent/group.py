@@ -3,7 +3,14 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.schema.events.concert import ConcertWithVenue
+from app.schema.events import ConcertWithVenue
+
+# Not the app.schema.marketplace package-level shortcut on purpose: marketplace
+# needs talent back (products.py imports GroupMini/IdolRead from here), so a
+# package-level import on EITHER side of that cycle needs the whole other
+# package's __init__ to have finished first, which it hasn't at this point in
+# an events/ticket-first import chain — direct submodule import sidesteps it
+# the same way products.py's own reordering already does on its side.
 from app.schema.marketplace.products import ProductCard
 from app.schema.talent.idol import IdolWithPositions
 
