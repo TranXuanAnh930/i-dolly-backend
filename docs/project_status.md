@@ -300,7 +300,19 @@ newly introduced.
    `request.client.host` with no `X-Forwarded-For`/`X-Real-IP` handling, so behind any reverse
    proxy (Render, Docker's network, nginx) every visitor could still share one IP-bucket — that's
    a separate fix (and one that needs care, since blindly trusting a forwarded-for header from an
-   untrusted network lets a client spoof its way around the limit) not attempted here.
+   untrusted network lets a client spoof its way around the limit) not attempted here. **Two more
+   gaps found while reassessing this file against the current code, not yet fixed**: (a) the
+   limiter's `GET` → conditional `SETEX`/`INCR` sequence (`rate_limit()`'s `limiter` closure) is a
+   non-atomic check-then-act — concurrent requests can all observe `current is None` before any of
+   them writes, each independently `SETEX`s the counter back to 1, and the limit is silently never
+   enforced under a burst; a single atomic `INCR` (create at 1 on first use) with `EXPIRE` set only
+   when the returned count is `1` would close this. (b) no error handling around any of the Redis
+   calls — a Redis outage raises unhandled inside the dependency, 500ing every one of the 36
+   rate-limited routes (including login) instead of failing open; worth wrapping in a
+   try/except that logs and allows the request through on a Redis error, matching how `user_key`
+   already implicitly depends on `get_current_user` running first (an unenforced ordering that
+   currently only holds by convention across call sites, not a bug in itself but worth noting
+   alongside these).
 3. ~~`app/db/base.py` didn't import every model~~ — **FIXED**. `Base` now lives in
    `app/db/base_class.py`; `app/db/base.py` is a pure aggregator. See `architecture.md` §5 for
    the convention this establishes going forward.
@@ -578,6 +590,19 @@ newly introduced.
     together) against a database seeded with a full `scripts/seed.py` catalog beforehand,
     confirming this can never again see or touch real dev/seed data — plus a direct check that the
     real dev database's row counts were unchanged after the test run.
+21. **The product-list cache goes stale after every purchase — not yet fixed.** Found while
+    reassessing this file against the current code: `order_service.checkout()` and
+    `ticket_service.checkout_ticket()` (`app/services/marketplace/`) both decrement `Product.quantity`
+    directly on a successful purchase, but neither calls `delete_cached_product()` or
+    `redis_client.delete("products:list")` — grepped both files, zero cache references. The cached
+    `GET /products/all` response (`app/cache/cache_service.py`, 5-minute TTL) can show stale stock
+    for up to that TTL after a sale. Two smaller findings in the same file, also unfixed: the
+    `product:{id}` key `delete_cached_product()` deletes is dead code — grepped the whole repo, it's
+    never written anywhere, only ever deleted; and `get_cached_products` hand-rolls a subset of
+    `ProductRead`'s fields as a raw dict rather than reusing the schema, so a schema change won't
+    propagate to the cached path. Caching is also narrow in scope generally — only `GET
+    /products/all` reads from cache; the actual storefront endpoints (`get_store_page_data`,
+    `paginated_product`, `filter_product`) hit Postgres directly, uncached.
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
@@ -763,12 +788,22 @@ success/paid correctly.
   in practice (whichever caller wins the row lock first resolves the payment; the second sees
   `status != pending` and returns `None`), but it hasn't been deliberately race-tested.
 
-## 8. Planned next: manager-triggered lottery draw job
+## 8. Manager-triggered lottery draw job — implemented
 
-**Design drafted, not yet implemented** — deliberately left for hand-implementation (interview-
-defensibility reasons, same as §7: concurrency guarding a multi-table business algorithm is exactly
-the class of judgment this portfolio is meant to demonstrate, not infrastructure to have generated).
-Resolves §4 item 8 / §5's "draw job's actual runtime is unchosen" and §6 item 3.
+**This section's own header/opening line were stale**: it previously read "Design drafted, not yet
+implemented," but the job described below has actually landed — confirmed directly in code while
+reassessing project status: `PUT /concerts/lottery-draw/{id}` (`app/router/events/concert.py`)
+enqueues `app.tasks.lottery.draw_lottery` (`app/tasks/lottery.py`, registered in `celery_app`'s
+`include` list — the "not wired into `include` yet" gap mentioned below is also closed), which
+calls `LotteryDrawService.draw_lottery` (`app/services/events/lottery_draw_service.py`). This
+matches §2's "What's built" entry, which was accurate; only this section hadn't been updated to
+match. Corrected here per `CLAUDE.md` §9 rather than silently left contradictory. The rest of this
+section is kept as the original design rationale (still an accurate account of *why* each choice
+was made) — hand-implemented by the project owner, same interview-defensibility reasoning as §7.
+Resolves §4 item 8 / §5's "draw job's actual runtime is unchosen" and §6 item 3. **Still open**:
+the "Verification plan" at the very end of this section (a real `alembic upgrade head` + live
+multi-fan draw against seeded data) — implemented and unit/integration-tested, but not yet
+confirmed against a live Postgres, same standing gap as §3.
 
 **Runtime decided: a company manager (or admin) triggers the draw via an HTTP action, scoped to
 their own company's concerts** — not a Celery Beat cron on `lottery_campaigns.draw_at`. Chosen
