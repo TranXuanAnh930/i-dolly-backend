@@ -4,7 +4,7 @@ import msgpack
 from sqlalchemy.orm import Session
 
 from app.cache.redis_client import redis_client
-from app.services.product_service import List_of_products
+from app.services.marketplace.product_service import ProductService
 
 
 def get_cached_products(db:Session):
@@ -12,7 +12,7 @@ def get_cached_products(db:Session):
     cached = redis_client.get(cache_key)
     if cached:
         return msgpack.unpackb(cached, raw=False)
-    products = List_of_products(db)
+    products = ProductService.List_of_products(db)
     
     if not products:
         return []

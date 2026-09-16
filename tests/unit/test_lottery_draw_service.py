@@ -2,11 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from app.db.models.concert import Concert
-from app.db.models.lottery_campaign import LotteryCampaign
-from app.db.models.lottery_entry import LotteryEntry
-from app.db.models.lottery_preference import LotteryPreference
-from app.db.models.ticket_type import TicketType
+from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, TicketType
 
 # ─────────────────────────────────────────────────────────────
 # Id sentinels — see test_services.py's own note: plain MagicMock-based
@@ -116,7 +112,7 @@ class _DeterministicRandom:
 
 
 def _patched_random():
-    return patch("app.services.lottery_draw_service.secrets.SystemRandom", return_value=_DeterministicRandom())
+    return patch("app.services.events.lottery_draw_service.secrets.SystemRandom", return_value=_DeterministicRandom())
 
 
 # ─────────────────────────────────────────────────────────────
@@ -126,7 +122,7 @@ def _patched_random():
 class TestDrawLottery:
 
     def test_single_preference_entries_under_capacity_all_win(self):
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         vip_tt = make_mock_ticket_type(VIP_TT_ID, total_quantity=5, sold_quantity=0)
         campaign = make_mock_campaign(VIP_CAMPAIGN_ID, VIP_TT_ID)
@@ -144,7 +140,7 @@ class TestDrawLottery:
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
         with _patched_random():
-            draw_lottery(db, manager, CONCERT_ID)
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
         assert all(e.status == "won" for e in entries)
         assert vip_tt.sold_quantity == 3
@@ -156,7 +152,7 @@ class TestDrawLottery:
         assert db.add.call_count == 9
 
     def test_single_preference_entries_over_capacity_some_lose(self):
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         vip_tt = make_mock_ticket_type(VIP_TT_ID, total_quantity=2, sold_quantity=0)
         campaign = make_mock_campaign(VIP_CAMPAIGN_ID, VIP_TT_ID)
@@ -174,7 +170,7 @@ class TestDrawLottery:
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
         with _patched_random():
-            draw_lottery(db, manager, CONCERT_ID)
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
         won = [e for e in entries if e.status == "won"]
         lost = [e for e in entries if e.status == "lost"]
@@ -188,7 +184,7 @@ class TestDrawLottery:
         but rolls into their rank-2 tier (Premium) since they aren't in
         the won set yet — the exact scenario the rank-outer/tier-inner
         loop order exists to handle correctly."""
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         vip_tt = make_mock_ticket_type(VIP_TT_ID, total_quantity=1, sold_quantity=0)
         premium_tt = make_mock_ticket_type(PREMIUM_TT_ID, total_quantity=1, sold_quantity=0)
@@ -220,7 +216,7 @@ class TestDrawLottery:
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
         with _patched_random():
-            draw_lottery(db, manager, CONCERT_ID)
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
         assert entry_y_vip.status == "won"
         assert entry_x_vip.status == "lost"
@@ -229,7 +225,7 @@ class TestDrawLottery:
         assert premium_tt.sold_quantity == 1
 
     def test_campaign_already_closed_is_a_no_op(self):
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         db = make_mock_db(
             concert=make_mock_concert(),
@@ -240,13 +236,13 @@ class TestDrawLottery:
         )
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = draw_lottery(db, manager, CONCERT_ID)
+        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
         assert result == "no_open_campaigns"
         db.commit.assert_not_called()
 
     def test_entries_still_open_rejects_whole_draw(self):
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         campaign = make_mock_campaign(VIP_CAMPAIGN_ID, VIP_TT_ID, entry_end_at=FUTURE)
         db = make_mock_db(
@@ -258,14 +254,14 @@ class TestDrawLottery:
         )
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = draw_lottery(db, manager, CONCERT_ID)
+        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
         assert result == "campaign_not_ended"
         assert campaign.status == "open"  # untouched
         db.commit.assert_not_called()
 
     def test_manager_from_other_company_is_forbidden(self):
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         db = make_mock_db(
             concert=make_mock_concert(company_id=COMPANY_ID),
@@ -276,7 +272,7 @@ class TestDrawLottery:
         )
         other_manager = make_mock_user(role="manager", company_id=OTHER_COMPANY_ID)
 
-        result = draw_lottery(db, other_manager, CONCERT_ID)
+        result = LotteryDrawService.draw_lottery(db, other_manager, CONCERT_ID)
 
         assert result == "forbidden"
 
@@ -285,7 +281,7 @@ class TestDrawLottery:
         since this project's roles are admin/manager/fan, so a fan was
         never actually rejected by this check. Now fixed to `role == "fan"`;
         this asserts the corrected behavior."""
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         vip_tt = make_mock_ticket_type(VIP_TT_ID, total_quantity=1, sold_quantity=0)
         campaign = make_mock_campaign(VIP_CAMPAIGN_ID, VIP_TT_ID)
@@ -298,26 +294,26 @@ class TestDrawLottery:
         )
         fan = make_mock_user(role="fan", company_id=None)
 
-        result = draw_lottery(db, fan, CONCERT_ID)
+        result = LotteryDrawService.draw_lottery(db, fan, CONCERT_ID)
 
         assert result == "forbidden"
 
     def test_no_ticket_types_for_concert(self):
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         db = make_mock_db(concert=make_mock_concert(), ticket_types=[], campaigns=[], preferences=[], entries=[])
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = draw_lottery(db, manager, CONCERT_ID)
+        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
         assert result == "not_found"
 
     def test_concert_not_found(self):
-        from app.services.lottery_draw_service import draw_lottery
+        from app.services.events.lottery_draw_service import LotteryDrawService
 
         db = make_mock_db(concert=None)
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = draw_lottery(db, manager, CONCERT_ID)
+        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
         assert result == "not_found"
