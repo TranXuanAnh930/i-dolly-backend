@@ -1,0 +1,94 @@
+import uuid
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.cache.rate_limit import ip_key, rate_limit
+from app.db.models.identity import Users
+from app.deps.auth import require_manager_or_admin
+from app.deps.db import get_db
+from app.schema.talent import (
+    GroupCreate,
+    GroupDetailRead,
+    GroupRead,
+    GroupsPageRead,
+    GroupUpdate,
+    ManagerGroupsPageRead,
+)
+from app.services.talent.group_service import GroupService
+
+# require_manager_or_admin per database-design.md §4's role table ("CRUD own
+# company's idols/groups"). Company-scoped: a manager may only create/edit/
+# delete a group whose company_id matches their own current_user.company_id
+# (group_service._manager_scope_violation) — admins are unrestricted. This
+# was the previously-flagged gap (CLAUDE.md §5 item 8 / database-design.md
+# §7.2); now closed for groups/idols.
+router = APIRouter(prefix="/groups", tags=["Groups"])
+
+def _raise_for(result, not_found_detail: str):
+    if result == "forbidden":
+        raise HTTPException(status_code=403, detail="Managers can only manage groups for their own company")
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail=not_found_detail)
+
+@router.post("/add", response_model=GroupRead)
+async def add_new_group(group: GroupCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    result = GroupService.add_group(db, group, current_user)
+    if isinstance(result, str):
+        _raise_for(result, "Management company not found")
+    return result
+
+@router.get("/all", response_model=List[GroupRead])
+async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)):
+    result = GroupService.get_groups(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No groups found")
+    return result
+
+@router.get("/groups-page", response_model=GroupsPageRead)
+async def get_groups_page_data(db: Session = Depends(get_db)):
+    result = GroupService.get_groups_page(db)
+    if not result:
+        raise HTTPException(status_code=404, detail="No groups found")
+    return result
+
+@router.get("/manager-groups-page", response_model=ManagerGroupsPageRead)
+async def get_manager_groups_page_data(db: Session = Depends(get_db)):
+    return GroupService.get_manager_groups_page(db)
+
+@router.get("/{id}/detail", response_model=GroupDetailRead)
+async def get_group_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
+    result = GroupService.get_group_detail(db, id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return result
+
+@router.get("/{id}", response_model=GroupRead)
+async def get_group_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
+    group = GroupService.get_group(db, id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return group
+
+@router.put("/update/{id}", response_model=GroupRead)
+async def update_existing_group(id: uuid.UUID, data: GroupUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    result = GroupService.update_group(db, id, data, current_user)
+    if isinstance(result, str):
+        _raise_for(result, "Group not found")
+    return result
+
+@router.delete("/delete/{id}")
+async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    # Soft delete (sets is_active=False) — see group_service.delete_group.
+    result = GroupService.delete_group(db, id, current_user)
+    if isinstance(result, str):
+        _raise_for(result, "Group not found")
+    return {"msg": "Group deleted successfully"}
+
+@router.patch("/activate/{id}", response_model=GroupRead)
+async def activate_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+    result = GroupService.reactivate_group(db, id, current_user)
+    if isinstance(result, str):
+        _raise_for(result, "Group not found")
+    return result

@@ -7,32 +7,32 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config.settings import settings
 from app.db.session import session as SessionLocal
-from app.router.album_detail import router as album_detail_router
-from app.router.auth import router as auth_router
-from app.router.cart import router as cart_router
-from app.router.category import router as category_router
-from app.router.concert import router as concert_router
-from app.router.direct_sale_campaign import router as direct_sale_campaign_router
-from app.router.genre import router as genre_router
-from app.router.group import router as group_router
-from app.router.idol import router as idol_router
-from app.router.idol_color import router as idol_color_router
-from app.router.lottery_campaign import router as lottery_campaign_router
-from app.router.lottery_entry import router as lottery_entry_router
-from app.router.lottery_preference import router as lottery_preference_router
-from app.router.management_company import router as management_company_router
-from app.router.merch_detail import router as merch_detail_router
-from app.router.notification import router as notification_router
-from app.router.order import router as order_router
-from app.router.payment import router as payment_router
-from app.router.position import router as position_router
-from app.router.products import router as product_router
-from app.router.shipping import router as shipping_router
-from app.router.ticket import router as ticket_router
-from app.router.ticket_type import router as ticket_type_router
-from app.router.user import router as user_router
-from app.router.venue import router as venue_router
-from app.services.auth_service import cleanup_expired_tokens
+from app.router.events.concert import router as concert_router
+from app.router.events.direct_sale_campaign import router as direct_sale_campaign_router
+from app.router.events.lottery_campaign import router as lottery_campaign_router
+from app.router.events.lottery_entry import router as lottery_entry_router
+from app.router.events.lottery_preference import router as lottery_preference_router
+from app.router.events.ticket import router as ticket_router
+from app.router.events.ticket_type import router as ticket_type_router
+from app.router.events.venue import router as venue_router
+from app.router.identity.auth import router as auth_router
+from app.router.identity.user import router as user_router
+from app.router.marketplace.album_detail import router as album_detail_router
+from app.router.marketplace.cart import router as cart_router
+from app.router.marketplace.category import router as category_router
+from app.router.marketplace.genre import router as genre_router
+from app.router.marketplace.merch_detail import router as merch_detail_router
+from app.router.marketplace.order import router as order_router
+from app.router.marketplace.payment import router as payment_router
+from app.router.marketplace.products import router as product_router
+from app.router.marketplace.shipping import router as shipping_router
+from app.router.shared.notification import router as notification_router
+from app.router.talent.group import router as group_router
+from app.router.talent.idol import router as idol_router
+from app.router.talent.idol_color import router as idol_color_router
+from app.router.talent.management_company import router as management_company_router
+from app.router.talent.position import router as position_router
+from app.services.identity.auth_service import AuthService
 
 
 @asynccontextmanager
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     # Startup: clean up expired refresh tokens
     db = SessionLocal()
     try:
-        cleanup_expired_tokens(db)
+        AuthService.cleanup_expired_tokens(db)
     finally:
         db.close()
     yield

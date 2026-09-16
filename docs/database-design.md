@@ -540,7 +540,7 @@ it real meaning — it was just an optional label a `Product` could carry.
 **Correction, checked against the actual migration history** (not just the live model, which is
 what an earlier pass here relied on): `name` was already `UNIQUE` from the very first
 `categories` migration (`f2a3135a19da_create_category_table.py`) — the model
-(`app/db/models/category.py`) just didn't declare it, which was a real but separate model/DB
+(`app/db/models/marketplace/category.py`) just didn't declare it, which was a real but separate model/DB
 drift (`CLAUDE.md` item 13), **now fixed** — `Category.name` declares `unique=True`, no migration
 needed since the DB constraint was already there. So there was nothing to add for uniqueness in
 this ALTER; `schema.sql` §4a no longer tries to (it originally did, which would have created a
@@ -607,7 +607,7 @@ same shape in this table; only `products.category_id` distinguishes them. This d
 categorized `Single` with a matching `album_details` row, exactly like an album is today.
 
 **No separate description field** — resolved (unchanged from before): `products.description`
-(already required on every catalog item, `app/db/models/products.py`) is reused for
+(already required on every catalog item, `app/db/models/marketplace/products.py`) is reused for
 albums/singles/EPs too rather than adding a second, album-specific one.
 
 This is deliberately additive: an `Album`/`Single`/`EP` row is still a `Product` row underneath,
@@ -773,10 +773,10 @@ campaign, album — §7.2) once they exist.
 
 **CRUD endpoints now exist for every table migrated so far** — `management_companies`,
 `idol_colors`, `positions` (+ the `idol_positions` join), `groups`, `idols`:
-- `app/db/models/idol_color.py` and `app/db/models/position.py` (`Position` + `IdolPosition`)
+- `app/db/models/talent/idol_color.py` and `app/db/models/talent/position.py` (`Position` + `IdolPosition`)
   are new — `idol_colors`/`positions` were table-only migrations until now (no ORM model,
   nothing read them via SQLAlchemy); they get models now specifically because the new CRUD
-  routers need them. `app/db/models/group.py` and `app/db/models/idol.py` are also new.
+  routers need them. `app/db/models/talent/group.py` and `app/db/models/talent/idol.py` are also new.
   `ManagementCompany` picks up `groups`/`idols` relationships to match.
 - Role wiring per the table above: `management_companies` mutations are **admin-only** — a
   manager doesn't create their own company record, that's a platform-level action, not something
@@ -853,7 +853,7 @@ table existence.
 
 Enforced by `fn_enforce_resale_cap` (`schema.sql` §5, renamed from `fn_enforce_album_purchase_cap`
 — it's no longer album-specific) — a `BEFORE INSERT` trigger on the existing `orders_items` table,
-confirmed against the live `app/db/models/order.py` (`orders_items` has
+confirmed against the live `app/db/models/marketplace/order.py` (`orders_items` has
 `order_id`/`product_id`/`quantity`; `orders` has `user_id`). It looks up the product's category's
 `is_resale_capped` flag, and if capped, sums the fan's existing quantity of that `product_id`
 across all their orders and rejects the insert if adding this line would exceed 3.
@@ -1107,7 +1107,7 @@ to match):
 - ~~**`app/db/base.py` doesn't import `Users`/`RefreshToken`**~~ (`CLAUDE.md` item 3). Fixed in
   two passes. The first pass (just adding the two imports to `app/db/base.py`) surfaced a real,
   pre-existing circular-import bug: every model file did `from app.db.base import Base`, while
-  `app/deps/auth.py`/`app/router/products.py` (main.py's first router import) import
+  `app/deps/auth.py`/`app/router/marketplace/products.py` (main.py's first router import) import
   `app.db.models.user` directly — so depending on which module Python touches first, the other
   one re-entering mid-import threw `ImportError: cannot import name 'Users' from partially
   initialized module 'app.db.models.user'`. This was latent before; it only started firing once
@@ -1167,7 +1167,7 @@ sequencing ones, not code fixes: follow the FK-respecting migration order in §7
   and `/delete` on the same router.
 - ~~Passwords/reset tokens travel as query params, not JSON bodies~~ (`CLAUDE.md` item 7). Fixed:
   `change-password`, `forgot-password`, `set-password`, and `make-admin` all now take a Pydantic
-  request body (`app/schema/user.py`) instead of bare function params — nothing sensitive rides
+  request body (`app/schema/identity/user.py`) instead of bare function params — nothing sensitive rides
   in the query string or ends up in access logs/browser history anymore.
 - ~~No `.dockerignore`~~ (`CLAUDE.md` item 10). Fixed: added, excluding `.git/`, Python/venv/editor
   cruft, and — the actual risk, since a local `.env` exists in this repo — `.env`/`.env.*` (with
@@ -1222,7 +1222,7 @@ migration), and `groups` (`b51c6b2b4459`), `idols` (`3bb50b855520`), and `idol_p
 **ORM models and CRUD endpoints now exist for all six of these tables** (§4's "CRUD endpoints
 now exist" paragraph has the detail) — `idol_colors`/`positions` were table-only migrations for a
 round (no ORM model, nothing read them via SQLAlchemy), but that gap is now closed:
-`app/db/models/idol_color.py`, `position.py` (`Position` + `IdolPosition`), `group.py`, and
+`app/db/models/talent/idol_color.py`, `position.py` (`Position` + `IdolPosition`), `group.py`, and
 `idol.py` all exist, wired into `app/db/base.py`. Verified against a real circular-import test in
 both directions (base-first and model-first, same technique that caught the original circular
 import bug in `CLAUDE.md` §5 item 3) — the new relationships don't reopen it.
@@ -1290,7 +1290,7 @@ Every table migrated in §7.5 now has a full ORM model + Pydantic schema + servi
 router: `venues`, `concerts`/`concert_performers`, `ticket_types`, `lottery_preferences`,
 `lottery_campaigns`, `lottery_entries`, `tickets`, `album_details`, `genres`/`album_genres`,
 `lightstick_details`. Also closed in the same pass: `categories.is_resale_capped` (added by
-`67536a8e127a`) existed in the DB but was never added to `app/db/models/category.py` — the ORM
+`67536a8e127a`) existed in the DB but was never added to `app/db/models/marketplace/category.py` — the ORM
 model, schema, service, and router are all updated now.
 
 **Role wiring, table by table:**
