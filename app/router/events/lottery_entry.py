@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user, require_manager_or_admin
 from app.deps.db import get_db
@@ -28,7 +29,7 @@ def _raise_for(result):
         raise HTTPException(status_code=400, detail="You already hold a ticket for this concert")
 
 @router.post("/apply", response_model=LotteryEntryRead)
-async def apply_to_a_lottery(data: LotteryEntryApply, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)):
+async def apply_to_a_lottery(data: LotteryEntryApply, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)):
     try:
         result = LotteryEntryService.apply_to_lottery(db, data, current_user)
     except TriggerViolationError as e:

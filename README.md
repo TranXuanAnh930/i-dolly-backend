@@ -83,17 +83,16 @@ notifications above, the ETL/analytics pipeline, and a full audit trail on the P
 webhook paths: [`docs/project_status.md`](docs/project_status.md) §2 and §5.
 
 ## Known limitations
-- **The rate limiter's key doesn't account for a reverse proxy** — it reads `request.client.host`
-  directly, so behind Render/nginx/Docker's network every visitor can share one IP-scoped budget.
-  Two more gaps in the same file (`app/cache/rate_limit.py`), not yet fixed: its check-then-act
-  `GET`/`SETEX`-or-`INCR` sequence isn't atomic, so concurrent requests can race past the limit
-  instead of being capped by it; and there's no error handling around the Redis calls, so a Redis
-  outage would 500 every rate-limited route, including login, instead of failing open.
-- **The product-list cache goes stale after every purchase** — checkout (`order_service`,
-  `ticket_service`) decrements stock directly but never invalidates the `products:list` Redis
-  cache (`app/cache/cache_service.py`), so `GET /products/all` can show incorrect stock for up to
-  its 5-minute TTL after a sale. Caching itself is also narrow in scope — only that one endpoint
-  reads from it; the actual storefront listing/pagination/filter endpoints hit Postgres directly.
+- Caching is narrow in scope — only `GET /products/all` and `GET /products/store-page` read from
+  Redis (`app/cache/cache_service.py`); `/pagination` is a reasonable next candidate (bounded key
+  space) but not yet built, and `/filter`'s key space (free-text `name`, arbitrary price ranges) is
+  deliberately left uncached — caching it would mean paying for cache writes that almost never get
+  read back, and it hands an unauthenticated caller a way to fill Redis with junk keys for free. See
+  `docs/project_status.md` §4 item 21.
+- Rate-limit coverage now spans all 25 router files by an explicit tier policy
+  (`docs/architecture.md` §3) rather than ad hoc per-route judgment — but the policy itself (which
+  tier a route belongs to, and its exact limit/window) is a portfolio-scoped judgment call, not a
+  formally load-tested one.
 
 Full list, ordered by how much each matters — including everything above that's already been
 fixed (the checkout race, the rate-limiter key collision, webhook idempotency, and more):

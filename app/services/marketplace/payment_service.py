@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.cache.cache_service import delete_cached_products
 from app.db.models.events import Ticket, TicketType
 from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product
 from app.db.models.marketplace import ShippingStatus as ModelShipStatus
@@ -222,4 +223,6 @@ class PaymentService:
             db.add(shipstatus)
 
         commit_or_raise(db)
+        if payment.status == PaymentStatus.success:
+            delete_cached_products()
         return payment

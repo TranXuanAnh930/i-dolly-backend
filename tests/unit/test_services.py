@@ -264,7 +264,7 @@ class TestProductService:
         mock_products = [make_mock_product(), make_mock_product(id=OTHER_ID)]
         db.query().options().all.return_value = mock_products
 
-        result = ProductService.List_of_products(db)
+        result = ProductService.list_of_products(db)
         assert len(result) == 2
 
     def test_list_of_products_empty(self):
@@ -273,7 +273,7 @@ class TestProductService:
         db = MagicMock()
         db.query().options().all.return_value = []
 
-        result = ProductService.List_of_products(db)
+        result = ProductService.list_of_products(db)
         assert result is False
 
     def test_search_product_found(self):
@@ -375,6 +375,7 @@ class TestProductService:
 class TestCartService:
 
     def test_add_to_cart_new_item(self):
+        from app.db.models.marketplace import Product
         from app.schema.marketplace import CartItem
         from app.services.marketplace.cart_service import CartService
 
@@ -383,12 +384,16 @@ class TestCartService:
         db.get.return_value = mock_user
 
         mock_prod = make_mock_product(quantity=10)
-        # Product lookup is a plain .filter().first(); the existing-cart-row
-        # lookup goes through .with_for_update() first (row lock ahead of
-        # the increment) — a separate mock in the chain, not the same
-        # .first() called twice.
-        db.query().filter().first.return_value = mock_prod
-        db.query().filter().with_for_update().first.return_value = None
+        # Both the Product lookup (stock check) and the existing-cart-row
+        # lookup now go through .with_for_update() — one row lock each, not
+        # the same .first() called twice — so db.query(...) needs to return a
+        # different mock depending on which model it's called with, or both
+        # calls would collide on the same .filter().with_for_update().first().
+        product_query = MagicMock()
+        product_query.filter.return_value.with_for_update.return_value.first.return_value = mock_prod
+        cart_query = MagicMock()
+        cart_query.filter.return_value.with_for_update.return_value.first.return_value = None
+        db.query.side_effect = lambda model: product_query if model is Product else cart_query
 
         cart_data = CartItem(quantity=2, product_id=DEFAULT_ID)
         CartService.add_to_cart(db, cart_data, DEFAULT_ID)
@@ -397,13 +402,16 @@ class TestCartService:
         db.commit.assert_called_once()
 
     def test_add_to_cart_insufficient_stock(self):
+        from app.db.models.marketplace import Product
         from app.schema.marketplace import CartItem
         from app.services.marketplace.cart_service import CartService
 
         db = MagicMock()
         db.get.return_value = make_mock_user()
         mock_prod = make_mock_product(quantity=0)
-        db.query().filter().first.return_value = mock_prod
+        product_query = MagicMock()
+        product_query.filter.return_value.with_for_update.return_value.first.return_value = mock_prod
+        db.query.side_effect = lambda model: product_query if model is Product else MagicMock()
 
         cart_data = CartItem(quantity=5, product_id=DEFAULT_ID)
         result = CartService.add_to_cart(db, cart_data, DEFAULT_ID)

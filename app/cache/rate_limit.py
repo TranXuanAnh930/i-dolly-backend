@@ -1,3 +1,4 @@
+import redis
 from fastapi import HTTPException, Request
 
 from app.cache.redis_client import redis_client
@@ -21,19 +22,18 @@ def user_key(request:Request):
 
 def rate_limit(limit:int, window:int, key_func):
     def limiter(request:Request):
-        key = key_func(request)
+        try:
+            key = key_func(request)
+            count = redis_client.incr(key)   # atomically: create at 1 if missing, else +1
+            if count == 1:
+                redis_client.expire(key, window) 
 
-        current = redis_client.get(key)
-
-        if current is None:
-            redis_client.setex(key, window, 1)
-            return
-
-        if int(current) >= limit:
-            ttl = redis_client.ttl(key)
-            if ttl<0:
-                ttl = window
-            raise HTTPException(status_code=429, detail=f"Too many requests. Please try again after {ttl} seconds.")
-
-        redis_client.incr(key)
+            if int(count) > limit:
+                ttl = redis_client.ttl(key)
+                if ttl<0:
+                    ttl = window
+                raise HTTPException(status_code=429, detail=f"Too many requests. Please try again after {ttl} seconds.")
+        except redis.RedisError:
+            print("Rate limiter Internal Error")
+        return
     return limiter

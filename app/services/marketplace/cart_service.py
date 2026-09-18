@@ -18,7 +18,7 @@ class CartService:
         if user.role != "fan":
             # Primary check for trg_cart_fan_only — see FanOnlyPurchaseError's docstring.
             raise FanOnlyPurchaseError("Only fan accounts can add items to a cart")
-        product = db.query(Product).filter(Product.id==cart_item.product_id).first()
+        product = db.query(Product).filter(Product.id==cart_item.product_id).with_for_update().first()
         if not product or product.quantity<cart_item.quantity:
             return None
 

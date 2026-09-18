@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
@@ -17,7 +18,7 @@ from app.services.marketplace.genre_service import GenreService
 router = APIRouter(prefix="/genres", tags=["Genres"])
 
 @router.post("/add", response_model=GenreRead)
-async def add_new_genre(genre: GenreCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def add_new_genre(genre: GenreCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     return GenreService.add_genre(db, genre)
 
 @router.get("/all", response_model=List[GenreRead])
@@ -28,7 +29,7 @@ async def list_genres(db: Session = Depends(get_db)):
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_genre(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)):
+async def delete_existing_genre(id: uuid.UUID, current_user: Users = Depends(require_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = GenreService.delete_genre(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Genre not found")
@@ -47,7 +48,7 @@ def _raise_for_link(result):
         raise HTTPException(status_code=400, detail="This album is already tagged with this genre")
 
 @router.post("/album_genres/assign", response_model=AlbumGenreRead)
-async def assign_genre_to_album(data: AlbumGenreAssign, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def assign_genre_to_album(data: AlbumGenreAssign, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = GenreService.assign_genre(db, data, current_user)
     if isinstance(result, str):
         _raise_for_link(result)
@@ -71,7 +72,7 @@ async def list_all_album_genres(db: Session = Depends(get_db)):
     return result
 
 @router.delete("/album_genres/{product_id}/{genre_id}")
-async def unassign_genre_from_album(product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def unassign_genre_from_album(product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = GenreService.remove_genre(db, product_id, genre_id, current_user)
     if isinstance(result, str):
         _raise_for_link(result)
