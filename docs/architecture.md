@@ -150,10 +150,34 @@ this matters more than it looks (SQLAlchemy's string-based `relationship()` reso
   it. `categories` intentionally has no scoping at all: every category-mutating endpoint is
   `require_admin`-only, so there's no per-company question to answer there.
 - **`app/cache/rate_limit.py::rate_limit(limit, window, key_func)`** — a dependency factory used
-  as `Depends(rate_limit(5, 60, ip_key))` / `..., user_key)`. Has a real bug (the key doesn't
-  include the route, so endpoints sharing a `key_func` share one counter) — see
-  `project_status.md` before reusing this as-is for anything scalper-sensitive (a ticket drop, a
-  lottery-entry endpoint).
+  as `Depends(rate_limit(5, 60, ip_key))` / `..., user_key)`. This entry was stale: it used to warn
+  that the key didn't include the route (so endpoints sharing a `key_func` shared one counter) —
+  that was fixed early in this file's own history (`_route_key` folds in
+  `request.scope["route"].path`) and this doc never caught up; corrected here. Two other real bugs
+  were found and fixed since (a non-atomic check-then-act race, and no fail-open on a Redis error) —
+  see `project_status.md` §4 item 2 for the fix and the regression tests
+  (`tests/unit/test_rate_limit.py`) that caught two follow-on bugs in the first attempt at that fix.
+  **Still open**: `ip_key` trusts `request.client.host` directly, so behind Render's reverse proxy
+  every visitor likely shares one IP-bucket — `project_status.md` §4 item 2 has the concrete plan
+  (`uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware`, not a hand-rolled `X-Forwarded-For`
+  parse, which would be spoofable).
+
+  **Coverage policy** — which tier a route belongs to decides whether/how it's rate-limited; a new
+  route should be checked against this table, not left to individual judgement:
+
+  | Tier | Key | Typical limit | Why | Examples |
+  |---|---|---|---|---|
+  | Auth / brute-force | `ip_key` | 3–10 / 60s | Credential stuffing resistance | `register`, `login`, `forgot_password` |
+  | Money / inventory | `user_key` | 3 / 60s | Reserves scarce inventory or money — includes lottery entry, not just checkout | `checkout_order`, `checkout_new_ticket`, `apply_to_lottery`, `add_to_cart` |
+  | Privilege escalation | `user_key` | 3 / 60s | Grants elevated access | `make_admin`, `create_manager` |
+  | Authenticated reads | `user_key` | 5–30 / 60s, scaled to how pollable the endpoint is | Cheap and safe, but still worth a ceiling | `notifications/unread-count` (30, polled), `me` (10) |
+  | Public reads | `ip_key` | 5–10 / 60s | Anti-scraping / DB cost control on an unauthenticated GET | `products/all`, `products/search` |
+  | Manager/admin CRUD | `user_key` | 20–30 / 60s | Already gated by auth + company-scoping — this tier is a safety net against a buggy client retry-loop, not a security control | most `talent`/`events`/`marketplace` admin routers |
+
+  Found via this table, not guesswork: `lottery_entries/apply` and `cart/add_cart` were both
+  completely unrated-limited despite being money/inventory-tier — fixed. `direct_sale_campaign`,
+  `lottery_campaign`, `lottery_preference`, `ticket_type`, `album_detail`, `genre`, `merch_detail`
+  routers had zero coverage at all — now on the manager/admin-CRUD tier.
 - **Image storage (`app/utils/storage.py`)** — an ABC (`StorageBackend`) with `LocalStorageBackend`
   and `S3StorageBackend` implementations, selected by `settings.STORAGE_BACKEND` via
   `get_storage()`. Every upload call site goes through `get_storage()` and never imports either

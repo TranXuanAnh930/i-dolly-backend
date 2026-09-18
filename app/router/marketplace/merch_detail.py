@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
@@ -24,7 +25,7 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=400, detail="Cannot attach new merch to a deactivated idol/group")
 
 @router.post("/add", response_model=MerchDetailRead)
-async def add_new_merch_detail(data: MerchDetailCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def add_new_merch_detail(data: MerchDetailCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     try:
         result = MerchDetailService.add_merch_detail(db, data, current_user)
     except TriggerViolationError as e:
@@ -48,14 +49,14 @@ async def get_merch_detail_by_id(product_id: uuid.UUID, db: Session = Depends(ge
     return md
 
 @router.put("/update/{product_id}", response_model=MerchDetailRead)
-async def update_existing_merch_detail(product_id: uuid.UUID, data: MerchDetailUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_merch_detail(product_id: uuid.UUID, data: MerchDetailUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = MerchDetailService.update_merch_detail(db, product_id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Merch details not found")
     return result
 
 @router.delete("/delete/{product_id}")
-async def delete_existing_merch_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_merch_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = MerchDetailService.delete_merch_detail(db, product_id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Merch details not found")

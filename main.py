@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.config.settings import settings
 from app.db.session import session as SessionLocal
@@ -57,6 +58,20 @@ app.add_middleware(
     allow_methods=["*"],             # Allows all HTTP methods (GET, POST, etc.)
     allow_headers=["*"],             # Allows all request headers
 )
+
+# Without this, request.client.host (and so app.cache.rate_limit.ip_key) is
+# whoever connects to this container directly — in production that's
+# Render's own edge, not the visitor's browser, so every visitor would share
+# one IP-scoped rate-limit bucket (see docs/project_status.md §4 item 2).
+# trusted_hosts="*" is deliberate, not lazy: nothing but Render's own
+# internal network can open a raw TCP connection to this container in the
+# first place, so "trust whoever connects directly" is equivalent to "trust
+# Render" here, not "trust the public internet." Confirmed working via
+# TestClient before wiring in for real: X-Forwarded-For's leftmost entry
+# becomes request.client.host, and `app` stays the same FastAPI instance
+# afterward (add_middleware wraps lazily, doesn't reassign `app`), so nothing
+# else (tests, `uvicorn main:app`) needs to change.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Serves uploaded idol/product images back out when STORAGE_BACKEND=local
 # (app/utils/storage.py). Nothing to mount for STORAGE_BACKEND=s3 — those

@@ -61,7 +61,7 @@ class ProductService:
         return current_user.company_id != company_id
 
     @staticmethod
-    def List_of_products(db:Session):
+    def list_of_products(db:Session):
         db_products = db.query(Product).options(selectinload(Product.category)).all()
         if not db_products:
             return False

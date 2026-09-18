@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
@@ -13,7 +14,7 @@ from app.services.marketplace.cart_service import CartService
 router = APIRouter(prefix="/cart", tags=["Cart"])
 
 @router.post("/add_cart")
-async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
+async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db:Session=Depends(get_db)):
     try:
         cart = CartService.add_to_cart(db, cart_item, user.id)
     except TriggerViolationError as e:

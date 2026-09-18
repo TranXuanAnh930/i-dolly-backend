@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.cache.cache_service import delete_cached_product, get_cached_products
+from app.cache.cache_service import delete_cached_products, get_cached_products, get_cached_store_page
 from app.cache.rate_limit import ip_key, rate_limit
 from app.cache.redis_client import redis_client
 from app.db.models.identity import Users
@@ -28,17 +28,17 @@ from app.utils.storage import StorageError, get_storage
 router = APIRouter(prefix="/products", tags=["Products"])
 
 @router.get("/all", response_model=List[ProductRead])
-async def List_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
+async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
     db_products = get_cached_products(db)
     if not db_products:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
 @router.get("/store-page", response_model=StorePageRead)
-async def get_store_page_data(db: Session = Depends(get_db)):
-    result = ProductService.get_store_page(db)
+async def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)):
+    result = get_cached_store_page(db)
     if not result:
-        raise HTTPException(status_code=404, detail="No products found")
+        raise HTTPException(status_code=404, detail="Products not found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
@@ -175,7 +175,7 @@ async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_u
         raise HTTPException(status_code=403, detail="Managers cannot change product price after creation — ask an admin")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    delete_cached_product(id)
+    delete_cached_products()
     return {"msg" : "Product Updated successfully"}
 
 @router.post("/{id}/image")
@@ -191,7 +191,7 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    delete_cached_product(id)
+    delete_cached_products()
     return {"msg" : "Product image updated successfully"}
 
 @router.delete("/delete/{id}")
@@ -201,7 +201,7 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    delete_cached_product(id)
+    delete_cached_products()
     return {"detail" : "Product Deleted successfully"}
 
 @router.post("/bulk_products")
@@ -209,7 +209,7 @@ async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=
     db_product = ProductService.add_bulk_products(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add products")
-    redis_client.delete("products:list")
+    delete_cached_products()
     return {"msg" : f"{len(db_product)} bulk products added successfully"}
 
 @router.get("/pagination")

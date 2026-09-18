@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
@@ -30,7 +31,7 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=403, detail="Concert is already on sale — cancel it first, then resize ticket capacity once it's cancelled")
 
 @router.post("/add", response_model=TicketTypeRead)
-async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     try:
         result = TicketTypeService.add_ticket_type(db, data, current_user)
     except TriggerViolationError as e:
@@ -54,7 +55,7 @@ async def get_ticket_type_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
     return ticket_type
 
 @router.put("/update/{id}", response_model=TicketTypeRead)
-async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     try:
         result = TicketTypeService.update_ticket_type(db, id, data, current_user)
     except TriggerViolationError as e:
@@ -64,7 +65,7 @@ async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, cur
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = TicketTypeService.delete_ticket_type(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Ticket type not found")
