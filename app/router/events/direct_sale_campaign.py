@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
@@ -21,7 +22,7 @@ def _raise_for(result, not_found_detail: str):
         raise HTTPException(status_code=400, detail="Direct sale campaigns can only be attached to a direct-sale ticket type")
 
 @router.post("/add", response_model=DirectSaleCampaignRead)
-async def add_new_campaign(data: DirectSaleCampaignCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def add_new_campaign(data: DirectSaleCampaignCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = DirectSaleCampaignService.add_campaign(db, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Ticket type not found")
@@ -42,14 +43,14 @@ async def get_campaign_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
     return campaign
 
 @router.put("/update/{id}", response_model=DirectSaleCampaignRead)
-async def update_existing_campaign(id: uuid.UUID, data: DirectSaleCampaignUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def update_existing_campaign(id: uuid.UUID, data: DirectSaleCampaignUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = DirectSaleCampaignService.update_campaign(db, id, data, current_user)
     if isinstance(result, str):
         _raise_for(result, "Direct sale campaign not found")
     return result
 
 @router.delete("/delete/{id}")
-async def delete_existing_campaign(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)):
+async def delete_existing_campaign(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)):
     result = DirectSaleCampaignService.delete_campaign(db, id, current_user)
     if isinstance(result, str):
         _raise_for(result, "Direct sale campaign not found")

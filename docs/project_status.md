@@ -296,23 +296,70 @@ newly introduced.
    traffic. Both key functions now fold in `request.scope["route"].path` (the route's raw path
    template, e.g. `/order/single_placed_order/{order_id}` — not the resolved URL, so different ids
    on the same endpoint still share one budget): `rate:ip:<route>:<ip>` / `rate:user:<route>:<id>`.
-   Verified with `py_compile` only, per §3's standing limitation. **Still open**: `ip_key` uses
-   `request.client.host` with no `X-Forwarded-For`/`X-Real-IP` handling, so behind any reverse
-   proxy (Render, Docker's network, nginx) every visitor could still share one IP-bucket — that's
-   a separate fix (and one that needs care, since blindly trusting a forwarded-for header from an
-   untrusted network lets a client spoof its way around the limit) not attempted here. **Two more
-   gaps found while reassessing this file against the current code, not yet fixed**: (a) the
-   limiter's `GET` → conditional `SETEX`/`INCR` sequence (`rate_limit()`'s `limiter` closure) is a
-   non-atomic check-then-act — concurrent requests can all observe `current is None` before any of
-   them writes, each independently `SETEX`s the counter back to 1, and the limit is silently never
-   enforced under a burst; a single atomic `INCR` (create at 1 on first use) with `EXPIRE` set only
-   when the returned count is `1` would close this. (b) no error handling around any of the Redis
-   calls — a Redis outage raises unhandled inside the dependency, 500ing every one of the 36
-   rate-limited routes (including login) instead of failing open; worth wrapping in a
-   try/except that logs and allows the request through on a Redis error, matching how `user_key`
-   already implicitly depends on `get_current_user` running first (an unenforced ordering that
-   currently only holds by convention across call sites, not a bug in itself but worth noting
-   alongside these).
+   Verified with `py_compile` only, per §3's standing limitation. ~~**Still open**: `ip_key` uses
+   `request.client.host` with no `X-Forwarded-For`/`X-Real-IP` handling~~ — **FIXED**. Checked
+   directly this session before fixing: this project had zero proxy-header handling anywhere (no
+   `--proxy-headers` flag on `uvicorn` in `Dockerfile`/`docs/deployment.md`, no middleware in
+   `main.py`), and Render's edge terminates the real client connection and forwards over its own
+   internal network — so `request.client.host` in the deployed app was almost certainly Render's own
+   edge IP for every visitor, not a "could happen" risk but the likely actual state. The naive fix
+   (read the leftmost `X-Forwarded-For` entry by hand) would have been actively dangerous, not just
+   incomplete — that header is an ordinary client-settable HTTP header, so an attacker could send a
+   fresh fake value on every request and get a brand-new rate-limit bucket each time. Fixed instead
+   by pushing the trust decision to the transport layer, once: `main.py` now wraps `app` with
+   `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware` (`app.add_middleware(ProxyHeadersMiddleware,
+   trusted_hosts="*")`, already available with the pinned `uvicorn==0.38.0`, no new dependency).
+   `trusted_hosts="*"` is deliberate, not lazy: nothing but Render's own internal network can open a
+   raw TCP connection to this container, so "trust whoever connects directly" is equivalent to
+   "trust Render," not "trust the public internet" — worth revisiting if Render's docs turn out to
+   publish a narrower trusted-IP range or a dedicated already-verified client-IP header, which
+   would be strictly better than trusting on connection identity alone, but not required for this to
+   be a real fix rather than a naive one. `ip_key`/`rate_limit.py` needed **no changes at all** —
+   `request.client.host` is corrected transport-side before any router or dependency ever sees the
+   request. Verified two ways: `add_middleware` wraps lazily rather than reassigning `app`, confirmed
+   directly (`isinstance(app, FastAPI)` still `True`, `len(app.routes)` unchanged, `pytest tests/unit`
+   213/213, `ruff` clean) — and a live end-to-end check against the real app (DB dependency
+   overridden via FastAPI's `dependency_overrides`, no live Postgres needed): two different
+   `X-Forwarded-For` values hitting the same `rate_limit(5, 60, ip_key)`-gated route each got their
+   own independent 5-request budget before 429ing, proving two visitors no longer share one bucket.
+   **Two more
+   gaps found while reassessing this file against the current code — **both now FIXED**: (a) the
+   limiter's `GET` → conditional `SETEX`/`INCR` sequence (`rate_limit()`'s `limiter` closure) was a
+   non-atomic check-then-act — concurrent requests could all observe `current is None` before any of
+   them wrote, each independently `SETEX`ing the counter back to 1, silently never enforcing the
+   limit under a burst. Replaced with a single atomic `INCR` (creates the key at 1 on first use,
+   otherwise increments) plus `EXPIRE` set only when the returned count is `1` (i.e. only by the
+   request that just created the window). (b) no error handling around any of the Redis calls — a
+   Redis outage raised unhandled inside the dependency, 500ing every one of the 36 rate-limited
+   routes (including login); now wrapped in `try/except redis.RedisError`, logging and letting the
+   request through (fail-open, deliberately — during a Redis outage, availability of the app matters
+   more than rate limiting still working, and failing closed would 500 login too without buying any
+   real security since an attacker causing the outage evades the limiter either way). Verified with a
+   new dedicated test file, `tests/unit/test_rate_limit.py` — a sequential test asserting exactly
+   `limit` requests succeed before the `(limit+1)`-th 429s, and a threaded-concurrency test firing 50
+   requests at a `limit=10` bucket and asserting exactly 10 succeed. Writing these tests caught two
+   more real bugs the first hand-implemented fix introduced, both since fixed: a leftover
+   `redis_client.incr(key)` call after the new atomic `incr` at the top double-counted every allowed
+   request (a `limit=5` bucket tripped after ~2 requests, not 5); and an off-by-one from reusing the
+   old `>=` comparison against the new atomic count (which already includes the current request,
+   unlike the old pre-increment `current` it replaced) — rejected the `limit`-th request instead of
+   only the `(limit+1)`-th; fixed by comparing `count > limit`. `user_key` still implicitly depends
+   on `get_current_user` running first to populate `request.state.user` — an unenforced ordering that
+   currently only holds by convention across call sites, not a bug in itself but worth noting.
+
+   **Considered, not implemented: a Lua/`EVAL` version to close the remaining residual gap.** The
+   atomic `INCR` + conditional `EXPIRE` above is still two separate round-trips to Redis — if the
+   process crashes between them (after `INCR` creates the key, before `EXPIRE` sets its TTL), that
+   key never expires and permanently blocks that route+identity bucket. Wrapping both calls in one
+   Lua script run via `EVAL` would close this for real: Redis executes a script as a single
+   indivisible unit (it's single-threaded for command/script execution), so no other client's
+   command can land between the script's own `INCR` and `EXPIRE`, and a crash on the client side
+   either happens before Redis runs the script (nothing changed) or after it fully completes (both
+   calls landed) — no observable in-between state. Not built here: `fakeredis` (this project's test
+   double, `tests/conftest.py`) doesn't support `EVAL` without the optional `lupa` dependency, which
+   this project doesn't otherwise need — building this would mean either losing test coverage on this
+   path or adding a dev dependency for a few-microsecond crash window. Named here as a deliberate,
+   documented residual risk rather than silently left unconsidered.
 3. ~~`app/db/base.py` didn't import every model~~ — **FIXED**. `Base` now lives in
    `app/db/base_class.py`; `app/db/base.py` is a pure aggregator. See `architecture.md` §5 for
    the convention this establishes going forward.
@@ -331,9 +378,26 @@ newly introduced.
    new `CORS_ORIGINS` setting (comma-separated, default `http://localhost:8080` to keep local dev
    unchanged) instead of a hardcoded list — set it to the deployed frontend's real origin(s) in
    production. See `docs/deployment.md`.
-7. **`cart_service.add_to_cart` doesn't lock the `Product` row** before comparing quantity —
-   minor since checkout's own race (item 1) is the real gate, but two concurrent adds can both
-   "pass" a stock check that's already stale.
+7. ~~**`cart_service.add_to_cart` doesn't lock the `Product` row**~~ — **FIXED**. The stock check
+   (`product.quantity < cart_item.quantity`) now runs against a `.with_for_update()`-locked row,
+   the same pattern the `Cart`-row lookup one line below it already used. This was always "minor"
+   in the money sense — checkout's own lock (item 1) is the real gate, and `add_to_cart` itself
+   never decrements `product.quantity`, so this never let two carts oversell each other — but
+   without the lock, a cart-add running concurrently with an in-flight checkout could read the
+   pre-decrement quantity and "approve" adding stock that was about to disappear, a stale read a
+   user would only discover at checkout time. The lock makes `add_to_cart` block until any
+   concurrent checkout holding that row's lock commits, so it always evaluates against the
+   latest committed quantity — a data-freshness fix, not a money-safety one (that was already
+   closed). Hand-implemented by the project owner; found stale-test-vs-code drift the same way
+   item 11 originally did: two unit tests (`TestCartService::test_add_to_cart_new_item`/
+   `test_add_to_cart_insufficient_stock`) broke because their mocks configured a plain
+   `.filter().first()` for the product lookup and a separate `.filter().with_for_update().first()`
+   for the cart lookup — both now go through `.with_for_update()`, so both calls collided on the
+   same mock chain. Fixed by giving `db.query(...)` a `side_effect` keyed on which model
+   (`Product` vs `Cart`) is being queried, so each gets its own independently-configured mock
+   chain — same root cause and same fix shape as item 11's original `test_add_to_cart_new_item`
+   fix, just recurring on the newer lock instead of the older one. Verified:
+   `pytest tests/unit` (213/213), `ruff check .` clean, `import main` (164 routes).
 8. **The draw job doesn't exist yet and needs its own concurrency guard** designed in before it's
    built (`SELECT ... FOR UPDATE` while transitioning a campaign `status: open → drawn`) — nothing
    currently stops two runs from processing the same campaign at once.
@@ -590,19 +654,51 @@ newly introduced.
     together) against a database seeded with a full `scripts/seed.py` catalog beforehand,
     confirming this can never again see or touch real dev/seed data — plus a direct check that the
     real dev database's row counts were unchanged after the test run.
-21. **The product-list cache goes stale after every purchase — not yet fixed.** Found while
-    reassessing this file against the current code: `order_service.checkout()` and
-    `ticket_service.checkout_ticket()` (`app/services/marketplace/`) both decrement `Product.quantity`
-    directly on a successful purchase, but neither calls `delete_cached_product()` or
-    `redis_client.delete("products:list")` — grepped both files, zero cache references. The cached
-    `GET /products/all` response (`app/cache/cache_service.py`, 5-minute TTL) can show stale stock
-    for up to that TTL after a sale. Two smaller findings in the same file, also unfixed: the
-    `product:{id}` key `delete_cached_product()` deletes is dead code — grepped the whole repo, it's
-    never written anywhere, only ever deleted; and `get_cached_products` hand-rolls a subset of
-    `ProductRead`'s fields as a raw dict rather than reusing the schema, so a schema change won't
-    propagate to the cached path. Caching is also narrow in scope generally — only `GET
-    /products/all` reads from cache; the actual storefront endpoints (`get_store_page_data`,
-    `paginated_product`, `filter_product`) hit Postgres directly, uncached.
+21. ~~**The product-list cache goes stale after every purchase**~~ — **FIXED**. Found while
+    reassessing this file against the current code: `order_service.checkout()` (mock gateway,
+    `app/services/marketplace/order_service.py`) and `payment_service.finalize_paypal_payment()`
+    (PayPal, `app/services/marketplace/payment_service.py`) both decrement `Product.quantity`
+    directly on a successful purchase, but neither called `delete_cached_product()` or
+    `redis_client.delete("products:list")` — grepped both files, zero cache references at the time.
+    `ticket_service.checkout_ticket()` (`app/services/events/`) is a different domain entirely — it
+    only ever touches `TicketType.sold_quantity`, never `Product.quantity`, so it was never part of
+    this bug; an earlier pass through this file mis-attributed it here and in the README, corrected
+    at the time. Fixed, hand-implemented by the project owner: both functions now call
+    `delete_cached_products()` (also renamed from `delete_cached_product(product_id)`, see below)
+    right after their own `commit_or_raise(db)`, gated on the same success condition that gates the
+    `quantity -=` write (`payment.status == PaymentStatus.success` /
+    `paypal_payment["status"] == "COMPLETED"`) — so the cache is only invalidated when the data it's
+    caching actually changed, not on a failed/declined payment. Two smaller findings in the same
+    file, also fixed alongside this: the `product:{id}` key the old `delete_cached_product()` deleted
+    was dead code — grepped the whole repo, it was never written anywhere, only ever deleted — the
+    new `delete_cached_products()` no longer references it at all. (`get_cached_products` hand-rolling
+    a subset of `ProductRead`'s fields as a raw dict, rather than reusing the schema, is still
+    unaddressed — a schema change still won't propagate to the cached path; not touched by this fix.)
+    Caching's scope has since widened once: `get_store_page_data` (`GET /products/store-page`) now
+    reads from `products:store_page` via `get_cached_store_page()`, added the same session as this
+    fix — validated through `StorePageRead.model_validate(...).model_dump(mode="json")` rather than
+    a second hand-rolled dict, specifically to not repeat `get_cached_products`'s own drift risk
+    (still open, see above). `paginated_product`/`filter_product` remain uncached, on purpose for
+    `filter_product` — its key space (free-text `name`, arbitrary price ranges) is unbounded and
+    client-controlled, so caching it would mean paying for cache writes that almost never get read
+    back on a hit, and it hands an unauthenticated caller a way to fill Redis with junk keys for
+    free; the actual fix for that endpoint being slow, if it ever is, is a Postgres index on the
+    filtered columns, not a cache. `paginated_product` is a better candidate (bounded key space —
+    `limit` is capped 1-50 in the route signature, `page` clusters low in real traffic) but not yet
+    built; if it is, it should follow `products:list`'s TTL-only approach (no precise per-page
+    invalidation on every write) rather than trying to track every page/limit combination touched by
+    one purchase.
+
+    A first attempted fix introduced a regression, caught by writing a test for it rather than
+    trusting the change on inspection: the initial version called
+    `delete_cached_products("products:list")` in `order_service.checkout()`, passing an argument to
+    a function that now takes none — a `TypeError` on every single checkout, success or failure,
+    since the call was unconditional at the time. `pytest tests/unit` (211/211 at the time) didn't
+    catch it because the test exercising `checkout()`'s success path mocks/patches
+    `delete_cached_products` rather than calling the real function, and a plain `Mock`/`patch` accepts
+    any call signature unless given `autospec=True`. Caught by direct inspection + a manual repro
+    (`python -c` calling the real function), not a new test; fixed by dropping the stray argument and
+    tightening both call sites to fire only on the success branch, as described above.
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
