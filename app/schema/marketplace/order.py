@@ -16,7 +16,7 @@ class OrderItem(BaseModel):
     order_id : uuid.UUID
     product_id : uuid.UUID
     quantity : int
-    price : int
+    price : float
 
     model_config = {"from_attributes" : True}
 
@@ -44,7 +44,7 @@ class ManagerOrderItemRead(BaseModel):
     product_id: uuid.UUID
     product_name: str
     quantity: int
-    price: int
+    price: float
 
 class ManagerOrderRead(BaseModel):
     id: uuid.UUID

@@ -57,7 +57,7 @@ class EventsPageRead(BaseModel):
 
 # An idol actually performing at the concert — a group credit expands to
 # that group's current members, a solo credit is just that one idol
-# (concert_service.get_concert_detail does the expansion/dedup; this is
+# (concert_service.get_concert_detail_public does the expansion/dedup; this is
 # only the shape the lineup list needs, not a full IdolRead).
 class LineupIdol(BaseModel):
     id: uuid.UUID

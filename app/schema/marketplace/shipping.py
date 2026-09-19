@@ -8,7 +8,7 @@ class ShippingBase(BaseModel):
     address_line1:str = Field(..., min_length=1, max_length=300)
     address_line2:str | None = Field(None, max_length=300)
     city:str = Field(..., min_length=1, max_length=100)
-    postal_code:int
+    postal_code:str = Field(..., min_length=1, max_length=20)
     state:str = Field(..., min_length=1, max_length=100)
     country:str = Field(..., min_length=1, max_length=100)
 

@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.cache_service import CacheService
 from app.cache.rate_limit import ip_key, rate_limit
 from app.db.models.identity import Users
 from app.db.models.talent import IdolColor
@@ -25,11 +26,14 @@ async def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depen
     db_color = IdolColorService.add_idol_color(db, color)
     if not db_color:
         raise HTTPException(status_code=400, detail="Invalid input")
+    CacheService.delete_cached_idol_colors()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_manager_products_pages()  # ManagerProductFormPage's colors dropdown is embedded there too
     return db_color
 
 @router.get("/all", response_model=List[IdolColorRead])
 async def list_idol_colors(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[IdolColor]:
-    result = IdolColorService.get_idol_colors(db)
+    result = CacheService.get_cached_idol_colors(db)
     if not result:
         raise HTTPException(status_code=404, detail="No idol colors found")
     return result
@@ -39,6 +43,9 @@ async def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current
     db_color = IdolColorService.update_idol_color(db, id, data)
     if not db_color:
         raise HTTPException(status_code=404, detail="Idol color not found")
+    CacheService.delete_cached_idol_colors()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_manager_products_pages()
     return db_color
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
@@ -46,4 +53,7 @@ async def delete_existing_idol_color(id: uuid.UUID, current_user: Users = Depend
     result = IdolColorService.delete_idol_color(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Idol color not found")
+    CacheService.delete_cached_idol_colors()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_manager_products_pages()
     return MessageResponse(msg="Idol color deleted successfully")

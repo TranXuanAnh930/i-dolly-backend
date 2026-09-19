@@ -145,8 +145,8 @@ class ProductSaleRead(BaseModel):
     order_status: OrderStatus
     order_created_at: datetime
     quantity: int
-    price: int
-    line_total: int
+    price: float
+    line_total: float
 
 class ProductSalesPageRead(BaseModel):
     page: int

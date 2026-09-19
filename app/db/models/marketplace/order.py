@@ -33,7 +33,7 @@ class OrderItem(Base):
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False)
-    price = Column(Integer, nullable=False)
+    price = Column(Float, nullable=False)
 
     order = relationship("Order", back_populates="items")
     order_product = relationship("Product", back_populates="order_items")

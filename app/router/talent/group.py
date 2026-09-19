@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.cache_service import CacheService
 from app.cache.rate_limit import ip_key, rate_limit
 from app.db.models.identity import Users
 from app.db.models.talent import Group
@@ -32,9 +33,15 @@ router = APIRouter(prefix="/groups", tags=["Groups"])
 @router.post("/add", response_model=GroupRead)
 async def add_new_group(group: GroupCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Group:
     try:
-        return GroupService.add_group(db, group, current_user)
+        result = GroupService.add_group(db, group, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_members_page()  # the group filter dropdown on the members page just gained an entry
+    CacheService.delete_cached_manager_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    return result
 
 @router.get("/all", response_model=List[GroupRead])
 async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Group]:
@@ -45,18 +52,18 @@ async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session
 
 @router.get("/groups-page", response_model=GroupsPageRead)
 async def get_groups_page_data(db: Session = Depends(get_db)) -> GroupsPageRead:
-    result = GroupService.get_groups_page(db)
+    result = CacheService.get_cached_groups_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No groups found")
     return result
 
 @router.get("/manager-groups-page", response_model=ManagerGroupsPageRead)
 async def get_manager_groups_page_data(db: Session = Depends(get_db)) -> ManagerGroupsPageRead:
-    return GroupService.get_manager_groups_page(db)
+    return CacheService.get_cached_manager_groups_page(db)
 
 @router.get("/{id}/detail", response_model=GroupDetailRead)
 async def get_group_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> GroupDetailRead:
-    result = GroupService.get_group_detail(db, id)
+    result = CacheService.get_cached_group_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Group not found")
     return result
@@ -71,9 +78,17 @@ async def get_group_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Group
 @router.put("/update/{id}", response_model=GroupRead)
 async def update_existing_group(id: uuid.UUID, data: GroupUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Group:
     try:
-        return GroupService.update_group(db, id, data, current_user)
+        result = GroupService.update_group(db, id, data, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_manager_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_group_details()  # this group's own detail page changed
+    CacheService.delete_cached_idol_details()  # ...and so did every member's embedded copy of it
+    return result
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
@@ -82,11 +97,26 @@ async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(req
         GroupService.delete_group(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_manager_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_group_details()
+    CacheService.delete_cached_idol_details()
     return MessageResponse(msg="Group deleted successfully")
 
 @router.patch("/activate/{id}", response_model=GroupRead)
 async def activate_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Group:
     try:
-        return GroupService.reactivate_group(db, id, current_user)
+        result = GroupService.reactivate_group(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_manager_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_group_details()
+    CacheService.delete_cached_idol_details()
+    return result

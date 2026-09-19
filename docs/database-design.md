@@ -874,7 +874,7 @@ sequenceDiagram
 
     Fan->>API: Buy album/single/EP/merch (existing cart → checkout flow)
     API->>DB: Create Order/OrderItem/Payment (existing flow)
-    Note over API,DB: trg_orders_items_resale_cap rejects the line outright past 3 lifetime units of that SPECIFIC product, for any category flagged is_resale_capped — every category (Album/Single/EP/Merch) is capped by default as of §4.2's "cap all products" round; this note previously said Merch was uncapped, which was already stale before this round's rename, fixed here. Nothing here ever touches lottery_entries.
+    Note over API,DB: trg_orders_items_resale_cap rejects the line outright past 3 lifetime units of that SPECIFIC product, for any category flagged is_resale_capped — every category (Album/Single/EP/Merch) is capped by default as of §4.2's 'cap all products' round — this note previously said Merch was uncapped, which was already stale before this round's rename, fixed here. Nothing here ever touches lottery_entries.
     Note over API,DB: This phase assumes every payment succeeds (mock gateway) — failed/retried payments are out of scope, see §6
 ```
 
@@ -897,9 +897,9 @@ sequenceDiagram
 
     Fan->>API: Apply to a specific tier's lottery (free — no cart, no payment, no purchase of any kind)
     API->>DB: Reject if the fan already holds a live ticket for this concert (direct sale, or an earlier lottery win)
-    API->>DB: Check for a matching lottery_preferences row for this tier; reject the application if none exists
+    API->>DB: Check for a matching lottery_preferences row for this tier — reject the application if none exists
     API->>DB: Insert lottery_entries row (status=pending) — UNIQUE(campaign_id, user_id) rejects a duplicate application outright
-    Note over API,DB: fn_require_lottery_preference is the DB backstop for the rank check; the UNIQUE constraint is the DB backstop for "only one entry"; the live-ticket check is service-layer only (below)
+    Note over API,DB: fn_require_lottery_preference is the DB backstop for the rank check — the UNIQUE constraint is the DB backstop for 'only one entry' — the live-ticket check is service-layer only (below)
 
     Note over Job: At draw time — campaigns for ONE concert are drawn together, not independently, so the rank cascade below works
     loop rank = 1, 2, 3, ... (highest preference first, across every tier for this concert)

@@ -71,7 +71,12 @@ purpose.
    _build_product_cards` returns `list[ProductCard]`, so callers read it by attribute
    (`card.artist`), not by dict key. `ProductWithCategoryRead` embeds the full `CategoryRead`
    object and is a separate schema from `ProductRead`, whose `category` field is a resolved name
-   (`str`) built by `cache_service.get_cached_products`.
+   (`str`) built by `CacheService.get_cached_products`. `cache_service.py` follows the same
+   one-class-of-`@staticmethod`s shape as item 2 above (`class CacheService: ...`, called as
+   `CacheService.get_cached_products(db)`), not a flat module of functions — it imports the
+   read-side services listed here for their query logic, which is also why invalidation calls live
+   in the router right after the mutating service call, not inside the service itself (a service
+   importing `cache_service` back would be circular).
 
 Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, never a
 bare function). Two same-named functions in different service files (e.g. both

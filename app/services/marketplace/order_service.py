@@ -4,7 +4,7 @@ from typing import Literal
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from app.cache.cache_service import delete_cached_products
+from app.cache.cache_service import CacheService
 from app.db.models.identity import Users
 from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product, ShippingAddress, ShippingStatus
 from app.exception.checkout import (
@@ -110,7 +110,7 @@ class OrderService:
 
         commit_or_raise(db)  # trg_orders_fan_only / chk_products_capacity backstop
         if payment.status == PaymentStatus.success:
-            delete_cached_products()
+            CacheService.delete_cached_products()
         db.refresh(order)
         return order
 
