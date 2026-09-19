@@ -7,7 +7,7 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import AlbumDetail, AlbumGenre, Category, MerchDetail, Order, OrderItem, Product
 from app.db.models.talent import Group, Idol, IdolColor
 from app.exception.db_triggers import commit_or_raise, flush_or_raise
-from app.schema.marketplace import ProductCreate, ProductRead, ProductWithDetailCreate
+from app.schema.marketplace import ProductCreate, ProductWithDetailCreate
 from app.utils.resale import RESALE_CAP_QUANTITY
 
 
@@ -215,7 +215,7 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def add_bulk_products(db:Session, product:List[ProductRead]) -> list[Product] | Literal[False]:
+    def add_bulk_products(db:Session, product:List[ProductCreate]) -> list[Product] | Literal[False]:
         db_products = [Product(**p.model_dump()) for p in product]
         if not db_products:
             return False

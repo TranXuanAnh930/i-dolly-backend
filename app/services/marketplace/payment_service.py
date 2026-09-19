@@ -8,7 +8,7 @@ from app.db.models.events import Ticket, TicketType
 from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product
 from app.db.models.marketplace import ShippingStatus as ModelShipStatus
 from app.exception.db_triggers import commit_or_raise
-from app.schema.events import TicketCheckoutCreate
+from app.schema.events import TicketCheckoutCreate, WonTicketCheckoutCreate
 from app.schema.marketplace import OrderStatus, PaymentCreate, PaymentGateway, PaymentStatus
 from app.schema.marketplace import ShippingStatus as SchemaShipStatus
 from app.services.shared.notification_service import NotificationService
@@ -19,7 +19,7 @@ from app.utils.paypal_client import capture_order, create_order, extract_approva
 class PaymentService:
 
     @staticmethod
-    def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> Payment | bool:
+    def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> Payment:
         # Deliberately does not commit
         gateway = PaymentGateway(data.gateway)
         pg_approval_url = None
@@ -67,7 +67,7 @@ class PaymentService:
         return payment
 
     @staticmethod
-    def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:TicketCheckoutCreate) -> Payment | bool:
+    def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:TicketCheckoutCreate | WonTicketCheckoutCreate) -> Payment:
         # Deliberately does not commit
         # caller (ticket_service.checkout_ticket) holds a row lock on the
         # ticket_type for the whole operation and commits once at the end, so
@@ -145,7 +145,7 @@ class PaymentService:
         return payment
 
     @staticmethod
-    def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | None) -> Payment | None:
+    def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | None = None) -> Payment | None:
         payment = db.query(Payment).filter(Payment.pg_order_id==pg_order_id).with_for_update().first()
         if not payment or payment.status != PaymentStatus.pending or (user_id and payment.user_id!= user_id):
             return None

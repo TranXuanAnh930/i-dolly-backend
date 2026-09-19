@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.models.identity import Users
 from app.db.models.marketplace import AlbumDetail, AlbumGenre, Genre
 from app.db.models.talent import Group, Idol
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.schema.marketplace import AlbumGenreAssign, GenreCreate
 
 
@@ -32,7 +33,7 @@ class GenreService:
         return result
 
     @staticmethod
-    def delete_genre(db: Session, id: uuid.UUID) -> Literal[False, True]:
+    def delete_genre(db: Session, id: uuid.UUID) -> bool:
         db_genre = db.get(Genre, id)
         if not db_genre:
             return False
@@ -59,16 +60,16 @@ class GenreService:
         return album, (group.company_id if group else None)
 
     @staticmethod
-    def assign_genre(db: Session, data: AlbumGenreAssign, current_user: Users) -> AlbumGenre | Literal["not_found", "forbidden", "conflict"]:
+    def assign_genre(db: Session, data: AlbumGenreAssign, current_user: Users) -> AlbumGenre:
         album, company_id = GenreService._company_id_for_album(db, data.product_id)
         if not album:
-            return "not_found"
+            raise NotFoundError("Album details or genre not found")
         if not db.get(Genre, data.genre_id):
-            return "not_found"
+            raise NotFoundError("Album details or genre not found")
         if GenreService._manager_scope_violation(current_user, company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only tag albums belonging to their own company's idols/groups")
         if db.get(AlbumGenre, (data.product_id, data.genre_id)):
-            return "conflict"
+            raise BadRequestError("This album is already tagged with this genre")
         db_link = AlbumGenre(product_id=data.product_id, genre_id=data.genre_id)
         db.add(db_link)
         db.commit()
@@ -90,13 +91,13 @@ class GenreService:
         return result
 
     @staticmethod
-    def remove_genre(db: Session, product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
+    def remove_genre(db: Session, product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users) -> Literal[True]:
         link = db.get(AlbumGenre, (product_id, genre_id))
         if not link:
-            return "not_found"
+            raise NotFoundError("Album details or genre not found")
         _, company_id = GenreService._company_id_for_album(db, product_id)
         if GenreService._manager_scope_violation(current_user, company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only tag albums belonging to their own company's idols/groups")
         db.delete(link)
         db.commit()
         return True

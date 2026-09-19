@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.models.identity import Users
 from app.db.models.marketplace import AlbumDetail, Product
 from app.db.models.talent import Group, Idol
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
 from app.schema.marketplace import AlbumDetailCreate, AlbumDetailUpdate
 
@@ -46,18 +47,18 @@ class AlbumDetailService:
         return True
 
     @staticmethod
-    def add_album_detail(db: Session, data: AlbumDetailCreate, current_user: Users) -> AlbumDetail | Literal["not_found", "conflict", "artist_inactive", "forbidden"]:
+    def add_album_detail(db: Session, data: AlbumDetailCreate, current_user: Users) -> AlbumDetail:
         if not db.get(Product, data.product_id):
-            return "not_found"
+            raise NotFoundError("Product not found")
         if db.get(AlbumDetail, data.product_id):
-            return "conflict"  # already has album_details
+            raise BadRequestError("This product already has album details")  # already has album_details
         if not AlbumDetailService._artist_active_or_missing(db, data.idol_id, data.group_id):
-            return "artist_inactive"
+            raise BadRequestError("Cannot attach a new release to a deactivated idol/group")
         company_id = AlbumDetailService._resolve_company_id(db, data.idol_id, data.group_id)
         if company_id is None:
-            return "not_found"  # referenced idol/group doesn't exist
+            raise NotFoundError("Idol or group not found")  # referenced idol/group doesn't exist
         if AlbumDetailService._manager_scope_violation(current_user, company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage album details for their own company's idols/groups")
         db_album = AlbumDetail(**data.model_dump())
         db.add(db_album)
         commit_or_raise(db)  # trg_album_details_exclusive_kind
@@ -76,13 +77,13 @@ class AlbumDetailService:
         return result
 
     @staticmethod
-    def update_album_detail(db: Session, product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users) -> AlbumDetail | Literal["not_found", "forbidden"]:
+    def update_album_detail(db: Session, product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users) -> AlbumDetail:
         db_album = db.get(AlbumDetail, product_id)
         if not db_album:
-            return "not_found"
+            raise NotFoundError("Album details not found")
         company_id = AlbumDetailService._resolve_company_id(db, db_album.idol_id, db_album.group_id)
         if AlbumDetailService._manager_scope_violation(current_user, company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage album details for their own company's idols/groups")
         db_album.release_date = data.release_date
         db_album.track_count = data.track_count
         db_album.format = data.format
@@ -92,13 +93,13 @@ class AlbumDetailService:
         return db_album
 
     @staticmethod
-    def delete_album_detail(db: Session, product_id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
+    def delete_album_detail(db: Session, product_id: uuid.UUID, current_user: Users) -> Literal[True]:
         db_album = db.get(AlbumDetail, product_id)
         if not db_album:
-            return "not_found"
+            raise NotFoundError("Album details not found")
         company_id = AlbumDetailService._resolve_company_id(db, db_album.idol_id, db_album.group_id)
         if AlbumDetailService._manager_scope_violation(current_user, company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage album details for their own company's idols/groups")
         db.delete(db_album)
         db.commit()
         return True

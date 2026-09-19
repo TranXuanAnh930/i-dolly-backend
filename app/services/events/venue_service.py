@@ -48,7 +48,7 @@ class VenueService:
         return db_venue
 
     @staticmethod
-    def delete_venue(db: Session, id: uuid.UUID) -> Literal[False, True]:
+    def delete_venue(db: Session, id: uuid.UUID) -> bool:
         db_venue = db.get(Venue, id)
         if not db_venue:
             return False

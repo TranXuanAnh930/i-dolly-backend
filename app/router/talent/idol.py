@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from typing import Any, List, Literal
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -10,6 +10,7 @@ from app.db.models.identity import Users
 from app.db.models.talent import Idol
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.talent import (
     IdolCreate,
     IdolDetailRead,
@@ -25,19 +26,10 @@ from app.utils.storage import StorageError, get_storage
 # Same company-scoping as groups.py — see the comment there. add_idol/
 # update_idol also carry the pre-existing group/company cross-field check
 # (§3.4), so a mutating call can now fail for three distinct reasons:
-# "forbidden" (403, manager wrong company), "not_found" (404), or
-# "company_mismatch" (400, group_id belongs to a different company).
+# ForbiddenError (403, manager wrong company), NotFoundError (404), or
+# BadRequestError (400, group_id belongs to a different company, or is
+# deactivated).
 router = APIRouter(prefix="/idols", tags=["Idols"])
-
-def _raise_for(result: Literal["forbidden", "not_found", "company_mismatch", "group_inactive"], not_found_detail: str) -> None:
-    if result == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only manage idols for their own company")
-    if result == "not_found":
-        raise HTTPException(status_code=404, detail=not_found_detail)
-    if result == "company_mismatch":
-        raise HTTPException(status_code=400, detail="group_id belongs to a different company than company_id")
-    if result == "group_inactive":
-        raise HTTPException(status_code=400, detail="Cannot assign an idol into a deactivated group")
 
 # multipart/form-data, not JSON — this is the file-upload requirement
 # (an optional `image` file alongside the rest of the profile in the same
@@ -70,10 +62,10 @@ async def add_new_idol(
         hometown=hometown, color_id=color_id, short_intro=short_intro,
         long_description=long_description, profile_image_url=profile_image_url,
     )
-    result = IdolService.add_idol(db, idol, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Management company, group, or idol color not found")
-    return result
+    try:
+        return IdolService.add_idol(db, idol, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/all", response_model=List[IdolRead])
 async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Idol]:
@@ -118,25 +110,26 @@ async def get_idol_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Idol:
 
 @router.put("/update/{id}", response_model=IdolRead)
 async def update_existing_idol(id: uuid.UUID, data: IdolUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Idol:
-    result = IdolService.update_idol(db, id, data, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Idol, group, or idol color not found")
-    return result
+    try:
+        return IdolService.update_idol(db, id, data, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.delete("/delete/{id}")
 async def delete_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
     # Soft delete (sets is_active=False) — see idol_service.delete_idol.
-    result = IdolService.delete_idol(db, id, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Idol not found")
+    try:
+        IdolService.delete_idol(db, id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     return {"msg": "Idol deleted successfully"}
 
 @router.patch("/activate/{id}", response_model=IdolRead)
 async def activate_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Idol:
-    result = IdolService.reactivate_idol(db, id, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Idol not found")
-    return result
+    try:
+        return IdolService.reactivate_idol(db, id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/{id}/image", response_model=IdolRead)
 async def upload_idol_image(id: uuid.UUID, image: UploadFile = File(...), current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Idol:
@@ -146,7 +139,7 @@ async def upload_idol_image(id: uuid.UUID, image: UploadFile = File(...), curren
         image_url = await get_storage().save(image, subfolder="idols")
     except StorageError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    result = IdolService.set_idol_image(db, id, image_url, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Idol not found")
-    return result
+    try:
+        return IdolService.set_idol_image(db, id, image_url, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e

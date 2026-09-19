@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.identity import Users
 from app.db.models.talent import Idol, IdolPosition, Position
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.schema.talent import IdolPositionAssign, PositionBase, PositionCreate
 
 
@@ -42,7 +43,7 @@ class PositionService:
         return db_position
 
     @staticmethod
-    def delete_position(db: Session, id: uuid.UUID) -> Literal[False, True]:
+    def delete_position(db: Session, id: uuid.UUID) -> bool:
         db_position = db.get(Position, id)
         if not db_position:
             return False
@@ -53,21 +54,20 @@ class PositionService:
     # --- idol_positions (join table) ---
     # Company-scoped by the IDOL, the same way group/idol CRUD is (§4): a
     # manager can only assign/change/remove a position on an idol belonging to
-    # their own company. Sentinel convention: "not_found" -> 404, "forbidden"
-    # (manager, wrong company) -> 403, "conflict" (assign only, link already
-    # exists) -> 400.
+    # their own company. NotFoundError -> 404, ForbiddenError (manager, wrong
+    # company) -> 403, BadRequestError (assign only, link already exists) -> 400.
 
     @staticmethod
-    def assign_idol_position(db: Session, data: IdolPositionAssign, current_user: Users) -> IdolPosition | Literal["not_found", "forbidden", "conflict"]:
+    def assign_idol_position(db: Session, data: IdolPositionAssign, current_user: Users) -> IdolPosition:
         idol = db.get(Idol, data.idol_id)
         position = db.get(Position, data.position_id)
         if not idol or not position:
-            return "not_found"
+            raise NotFoundError("Idol or position not found")
         if PositionService._manager_scope_violation(current_user, idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage positions for idols in their own company")
         existing = db.get(IdolPosition, (data.idol_id, data.position_id))
         if existing:
-            return "conflict"  # already assigned -> use update_idol_position_primary instead
+            raise BadRequestError("Idol already has this position — use PUT to change is_primary")
         db_link = IdolPosition(
             idol_id=data.idol_id,
             position_id=data.position_id,
@@ -93,24 +93,24 @@ class PositionService:
         return result
 
     @staticmethod
-    def update_idol_position_primary(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users) -> IdolPosition | Literal["not_found", "forbidden"]:
+    def update_idol_position_primary(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users) -> IdolPosition:
         link = db.get(IdolPosition, (idol_id, position_id))
         if not link:
-            return "not_found"
+            raise NotFoundError("This idol/position assignment doesn't exist")
         if PositionService._manager_scope_violation(current_user, link.idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage positions for idols in their own company")
         link.is_primary = is_primary
         db.commit()
         db.refresh(link)
         return link
 
     @staticmethod
-    def remove_idol_position(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
+    def remove_idol_position(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users) -> Literal[True]:
         link = db.get(IdolPosition, (idol_id, position_id))
         if not link:
-            return "not_found"
+            raise NotFoundError("This idol/position assignment doesn't exist")
         if PositionService._manager_scope_violation(current_user, link.idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage positions for idols in their own company")
         db.delete(link)
         db.commit()
         return True

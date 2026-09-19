@@ -101,23 +101,39 @@ feature of any one domain), so its own import lines are the one place that must 
 hand whenever a model file moves or a new one is added; see its own CORRECTION comment for why
 this matters more than it looks (SQLAlchemy's string-based `relationship()` resolution).
 
-### Error-handling: two conventions coexist — match whichever the code you're touching uses
+### Error-handling: one unified convention — exceptions, not sentinels
 
-- **Sentinel returns** (most of the codebase, including all the idol/group/venue/concert/
-  ticket-type/lottery services added this project): services return a plain value on success and
-  either `False`/`None` (simple not-found/invalid) or a short string sentinel
-  (`"forbidden"`/`"not_found"`/`"company_mismatch"`/`"conflict"`) for a mutating function that can
-  fail more than one way. The router does `isinstance(result, str)` and maps each sentinel to its
-  status code (403/404/400) — anything else (the ORM object, or `True` for a delete) is success.
-  The exact sentinel vocabulary is **not** identical across every service file — read the service
-  function before trusting what a given return value means; `product_service.py` in particular
-  still uses plain `False` throughout rather than the string-sentinel convention.
+All 14 router+service pairs that used to return a string sentinel (`"forbidden"`/`"not_found"`/
+`"company_mismatch"`/`"conflict"`/...) for a mutating function that can fail more than one way,
+paired with a router-side `_raise_for(result)`/`_raise_for_link(result)` helper that mapped each
+sentinel to a status code, have been migrated to `app/exception/common.py`'s exception hierarchy —
+`ServiceError` (base, default 400) with `NotFoundError` (404), `ForbiddenError` (403), and
+`BadRequestError` (400, inherits the base). A service raises the specific subclass at the exact
+point a check fails, with a message naming that specific failure (an improvement over the old
+design, where one blanket `not_found_detail` string covered every possible not-found reason in a
+function); the router wraps the call once: `try: return XService.method(...) except ServiceError as
+e: raise HTTPException(status_code=e.status_code, detail=str(e)) from e`. This also resolves a real
+mypy-surfaced gap the old design had: a router couldn't prove `result` was narrowed after
+`_raise_for` returned (nothing stopped it from falling through), so every one of these functions'
+return type carried a spurious `Literal[...] |` union; a function that only ever returns success or
+raises doesn't have that problem.
+
+- A private, multi-consumer helper that a public method needs to *inspect and override* before
+  deciding whether something is actually an error (e.g. `idol_service._validate_refs`, whose
+  `"group_inactive"` result `update_idol` overrides to "not an error" when the group_id is
+  unchanged) is the one place that legitimately stays sentinel-returning rather than raising
+  directly — the caller needs the intermediate value, not an immediate raise.
+- Plain-read functions returning `False`/`None` on "not found" (handled inline in the router via
+  `if not result: raise HTTPException(404, ...)`, with no shared `_raise_for`-style helper) were
+  never part of this convention and are unaffected — see `product_service.py` for the largest
+  example.
 - **Exceptions** (checkout/payment only): `app/exception/checkout.py` defines `CartItemError` and
   subclasses (`InsufficientStockError`, `AddressIdError`, `PaymentAmountMismatch`,
   `UnsupportedGatewayError`, `OrderError`, `PaymentError`, `PaymentFailedError`). Raised in the
   service, caught in the router (`order.py`, `payment.py`), mapped to a status code. Follow this
   pattern for new multi-step flows (a lottery draw, seat reservation) rather than threading
-  sentinel values through several layers.
+  sentinel values through several layers — this is the same shape `app/exception/common.py`
+  generalizes for the simpler forbidden/not-found/bad-request case.
 - **DB-trigger errors** (`app/exception/db_triggers.py`): a third, narrower variant of the
   exceptions pattern above, specifically for the 12 Postgres triggers/8 trigger functions listed
   in `database-design.md` §4/§4.1-4.2. `TriggerViolationError` + 8 named subclasses, a
@@ -129,7 +145,8 @@ this matters more than it looks (SQLAlchemy's string-based `relationship()` reso
   str(e))`. Use this — not a bare `db.commit()` — for any new write that lands on a
   trigger-covered table; see `project_status.md` §4 item 9 for which service functions already
   use it and why (only the functions that actually reach a trigger-covered insert/update, not
-  every function that touches that table).
+  every function that touches that table). A function can raise both a `TriggerViolationError` and
+  a `ServiceError` (e.g. `ticket_service.checkout_ticket`) — the router catches both.
 
 ## 3. Cross-cutting pieces, reused the same way from every router
 
@@ -143,7 +160,7 @@ this matters more than it looks (SQLAlchemy's string-based `relationship()` reso
   (`groups`, `idols`, `concerts`, `ticket_types`, `lottery_campaigns`, `album_details`,
   `merch_details`) has a `_manager_scope_violation(current_user, company_id)`-shaped helper:
   `False` for an admin (always) or a manager whose own `company_id` matches the row being touched,
-  `True` otherwise — returned as the `"forbidden"` sentinel above. Reads stay unscoped (public
+  `True` otherwise — raised as `ForbiddenError` (§2) in a mutating function. Reads stay unscoped (public
   listings). `products` uses the same shape but resolves `company_id` indirectly — see
   `product_service._resolve_product_company_id()` — since a product has no `company_id` column of
   its own; ownership is derived from whichever of `album_details`/`merch_details` references
@@ -270,10 +287,13 @@ migration-chain smoke check rather than a precondition pytest depends on.)
   makes visible on sight, no runtime repro needed. `tests/*` and `scripts/*` are exempted
   (pytest conventions don't benefit from typing test functions; measured, not assumed — see the
   per-file-ignore's own comment).
-  - This codebase's sentinel-return convention (`return "forbidden"`, `return "not_found"`, ...
-    alongside an ORM object or `None`/`False`) should be typed as a precise `Literal["forbidden",
-    "not_found"]` union, not a loose `str` — a `Literal` catches a typo'd sentinel
-    (`"forbiden"`) as a type error; `str` doesn't.
+  - The old sentinel-return convention (`return "forbidden"`, `return "not_found"`, typed as a
+    precise `Literal[...]` union) has been superseded by the exception hierarchy in §2 for every
+    function that used to pair with a router-side `_raise_for`/`_raise_for_link`; those now return
+    just the success type (e.g. `-> Idol`, `-> Literal[True]`) since the function only ever returns
+    success or raises. `Literal` is still the right tool for what's left: a plain read's `Literal[False]`
+    empty-result sentinel, a delete's `Literal[True]`, or a private multi-value helper like
+    `idol_service._validate_refs` that a caller inspects rather than an exception.
   - **FastAPI gotcha, found the hard way**: a route function's own return-type annotation is used
     by FastAPI to build an implicit response schema whenever the decorator has **no**
     `response_model=`. Annotating such a function's return type as a bare SQLAlchemy ORM class

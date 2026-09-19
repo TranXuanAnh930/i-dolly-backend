@@ -18,6 +18,7 @@ from app.exception.checkout import (
     UnsupportedGatewayError,
     WrongSaleMethodError,
 )
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import (
     DuplicateConcertTicketError,
     DuplicateIdempotencyKeyError,
@@ -194,23 +195,23 @@ class TicketService:
         return ticket
 
     @staticmethod
-    def add_ticket(db: Session, data: TicketCreate) -> Ticket | Literal["not_found", "fan_only", "conflict"]:
+    def add_ticket(db: Session, data: TicketCreate) -> Ticket:
         ticket_type = db.get(TicketType, data.ticket_type_id)
         if not ticket_type:
-            return "not_found"
+            raise NotFoundError("Ticket type not found")
         target_user = db.get(Users, data.user_id)
         if not target_user:
-            return "not_found"
+            raise NotFoundError("User not found")
         if target_user.role != "fan":
             # Primary check for trg_tickets_fan_only — checks the ticket's
             # intended owner (data.user_id), not the caller, since this
             # endpoint is admin-only (an admin issuing a ticket to a fan).
-            return "fan_only"
+            raise ForbiddenError("Tickets can only be issued to fan accounts")
         if data.lottery_entry_id is not None and not db.get(LotteryEntry, data.lottery_entry_id):
-            return "not_found"
+            raise NotFoundError("Lottery entry not found")
 
         if TicketService._existing_live_ticket(db, data.user_id, ticket_type.concert_id):
-            return "conflict"  # trg_tickets_one_per_concert: one live ticket per user per concert
+            raise BadRequestError("This user already holds a live ticket for this concert")  # trg_tickets_one_per_concert: one live ticket per user per concert
 
         db_ticket = Ticket(
             ticket_type_id=data.ticket_type_id, user_id=data.user_id, lottery_entry_id=data.lottery_entry_id,
@@ -246,12 +247,12 @@ class TicketService:
     # product_service.get_product_sales_page's shape (page/limit/count/data) for
     # the manager-facing "sales history" list/page pair.
     @staticmethod
-    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> dict[str, Any] | Literal["not_found", "forbidden"]:
+    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> dict[str, Any]:
         concert = db.get(Concert, concert_id)
         if not concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if current_user.role == "manager" and current_user.company_id != concert.company_id:
-            return "forbidden"
+            raise ForbiddenError("Managers can only view ticket sales for their own company's concerts")
 
         query = (
             db.query(Ticket)
@@ -277,10 +278,10 @@ class TicketService:
         return {"page": page, "limit": limit, "count": len(data), "data": data}
 
     @staticmethod
-    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate) -> Ticket | Literal["not_found"]:
+    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate) -> Ticket:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
-            return "not_found"
+            raise NotFoundError("Ticket not found")
         if data.status is not None:
             db_ticket.status = data.status
         if data.issued_code is not None:
@@ -294,10 +295,10 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def delete_ticket(db: Session, id: uuid.UUID) -> Literal["not_found", True]:
+    def delete_ticket(db: Session, id: uuid.UUID) -> Literal[True]:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
-            return "not_found"
+            raise NotFoundError("Ticket not found")
         db.delete(db_ticket)
         db.commit()
         return True

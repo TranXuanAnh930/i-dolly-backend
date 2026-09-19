@@ -17,6 +17,7 @@ from app.db.models.events import (
 )
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, ManagementCompany
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.schema.events import ConcertCreate, ConcertPerformerAssign, ConcertUpdate
 
 # Once a concert has gone on sale (or further), fans may already hold
@@ -31,21 +32,22 @@ _EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
 
 class ConcertService:
 
-    # Same sentinel convention as group_service/idol_service: "not_found" (404),
-    # "forbidden" (403, manager acting outside their own company_id).
+    # Error convention: NotFoundError (404), ForbiddenError (403, manager
+    # acting outside their own company_id), BadRequestError (400, everything
+    # else — see individual raise sites for the specific business rule).
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_concert(db: Session, concert: ConcertCreate, current_user: Users) -> Concert | Literal["forbidden", "not_found"]:
+    def add_concert(db: Session, concert: ConcertCreate, current_user: Users) -> Concert:
         if ConcertService._manager_scope_violation(current_user, concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         if not db.get(ManagementCompany, concert.company_id):
-            return "not_found"
+            raise NotFoundError("Management company not found")
         if not db.get(Venue, concert.venue_id):
-            return "not_found"
+            raise NotFoundError("Venue not found")
         db_concert = Concert(**concert.model_dump())
         db.add(db_concert)
         db.commit()
@@ -64,12 +66,12 @@ class ConcertService:
         return db.get(Concert, id)
 
     @staticmethod
-    def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users) -> Concert | Literal["not_found", "forbidden", "event_locked"]:
+    def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users) -> Concert:
         db_concert = db.get(Concert, id)
         if not db_concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         if (
             current_user.role == "manager"
             and db_concert.status in _EVENT_OPEN_STATUSES
@@ -79,9 +81,9 @@ class ConcertService:
                 or data.capacity != db_concert.capacity
             )
         ):
-            return "event_locked"
+            raise ForbiddenError("Concert is already on sale — cancel it first, then edit the date/doors-open time/capacity once it's cancelled")
         if not db.get(Venue, data.venue_id):
-            return "not_found"
+            raise NotFoundError("Venue not found")
         db_concert.venue_id = data.venue_id
         db_concert.title = data.title
         db_concert.description = data.description
@@ -95,7 +97,7 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def delete_concert(db: Session, id: uuid.UUID, current_user: Users) -> Concert | Literal["not_found", "forbidden"]:
+    def delete_concert(db: Session, id: uuid.UUID, current_user: Users) -> Concert:
         # Cancel, not db.delete(): ticket_types CASCADEs off concerts.id, and
         # tickets/lottery_entries cascade off ticket_types in turn — hard-
         # deleting a concert with any sales or lottery history would destroy it.
@@ -104,9 +106,9 @@ class ConcertService:
         # same rationale as idol_service.delete_idol's soft delete.
         db_concert = db.get(Concert, id)
         if not db_concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         db_concert.status = "cancelled"
         db.commit()
         db.refresh(db_concert)
@@ -115,18 +117,18 @@ class ConcertService:
     # --- concert_performers ---
 
     @staticmethod
-    def assign_performer(db: Session, data: ConcertPerformerAssign, current_user: Users) -> ConcertPerformer | Literal["invalid", "not_found", "forbidden"]:
+    def assign_performer(db: Session, data: ConcertPerformerAssign, current_user: Users) -> ConcertPerformer:
         if (data.idol_id is None) == (data.group_id is None):
-            return "invalid"  # exactly one of idol_id/group_id, matching chk_concert_performers_one_of
+            raise BadRequestError("Exactly one of idol_id or group_id must be set")  # matching chk_concert_performers_one_of
         concert = db.get(Concert, data.concert_id)
         if not concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         if data.idol_id is not None and not db.get(Idol, data.idol_id):
-            return "not_found"
+            raise NotFoundError("Idol not found")
         if data.group_id is not None and not db.get(Group, data.group_id):
-            return "not_found"
+            raise NotFoundError("Group not found")
         db_link = ConcertPerformer(concert_id=data.concert_id, idol_id=data.idol_id, group_id=data.group_id)
         db.add(db_link)
         db.commit()
@@ -148,13 +150,13 @@ class ConcertService:
         return result
 
     @staticmethod
-    def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
+    def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
         link = db.get(ConcertPerformer, id)
         if not link:
-            return "not_found"
+            raise NotFoundError("Performer assignment not found")
         concert = db.get(Concert, link.concert_id)
         if ConcertService._manager_scope_violation(current_user, concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         db.delete(link)
         db.commit()
         return True

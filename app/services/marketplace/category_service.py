@@ -43,7 +43,7 @@ class CategoryService:
         return db_category
 
     @staticmethod
-    def delete_category(db:Session, id:uuid.UUID) -> Literal[False, True]:
+    def delete_category(db:Session, id:uuid.UUID) -> bool:
         db_category = db.get(Category, id)
         if not db_category:
             return False

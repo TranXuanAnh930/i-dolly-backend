@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, IdolColor, IdolPosition, ManagementCompany
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.schema.talent import IdolCreate, IdolUpdate
 
 
@@ -26,16 +27,18 @@ class IdolService:
             joinedload(Idol.group),
         )
 
-    # Sentinel convention for this module (all mutating functions): "not_found" =
-    # a referenced row (company/group/color/idol) doesn't exist at all (-> 404 in
-    # the router); "company_mismatch" = group_id points at a group belonging to a
-    # DIFFERENT company than company_id (-> 400, database-design.md §3.4);
-    # "group_inactive" = group_id exists and matches company_id but is
-    # deactivated — new/changed membership into it is blocked (-> 400,
-    # database-design.md §3.3); "forbidden" = everything above is valid, but the
-    # caller is a manager acting outside their own company_id (-> 403,
-    # database-design.md §4's "Not yet done" note — now done). A plain admin
-    # never hits "forbidden".
+    # Error convention for this module (all mutating functions): NotFoundError =
+    # a referenced row (company/group/color/idol) doesn't exist at all (-> 404);
+    # BadRequestError = "company_mismatch" (group_id points at a group belonging
+    # to a DIFFERENT company than company_id — database-design.md §3.4) or
+    # "group_inactive" (group_id exists and matches company_id but is
+    # deactivated — new/changed membership into it is blocked, database-design.md
+    # §3.3); ForbiddenError = everything above is valid, but the caller is a
+    # manager acting outside their own company_id (database-design.md §4's "Not
+    # yet done" note — now done). A plain admin never hits ForbiddenError.
+    # _validate_refs itself stays a private, sentinel-returning helper (not
+    # raising) since its two callers below need to inspect and sometimes
+    # override its result before deciding whether it's actually an error.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
@@ -68,16 +71,16 @@ class IdolService:
         return None
 
     @staticmethod
-    def add_idol(db: Session, idol: IdolCreate, current_user: Users) -> Idol | Literal["forbidden", "company_mismatch", "group_inactive", "not_found"]:
+    def add_idol(db: Session, idol: IdolCreate, current_user: Users) -> Idol:
         if IdolService._manager_scope_violation(current_user, idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage idols for their own company")
         error = IdolService._validate_refs(db, idol.company_id, idol.group_id, idol.color_id)
         if error == "company_mismatch":
-            return "company_mismatch"
+            raise BadRequestError("group_id belongs to a different company than company_id")
         if error == "group_inactive":
-            return "group_inactive"
+            raise BadRequestError("Cannot assign an idol into a deactivated group")
         if error is not None:
-            return "not_found"
+            raise NotFoundError("Management company, group, or idol color not found")
         db_idol = Idol(**idol.model_dump())
         db.add(db_idol)
         db.commit()
@@ -147,12 +150,12 @@ class IdolService:
         }
 
     @staticmethod
-    def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users) -> Idol | Literal["not_found", "forbidden", "company_mismatch", "group_inactive"]:
+    def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users) -> Idol:
         db_idol = db.get(Idol, id)
         if not db_idol:
-            return "not_found"
+            raise NotFoundError("Idol not found")
         if IdolService._manager_scope_violation(current_user, db_idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage idols for their own company")
         # company_id is not part of IdolUpdate — reassigning an idol to a
         # different company is a bigger operation than a profile edit and isn't
         # exposed here; validate group/color against the idol's EXISTING company.
@@ -165,11 +168,11 @@ class IdolService:
         if error == "group_inactive" and data.group_id == db_idol.group_id:
             error = None
         if error == "company_mismatch":
-            return "company_mismatch"
+            raise BadRequestError("group_id belongs to a different company than company_id")
         if error == "group_inactive":
-            return "group_inactive"
+            raise BadRequestError("Cannot assign an idol into a deactivated group")
         if error is not None:
-            return "not_found"
+            raise NotFoundError("Idol, group, or idol color not found")
         db_idol.name = data.name
         db_idol.group_id = data.group_id
         db_idol.date_of_birth = data.date_of_birth
@@ -183,7 +186,7 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def delete_idol(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
+    def delete_idol(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
         # Soft delete, not db.delete(): concert_performers CASCADEs off
         # idols.id and album_details/merch_details SET NULL their idol_id —
         # hard-deleting an idol with concert or product history would destroy
@@ -191,35 +194,35 @@ class IdolService:
         # alive (database-design.md §3.4).
         db_idol = db.get(Idol, id)
         if not db_idol:
-            return "not_found"
+            raise NotFoundError("Idol not found")
         if IdolService._manager_scope_violation(current_user, db_idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage idols for their own company")
         db_idol.is_active = False
         db.commit()
         return True
 
     @staticmethod
-    def reactivate_idol(db: Session, id: uuid.UUID, current_user: Users) -> Idol | Literal["not_found", "forbidden"]:
+    def reactivate_idol(db: Session, id: uuid.UUID, current_user: Users) -> Idol:
         db_idol = db.get(Idol, id)
         if not db_idol:
-            return "not_found"
+            raise NotFoundError("Idol not found")
         if IdolService._manager_scope_violation(current_user, db_idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage idols for their own company")
         db_idol.is_active = True
         db.commit()
         db.refresh(db_idol)
         return db_idol
 
     @staticmethod
-    def set_idol_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Idol | Literal["not_found", "forbidden"]:
+    def set_idol_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Idol:
         """Used by POST /idols/{id}/image — updates only profile_image_url,
         leaving every other field untouched (update_idol replaces the whole
         profile from an IdolUpdate, which isn't what a plain image swap wants)."""
         db_idol = db.get(Idol, id)
         if not db_idol:
-            return "not_found"
+            raise NotFoundError("Idol not found")
         if IdolService._manager_scope_violation(current_user, db_idol.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage idols for their own company")
         db_idol.profile_image_url = image_url
         db.commit()
         db.refresh(db_idol)

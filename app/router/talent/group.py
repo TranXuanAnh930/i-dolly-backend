@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, List, Literal
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from app.db.models.identity import Users
 from app.db.models.talent import Group
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.talent import (
     GroupCreate,
     GroupDetailRead,
@@ -27,18 +28,12 @@ from app.services.talent.group_service import GroupService
 # §7.2); now closed for groups/idols.
 router = APIRouter(prefix="/groups", tags=["Groups"])
 
-def _raise_for(result: Literal["forbidden", "not_found"], not_found_detail: str) -> None:
-    if result == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only manage groups for their own company")
-    if result == "not_found":
-        raise HTTPException(status_code=404, detail=not_found_detail)
-
 @router.post("/add", response_model=GroupRead)
 async def add_new_group(group: GroupCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Group:
-    result = GroupService.add_group(db, group, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Management company not found")
-    return result
+    try:
+        return GroupService.add_group(db, group, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/all", response_model=List[GroupRead])
 async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Group]:
@@ -74,22 +69,23 @@ async def get_group_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Group
 
 @router.put("/update/{id}", response_model=GroupRead)
 async def update_existing_group(id: uuid.UUID, data: GroupUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Group:
-    result = GroupService.update_group(db, id, data, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Group not found")
-    return result
+    try:
+        return GroupService.update_group(db, id, data, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.delete("/delete/{id}")
 async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
     # Soft delete (sets is_active=False) — see group_service.delete_group.
-    result = GroupService.delete_group(db, id, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Group not found")
+    try:
+        GroupService.delete_group(db, id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     return {"msg": "Group deleted successfully"}
 
 @router.patch("/activate/{id}", response_model=GroupRead)
 async def activate_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Group:
-    result = GroupService.reactivate_group(db, id, current_user)
-    if isinstance(result, str):
-        _raise_for(result, "Group not found")
-    return result
+    try:
+        return GroupService.reactivate_group(db, id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e

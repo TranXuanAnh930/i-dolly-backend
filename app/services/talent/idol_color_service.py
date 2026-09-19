@@ -38,7 +38,7 @@ class IdolColorService:
         return db_color
 
     @staticmethod
-    def delete_idol_color(db: Session, id: uuid.UUID) -> Literal[False, True]:
+    def delete_idol_color(db: Session, id: uuid.UUID) -> bool:
         db_color = db.get(IdolColor, id)
         if not db_color:
             return False

@@ -8,6 +8,7 @@ from app.db.models.events import Concert, ConcertPerformer
 from app.db.models.identity import Users
 from app.db.models.marketplace import Product
 from app.db.models.talent import Group, Idol, ManagementCompany
+from app.exception.common import ForbiddenError, NotFoundError
 from app.schema.talent import GroupCreate, GroupUpdate
 from app.services.marketplace.product_service import ProductService
 from app.services.talent.idol_service import IdolService
@@ -15,23 +16,24 @@ from app.services.talent.idol_service import IdolService
 
 class GroupService:
 
-    # Sentinel convention for this module: "not_found" = a referenced row doesn't
-    # exist (-> 404 in the router); "forbidden" = the row(s) exist but the caller
-    # is a manager acting outside their own company_id (-> 403). A plain admin
-    # is never scoped — only `role == "manager"` triggers the company check
-    # (database-design.md §4: "Not yet done" note, now done for groups/idols).
+    # Authorization convention for this module: NotFoundError = a referenced
+    # row doesn't exist (-> 404 in the router); ForbiddenError = the row(s)
+    # exist but the caller is a manager acting outside their own company_id
+    # (-> 403). A plain admin is never scoped — only `role == "manager"`
+    # triggers the company check (database-design.md §4: "Not yet done" note,
+    # now done for groups/idols).
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_group(db: Session, group: GroupCreate, current_user: Users) -> Group | Literal["forbidden", "not_found"]:
+    def add_group(db: Session, group: GroupCreate, current_user: Users) -> Group:
         if GroupService._manager_scope_violation(current_user, group.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage groups for their own company")
         company = db.get(ManagementCompany, group.company_id)
         if not company:
-            return "not_found"  # company_id doesn't exist
+            raise NotFoundError("Management company not found")  # company_id doesn't exist
         db_group = Group(**group.model_dump())
         db.add(db_group)
         db.commit()
@@ -55,12 +57,12 @@ class GroupService:
         return db.get(Group, id)
 
     @staticmethod
-    def update_group(db: Session, id: uuid.UUID, data: GroupUpdate, current_user: Users) -> Group | Literal["not_found", "forbidden"]:
+    def update_group(db: Session, id: uuid.UUID, data: GroupUpdate, current_user: Users) -> Group:
         db_group = db.get(Group, id)
         if not db_group:
-            return "not_found"
+            raise NotFoundError("Group not found")
         if GroupService._manager_scope_violation(current_user, db_group.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage groups for their own company")
         db_group.name = data.name
         db_group.debut_date = data.debut_date
         db_group.description = data.description
@@ -69,7 +71,7 @@ class GroupService:
         return db_group
 
     @staticmethod
-    def delete_group(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
+    def delete_group(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
         # Soft delete, not db.delete(): concert_performers CASCADEs off
         # groups.id and album_details/merch_details SET NULL their group_id —
         # hard-deleting a group with concert or product history would destroy
@@ -77,20 +79,20 @@ class GroupService:
         # alive (database-design.md §3.3).
         db_group = db.get(Group, id)
         if not db_group:
-            return "not_found"
+            raise NotFoundError("Group not found")
         if GroupService._manager_scope_violation(current_user, db_group.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage groups for their own company")
         db_group.is_active = False
         db.commit()
         return True
 
     @staticmethod
-    def reactivate_group(db: Session, id: uuid.UUID, current_user: Users) -> Group | Literal["not_found", "forbidden"]:
+    def reactivate_group(db: Session, id: uuid.UUID, current_user: Users) -> Group:
         db_group = db.get(Group, id)
         if not db_group:
-            return "not_found"
+            raise NotFoundError("Group not found")
         if GroupService._manager_scope_violation(current_user, db_group.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage groups for their own company")
         db_group.is_active = True
         db.commit()
         db.refresh(db_group)

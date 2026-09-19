@@ -2,6 +2,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
+
 # ─────────────────────────────────────────────────────────────
 # Id sentinels — ids are UUIDs now, not autoincrementing ints.
 # These are plain MagicMock-based unit tests (no real DB), so any three
@@ -1130,7 +1134,7 @@ class TestPositionService:
         result = PositionService.assign_idol_position(db, data, current_user)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_assign_idol_position_idol_or_position_not_found(self):
         from app.db.models.talent import Idol, Position
@@ -1142,8 +1146,8 @@ class TestPositionService:
         current_user = make_mock_user(role="admin")
         data = IdolPositionAssign(idol_id=MISSING_ID, position_id=DEFAULT_ID)
 
-        result = PositionService.assign_idol_position(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            PositionService.assign_idol_position(db, data, current_user)
 
     def test_assign_idol_position_forbidden(self):
         from app.db.models.talent import Idol, Position
@@ -1156,8 +1160,8 @@ class TestPositionService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = IdolPositionAssign(idol_id=DEFAULT_ID, position_id=DEFAULT_ID)
 
-        result = PositionService.assign_idol_position(db, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            PositionService.assign_idol_position(db, data, current_user)
 
     def test_assign_idol_position_conflict(self):
         from app.db.models.talent import Idol, IdolPosition, Position
@@ -1172,8 +1176,8 @@ class TestPositionService:
         current_user = make_mock_user(role="admin")
         data = IdolPositionAssign(idol_id=DEFAULT_ID, position_id=DEFAULT_ID)
 
-        result = PositionService.assign_idol_position(db, data, current_user)
-        assert result == "conflict"
+        with pytest.raises(BadRequestError):
+            PositionService.assign_idol_position(db, data, current_user)
 
     def test_get_idol_positions_found(self):
         from app.services.talent.position_service import PositionService
@@ -1232,8 +1236,8 @@ class TestPositionService:
         db.get.return_value = None
         current_user = make_mock_user(role="admin")
 
-        result = PositionService.update_idol_position_primary(db, MISSING_ID, MISSING_ID, True, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            PositionService.update_idol_position_primary(db, MISSING_ID, MISSING_ID, True, current_user)
 
     def test_update_idol_position_primary_forbidden(self):
         from app.services.talent.position_service import PositionService
@@ -1244,8 +1248,8 @@ class TestPositionService:
         db.get.return_value = link
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = PositionService.update_idol_position_primary(db, DEFAULT_ID, DEFAULT_ID, True, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            PositionService.update_idol_position_primary(db, DEFAULT_ID, DEFAULT_ID, True, current_user)
 
     def test_remove_idol_position_success(self):
         from app.services.talent.position_service import PositionService
@@ -1268,8 +1272,8 @@ class TestPositionService:
         db.get.return_value = None
         current_user = make_mock_user(role="admin")
 
-        result = PositionService.remove_idol_position(db, MISSING_ID, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            PositionService.remove_idol_position(db, MISSING_ID, MISSING_ID, current_user)
 
     def test_remove_idol_position_forbidden(self):
         from app.services.talent.position_service import PositionService
@@ -1280,8 +1284,8 @@ class TestPositionService:
         db.get.return_value = link
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = PositionService.remove_idol_position(db, DEFAULT_ID, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            PositionService.remove_idol_position(db, DEFAULT_ID, DEFAULT_ID, current_user)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1302,7 +1306,7 @@ class TestGroupService:
         result = GroupService.add_group(db, data, current_user)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_add_group_forbidden(self):
         from app.schema.talent import GroupCreate
@@ -1312,8 +1316,8 @@ class TestGroupService:
         current_user = make_mock_manager(company_id=OTHER_ID)
         data = GroupCreate(name="Prism Sirens", company_id=DEFAULT_ID)
 
-        result = GroupService.add_group(db, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            GroupService.add_group(db, data, current_user)
         db.add.assert_not_called()
 
     def test_add_group_company_not_found(self):
@@ -1325,8 +1329,8 @@ class TestGroupService:
         current_user = make_mock_user(role="admin")
         data = GroupCreate(name="Prism Sirens", company_id=MISSING_ID)
 
-        result = GroupService.add_group(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            GroupService.add_group(db, data, current_user)
 
     def test_get_groups_found(self):
         from app.services.talent.group_service import GroupService
@@ -1367,7 +1371,7 @@ class TestGroupService:
 
         result = GroupService.update_group(db, DEFAULT_ID, data, current_user)
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_update_group_not_found(self):
         from app.schema.talent import GroupUpdate
@@ -1378,8 +1382,8 @@ class TestGroupService:
         current_user = make_mock_user(role="admin")
         data = GroupUpdate(name="Renamed Group")
 
-        result = GroupService.update_group(db, MISSING_ID, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            GroupService.update_group(db, MISSING_ID, data, current_user)
 
     def test_update_group_forbidden(self):
         from app.schema.talent import GroupUpdate
@@ -1390,8 +1394,8 @@ class TestGroupService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = GroupUpdate(name="Renamed Group")
 
-        result = GroupService.update_group(db, DEFAULT_ID, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            GroupService.update_group(db, DEFAULT_ID, data, current_user)
 
     def test_delete_group_success(self):
         from app.services.talent.group_service import GroupService
@@ -1414,8 +1418,8 @@ class TestGroupService:
         db.get.return_value = None
         current_user = make_mock_user(role="admin")
 
-        result = GroupService.delete_group(db, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            GroupService.delete_group(db, MISSING_ID, current_user)
 
     def test_delete_group_forbidden(self):
         from app.services.talent.group_service import GroupService
@@ -1424,8 +1428,8 @@ class TestGroupService:
         db.get.return_value = make_mock_group(company_id=OTHER_ID)
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = GroupService.delete_group(db, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            GroupService.delete_group(db, DEFAULT_ID, current_user)
 
     def test_reactivate_group_success(self):
         from app.services.talent.group_service import GroupService
@@ -1438,7 +1442,7 @@ class TestGroupService:
         result = GroupService.reactivate_group(db, DEFAULT_ID, current_user)
         assert mock_group.is_active is True
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_reactivate_group_not_found(self):
         from app.services.talent.group_service import GroupService
@@ -1447,8 +1451,8 @@ class TestGroupService:
         db.get.return_value = None
         current_user = make_mock_user(role="admin")
 
-        result = GroupService.reactivate_group(db, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            GroupService.reactivate_group(db, MISSING_ID, current_user)
 
     def test_reactivate_group_forbidden(self):
         from app.services.talent.group_service import GroupService
@@ -1457,8 +1461,8 @@ class TestGroupService:
         db.get.return_value = make_mock_group(company_id=OTHER_ID)
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = GroupService.reactivate_group(db, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            GroupService.reactivate_group(db, DEFAULT_ID, current_user)
 
     def test_get_groups_page_found(self):
         from app.services.talent.group_service import GroupService
@@ -1562,7 +1566,7 @@ class TestIdolService:
         result = IdolService.add_idol(db, data, current_user)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_add_idol_forbidden(self):
         from app.schema.talent import IdolCreate
@@ -1572,8 +1576,8 @@ class TestIdolService:
         current_user = make_mock_manager(company_id=OTHER_ID)
         data = IdolCreate(name="Yuki", company_id=DEFAULT_ID)
 
-        result = IdolService.add_idol(db, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            IdolService.add_idol(db, data, current_user)
         db.add.assert_not_called()
 
     def test_add_idol_company_not_found(self):
@@ -1585,8 +1589,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolCreate(name="Yuki", company_id=MISSING_ID)
 
-        result = IdolService.add_idol(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            IdolService.add_idol(db, data, current_user)
 
     def test_add_idol_group_not_found(self):
         from app.db.models.talent import Group, ManagementCompany
@@ -1598,8 +1602,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, group_id=MISSING_ID)
 
-        result = IdolService.add_idol(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            IdolService.add_idol(db, data, current_user)
 
     def test_add_idol_color_not_found(self):
         from app.db.models.talent import IdolColor, ManagementCompany
@@ -1611,8 +1615,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, color_id=MISSING_ID)
 
-        result = IdolService.add_idol(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            IdolService.add_idol(db, data, current_user)
 
     def test_add_idol_company_mismatch(self):
         from app.db.models.talent import Group, ManagementCompany
@@ -1625,8 +1629,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, group_id=OTHER_ID)
 
-        result = IdolService.add_idol(db, data, current_user)
-        assert result == "company_mismatch"
+        with pytest.raises(BadRequestError):
+            IdolService.add_idol(db, data, current_user)
 
     def test_add_idol_group_inactive(self):
         from app.db.models.talent import Group, ManagementCompany
@@ -1639,8 +1643,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolCreate(name="Yuki", company_id=DEFAULT_ID, group_id=DEFAULT_ID)
 
-        result = IdolService.add_idol(db, data, current_user)
-        assert result == "group_inactive"
+        with pytest.raises(BadRequestError):
+            IdolService.add_idol(db, data, current_user)
 
     def test_get_idols_found(self):
         from app.services.talent.idol_service import IdolService
@@ -1683,7 +1687,7 @@ class TestIdolService:
 
         result = IdolService.update_idol(db, DEFAULT_ID, data, current_user)
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_update_idol_not_found(self):
         from app.schema.talent import IdolUpdate
@@ -1694,8 +1698,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolUpdate(name="Renamed Idol")
 
-        result = IdolService.update_idol(db, MISSING_ID, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            IdolService.update_idol(db, MISSING_ID, data, current_user)
 
     def test_update_idol_forbidden(self):
         from app.db.models.talent import Idol
@@ -1708,8 +1712,8 @@ class TestIdolService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = IdolUpdate(name="Renamed Idol")
 
-        result = IdolService.update_idol(db, DEFAULT_ID, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            IdolService.update_idol(db, DEFAULT_ID, data, current_user)
 
     def test_update_idol_company_mismatch(self):
         from app.db.models.talent import Group, Idol, ManagementCompany
@@ -1725,8 +1729,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolUpdate(name="Renamed Idol", group_id=OTHER_ID)
 
-        result = IdolService.update_idol(db, DEFAULT_ID, data, current_user)
-        assert result == "company_mismatch"
+        with pytest.raises(BadRequestError):
+            IdolService.update_idol(db, DEFAULT_ID, data, current_user)
 
     def test_update_idol_group_inactive_blocks_new_assignment(self):
         from app.db.models.talent import Group, Idol, ManagementCompany
@@ -1743,8 +1747,8 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
         data = IdolUpdate(name="Renamed Idol", group_id=new_group_id)  # moving INTO a deactivated group
 
-        result = IdolService.update_idol(db, DEFAULT_ID, data, current_user)
-        assert result == "group_inactive"
+        with pytest.raises(BadRequestError):
+            IdolService.update_idol(db, DEFAULT_ID, data, current_user)
 
     def test_update_idol_group_inactive_allows_unchanged_group(self):
         from app.db.models.talent import Group, Idol, ManagementCompany
@@ -1765,7 +1769,7 @@ class TestIdolService:
 
         result = IdolService.update_idol(db, DEFAULT_ID, data, current_user)
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_delete_idol_success(self):
         from app.services.talent.idol_service import IdolService
@@ -1787,8 +1791,8 @@ class TestIdolService:
         db.get.return_value = None
         current_user = make_mock_user(role="admin")
 
-        result = IdolService.delete_idol(db, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            IdolService.delete_idol(db, MISSING_ID, current_user)
 
     def test_delete_idol_forbidden(self):
         from app.services.talent.idol_service import IdolService
@@ -1797,8 +1801,8 @@ class TestIdolService:
         db.get.return_value = make_mock_idol(company_id=OTHER_ID)
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = IdolService.delete_idol(db, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            IdolService.delete_idol(db, DEFAULT_ID, current_user)
 
     def test_reactivate_idol_success(self):
         from app.services.talent.idol_service import IdolService
@@ -1810,7 +1814,7 @@ class TestIdolService:
 
         result = IdolService.reactivate_idol(db, DEFAULT_ID, current_user)
         assert mock_idol.is_active is True
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_reactivate_idol_not_found(self):
         from app.services.talent.idol_service import IdolService
@@ -1819,8 +1823,8 @@ class TestIdolService:
         db.get.return_value = None
         current_user = make_mock_user(role="admin")
 
-        result = IdolService.reactivate_idol(db, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            IdolService.reactivate_idol(db, MISSING_ID, current_user)
 
     def test_reactivate_idol_forbidden(self):
         from app.services.talent.idol_service import IdolService
@@ -1829,8 +1833,8 @@ class TestIdolService:
         db.get.return_value = make_mock_idol(company_id=OTHER_ID)
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = IdolService.reactivate_idol(db, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            IdolService.reactivate_idol(db, DEFAULT_ID, current_user)
 
     def test_set_idol_image_success(self):
         from app.services.talent.idol_service import IdolService
@@ -1851,8 +1855,8 @@ class TestIdolService:
         db.get.return_value = None
         current_user = make_mock_user(role="admin")
 
-        result = IdolService.set_idol_image(db, MISSING_ID, "https://cdn.example.com/idol.png", current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            IdolService.set_idol_image(db, MISSING_ID, "https://cdn.example.com/idol.png", current_user)
 
     def test_set_idol_image_forbidden(self):
         from app.services.talent.idol_service import IdolService
@@ -1861,8 +1865,8 @@ class TestIdolService:
         db.get.return_value = make_mock_idol(company_id=OTHER_ID)
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = IdolService.set_idol_image(db, DEFAULT_ID, "https://cdn.example.com/idol.png", current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            IdolService.set_idol_image(db, DEFAULT_ID, "https://cdn.example.com/idol.png", current_user)
 
     def test_get_members_page_found(self):
         from app.services.talent.idol_service import IdolService
@@ -1967,7 +1971,7 @@ class TestAlbumDetailService:
         result = AlbumDetailService.add_album_detail(db, data, current_user)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_add_album_detail_success_with_group(self):
         from app.db.models.marketplace import AlbumDetail, Product
@@ -1982,7 +1986,7 @@ class TestAlbumDetailService:
         data = AlbumDetailCreate(product_id=DEFAULT_ID, group_id=DEFAULT_ID)
 
         result = AlbumDetailService.add_album_detail(db, data, current_user)
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_add_album_detail_product_not_found(self):
         from app.db.models.marketplace import Product
@@ -1994,8 +1998,8 @@ class TestAlbumDetailService:
         current_user = make_mock_user(role="admin")
         data = AlbumDetailCreate(product_id=MISSING_ID, idol_id=DEFAULT_ID)
 
-        result = AlbumDetailService.add_album_detail(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            AlbumDetailService.add_album_detail(db, data, current_user)
 
     def test_add_album_detail_conflict(self):
         from app.db.models.marketplace import AlbumDetail, Product
@@ -2007,8 +2011,8 @@ class TestAlbumDetailService:
         current_user = make_mock_user(role="admin")
         data = AlbumDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
 
-        result = AlbumDetailService.add_album_detail(db, data, current_user)
-        assert result == "conflict"
+        with pytest.raises(BadRequestError):
+            AlbumDetailService.add_album_detail(db, data, current_user)
 
     def test_add_album_detail_artist_inactive(self):
         from app.db.models.marketplace import AlbumDetail, Product
@@ -2022,8 +2026,8 @@ class TestAlbumDetailService:
         current_user = make_mock_user(role="admin")
         data = AlbumDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
 
-        result = AlbumDetailService.add_album_detail(db, data, current_user)
-        assert result == "artist_inactive"
+        with pytest.raises(BadRequestError):
+            AlbumDetailService.add_album_detail(db, data, current_user)
 
     def test_add_album_detail_forbidden(self):
         from app.db.models.marketplace import AlbumDetail, Product
@@ -2037,8 +2041,8 @@ class TestAlbumDetailService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = AlbumDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
 
-        result = AlbumDetailService.add_album_detail(db, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            AlbumDetailService.add_album_detail(db, data, current_user)
 
     def test_get_album_detail_found(self):
         from app.services.marketplace.album_detail_service import AlbumDetailService
@@ -2092,7 +2096,7 @@ class TestAlbumDetailService:
 
         result = AlbumDetailService.update_album_detail(db, DEFAULT_ID, data, current_user)
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_update_album_detail_not_found(self):
         from app.db.models.marketplace import AlbumDetail
@@ -2104,8 +2108,8 @@ class TestAlbumDetailService:
         current_user = make_mock_user(role="admin")
         data = AlbumDetailUpdate(track_count=12)
 
-        result = AlbumDetailService.update_album_detail(db, MISSING_ID, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            AlbumDetailService.update_album_detail(db, MISSING_ID, data, current_user)
 
     def test_update_album_detail_forbidden(self):
         from app.db.models.marketplace import AlbumDetail
@@ -2120,8 +2124,8 @@ class TestAlbumDetailService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = AlbumDetailUpdate(track_count=12)
 
-        result = AlbumDetailService.update_album_detail(db, DEFAULT_ID, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            AlbumDetailService.update_album_detail(db, DEFAULT_ID, data, current_user)
 
     def test_delete_album_detail_success(self):
         from app.db.models.marketplace import AlbumDetail
@@ -2146,8 +2150,8 @@ class TestAlbumDetailService:
         db.get.side_effect = model_get_side_effect({AlbumDetail: None})
         current_user = make_mock_user(role="admin")
 
-        result = AlbumDetailService.delete_album_detail(db, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            AlbumDetailService.delete_album_detail(db, MISSING_ID, current_user)
 
     def test_delete_album_detail_forbidden(self):
         from app.db.models.marketplace import AlbumDetail
@@ -2160,8 +2164,8 @@ class TestAlbumDetailService:
         db.get.side_effect = model_get_side_effect({AlbumDetail: mock_album, Idol: mock_idol})
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = AlbumDetailService.delete_album_detail(db, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            AlbumDetailService.delete_album_detail(db, DEFAULT_ID, current_user)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2185,7 +2189,7 @@ class TestMerchDetailService:
         result = MerchDetailService.add_merch_detail(db, data, current_user)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_add_merch_detail_product_not_found(self):
         from app.db.models.marketplace import Product
@@ -2197,8 +2201,8 @@ class TestMerchDetailService:
         current_user = make_mock_user(role="admin")
         data = MerchDetailCreate(product_id=MISSING_ID, group_id=DEFAULT_ID)
 
-        result = MerchDetailService.add_merch_detail(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            MerchDetailService.add_merch_detail(db, data, current_user)
 
     def test_add_merch_detail_conflict(self):
         from app.db.models.marketplace import MerchDetail, Product
@@ -2210,8 +2214,8 @@ class TestMerchDetailService:
         current_user = make_mock_user(role="admin")
         data = MerchDetailCreate(product_id=DEFAULT_ID, group_id=DEFAULT_ID)
 
-        result = MerchDetailService.add_merch_detail(db, data, current_user)
-        assert result == "conflict"
+        with pytest.raises(BadRequestError):
+            MerchDetailService.add_merch_detail(db, data, current_user)
 
     def test_add_merch_detail_color_not_found(self):
         from app.db.models.marketplace import MerchDetail, Product
@@ -2224,8 +2228,8 @@ class TestMerchDetailService:
         current_user = make_mock_user(role="admin")
         data = MerchDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID, color_id=MISSING_ID)
 
-        result = MerchDetailService.add_merch_detail(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            MerchDetailService.add_merch_detail(db, data, current_user)
 
     def test_add_merch_detail_artist_inactive(self):
         from app.db.models.marketplace import MerchDetail, Product
@@ -2239,8 +2243,8 @@ class TestMerchDetailService:
         current_user = make_mock_user(role="admin")
         data = MerchDetailCreate(product_id=DEFAULT_ID, group_id=DEFAULT_ID)
 
-        result = MerchDetailService.add_merch_detail(db, data, current_user)
-        assert result == "artist_inactive"
+        with pytest.raises(BadRequestError):
+            MerchDetailService.add_merch_detail(db, data, current_user)
 
     def test_add_merch_detail_forbidden(self):
         from app.db.models.marketplace import MerchDetail, Product
@@ -2254,8 +2258,8 @@ class TestMerchDetailService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = MerchDetailCreate(product_id=DEFAULT_ID, idol_id=DEFAULT_ID)
 
-        result = MerchDetailService.add_merch_detail(db, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            MerchDetailService.add_merch_detail(db, data, current_user)
 
     def test_get_merch_detail_found(self):
         from app.services.marketplace.merch_detail_service import MerchDetailService
@@ -2309,7 +2313,7 @@ class TestMerchDetailService:
 
         result = MerchDetailService.update_merch_detail(db, DEFAULT_ID, data, current_user)
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_update_merch_detail_not_found(self):
         from app.db.models.marketplace import MerchDetail
@@ -2321,8 +2325,8 @@ class TestMerchDetailService:
         current_user = make_mock_user(role="admin")
         data = MerchDetailUpdate(edition="Reissue")
 
-        result = MerchDetailService.update_merch_detail(db, MISSING_ID, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            MerchDetailService.update_merch_detail(db, MISSING_ID, data, current_user)
 
     def test_update_merch_detail_forbidden(self):
         from app.db.models.marketplace import MerchDetail
@@ -2337,8 +2341,8 @@ class TestMerchDetailService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = MerchDetailUpdate(edition="Reissue")
 
-        result = MerchDetailService.update_merch_detail(db, DEFAULT_ID, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            MerchDetailService.update_merch_detail(db, DEFAULT_ID, data, current_user)
 
     def test_update_merch_detail_color_not_found(self):
         from app.db.models.marketplace import MerchDetail
@@ -2353,8 +2357,8 @@ class TestMerchDetailService:
         current_user = make_mock_user(role="admin")
         data = MerchDetailUpdate(edition="Reissue", color_id=MISSING_ID)
 
-        result = MerchDetailService.update_merch_detail(db, DEFAULT_ID, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            MerchDetailService.update_merch_detail(db, DEFAULT_ID, data, current_user)
 
     def test_delete_merch_detail_success(self):
         from app.db.models.marketplace import MerchDetail
@@ -2379,8 +2383,8 @@ class TestMerchDetailService:
         db.get.side_effect = model_get_side_effect({MerchDetail: None})
         current_user = make_mock_user(role="admin")
 
-        result = MerchDetailService.delete_merch_detail(db, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            MerchDetailService.delete_merch_detail(db, MISSING_ID, current_user)
 
     def test_delete_merch_detail_forbidden(self):
         from app.db.models.marketplace import MerchDetail
@@ -2393,8 +2397,8 @@ class TestMerchDetailService:
         db.get.side_effect = model_get_side_effect({MerchDetail: mock_merch, Idol: mock_idol})
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = MerchDetailService.delete_merch_detail(db, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            MerchDetailService.delete_merch_detail(db, DEFAULT_ID, current_user)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2472,7 +2476,7 @@ class TestGenreService:
         result = GenreService.assign_genre(db, data, current_user)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert not isinstance(result, str)
+        assert result is not None
 
     def test_assign_genre_album_not_found(self):
         from app.db.models.marketplace import AlbumDetail
@@ -2484,8 +2488,8 @@ class TestGenreService:
         current_user = make_mock_user(role="admin")
         data = AlbumGenreAssign(product_id=MISSING_ID, genre_id=DEFAULT_ID)
 
-        result = GenreService.assign_genre(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            GenreService.assign_genre(db, data, current_user)
 
     def test_assign_genre_genre_not_found(self):
         from app.db.models.marketplace import AlbumDetail, Genre
@@ -2500,8 +2504,8 @@ class TestGenreService:
         current_user = make_mock_user(role="admin")
         data = AlbumGenreAssign(product_id=DEFAULT_ID, genre_id=MISSING_ID)
 
-        result = GenreService.assign_genre(db, data, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            GenreService.assign_genre(db, data, current_user)
 
     def test_assign_genre_forbidden(self):
         from app.db.models.marketplace import AlbumDetail, Genre
@@ -2516,8 +2520,8 @@ class TestGenreService:
         current_user = make_mock_manager(company_id=DEFAULT_ID)
         data = AlbumGenreAssign(product_id=DEFAULT_ID, genre_id=DEFAULT_ID)
 
-        result = GenreService.assign_genre(db, data, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            GenreService.assign_genre(db, data, current_user)
 
     def test_assign_genre_conflict(self):
         from app.db.models.marketplace import AlbumDetail, AlbumGenre, Genre
@@ -2534,8 +2538,8 @@ class TestGenreService:
         current_user = make_mock_user(role="admin")
         data = AlbumGenreAssign(product_id=DEFAULT_ID, genre_id=DEFAULT_ID)
 
-        result = GenreService.assign_genre(db, data, current_user)
-        assert result == "conflict"
+        with pytest.raises(BadRequestError):
+            GenreService.assign_genre(db, data, current_user)
 
     def test_get_album_genres_found(self):
         from app.services.marketplace.genre_service import GenreService
@@ -2599,8 +2603,8 @@ class TestGenreService:
         db.get.side_effect = model_get_side_effect({AlbumGenre: None})
         current_user = make_mock_user(role="admin")
 
-        result = GenreService.remove_genre(db, MISSING_ID, MISSING_ID, current_user)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            GenreService.remove_genre(db, MISSING_ID, MISSING_ID, current_user)
 
     def test_remove_genre_forbidden(self):
         from app.db.models.marketplace import AlbumDetail, AlbumGenre
@@ -2616,5 +2620,5 @@ class TestGenreService:
         })
         current_user = make_mock_manager(company_id=DEFAULT_ID)
 
-        result = GenreService.remove_genre(db, DEFAULT_ID, DEFAULT_ID, current_user)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            GenreService.remove_genre(db, DEFAULT_ID, DEFAULT_ID, current_user)

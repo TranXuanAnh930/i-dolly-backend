@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, Ticket, TicketType
 from app.db.models.identity import Users
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
 from app.schema.events import LotteryEntryApply
 
@@ -23,15 +24,15 @@ class LotteryEntryService:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry | Literal["fan_only", "not_found", "already_has_ticket", "no_preference", "cap_reached"]:
+    def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry:
         if current_user.role != "fan":
-            return "fan_only"  # primary check for trg_lottery_entries_fan_only
+            raise ForbiddenError("Only fan accounts can apply to a lottery")  # primary check for trg_lottery_entries_fan_only
         campaign = db.get(LotteryCampaign, data.campaign_id)
         if not campaign:
-            return "not_found"
+            raise NotFoundError("Lottery campaign not found")
         ticket_type = db.get(TicketType, campaign.ticket_type_id)
         if not ticket_type:
-            return "not_found"
+            raise NotFoundError("Lottery campaign not found")
 
         # Mirrors ticket_service's own one-ticket-per-concert boundary
         # (trg_tickets_one_per_concert) from the other direction: a fan who
@@ -50,7 +51,7 @@ class LotteryEntryService:
             .first()
         )
         if existing_ticket:
-            return "already_has_ticket"
+            raise BadRequestError("You already hold a ticket for this concert")
 
         # trg_lottery_entries_require_preference: must have ranked this tier.
         has_preference = (
@@ -64,7 +65,7 @@ class LotteryEntryService:
             is not None
         )
         if not has_preference:
-            return "no_preference"
+            raise BadRequestError("Rank this ticket tier in your lottery preferences before applying")
 
         # trg_lottery_entries_cap: existing entries for this (campaign, user) < max_entries_per_user.
         existing_count = (
@@ -73,7 +74,7 @@ class LotteryEntryService:
             .count()
         )
         if existing_count >= campaign.max_entries_per_user:
-            return "cap_reached"
+            raise BadRequestError("You've already used all your entries for this campaign")
 
         db_entry = LotteryEntry(campaign_id=data.campaign_id, user_id=current_user.id)
         db.add(db_entry)
@@ -99,19 +100,19 @@ class LotteryEntryService:
         return result
 
     @staticmethod
-    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry] | Literal["not_found", "forbidden", False]:
+    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry] | Literal[False]:
         """Manager/admin view of who has entered a campaign under their own
         company (company_id resolved the same way as lottery_campaign_service:
         campaign -> ticket_type -> concert.company_id)."""
         campaign = db.get(LotteryCampaign, campaign_id)
         if not campaign:
-            return "not_found"
+            raise NotFoundError("Lottery campaign not found")
         ticket_type = db.get(TicketType, campaign.ticket_type_id)
         concert = db.get(Concert, ticket_type.concert_id) if ticket_type else None
         if not concert:
-            return "not_found"
+            raise NotFoundError("Lottery campaign not found")
         if LotteryEntryService._manager_scope_violation(current_user, concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only view entries for their own company's campaigns")
         result = db.query(LotteryEntry).filter(LotteryEntry.campaign_id == campaign_id).all()
         if not result:
             return False

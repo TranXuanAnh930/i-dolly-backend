@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Literal
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -9,16 +9,11 @@ from app.db.models.identity import Users
 from app.db.models.shared import Notification
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.shared import NotificationRead, NotificationUnreadCount
 from app.services.shared.notification_service import NotificationService
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
-
-def _raise_for(result: Literal["forbidden", "not_found"]) -> None:
-    if result == "forbidden":
-        raise HTTPException(status_code=403, detail="This notification doesn't belong to you")
-    if result == "not_found":
-        raise HTTPException(status_code=404, detail="Notification not found")
 
 # Meant to be polled every 15-30s by a client with no push/WebSocket layer
 # (see docs/api-spec.md's Notifications section) — a tighter, count-only
@@ -39,10 +34,10 @@ async def list_my_notifications(unread_only: bool = False, current_user: Users =
 
 @router.post("/{notification_id}/read", response_model=NotificationRead)
 async def mark_notification_read(notification_id: uuid.UUID, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(10, 60, user_key)), db: Session = Depends(get_db)) -> Notification:
-    result = NotificationService.mark_as_read(db, notification_id, current_user)
-    if isinstance(result, str):
-        _raise_for(result)
-    return result
+    try:
+        return NotificationService.mark_as_read(db, notification_id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/read-all")
 async def mark_all_notifications_read(current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:

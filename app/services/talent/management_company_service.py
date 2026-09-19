@@ -43,7 +43,7 @@ class ManagementCompanyService:
         return db_company
 
     @staticmethod
-    def delete_company(db: Session, id: uuid.UUID) -> Literal[False, True]:
+    def delete_company(db: Session, id: uuid.UUID) -> bool:
         db_company = db.get(ManagementCompany, id)
         if not db_company:
             return False

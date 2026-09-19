@@ -722,6 +722,29 @@ newly introduced.
     several `_manager_scope_violation`-style helpers across services were typed `company_id:
     uuid.UUID` when callers can and do pass `None` (the correct type is `uuid.UUID | None`).
 
+23. ~~**Two error-handling conventions coexisted: string sentinels for most RBAC/company-scoping
+    failures, real exceptions for checkout/payment and DB-trigger violations**~~ — **FIXED,
+    unified on exceptions**. All 14 router+service pairs that returned `"forbidden"`/`"not_found"`/
+    `"company_mismatch"`/`"conflict"`/... and paired with a router-side `_raise_for`/
+    `_raise_for_link` helper (`talent`: group, idol, position; `events`: concert,
+    direct_sale_campaign, lottery_campaign, lottery_entry, lottery_preference, ticket,
+    ticket_type; `marketplace`: album_detail, genre, merch_detail; `shared`: notification) were
+    migrated to `app/exception/common.py`'s new `ServiceError`/`NotFoundError`/`ForbiddenError`/
+    `BadRequestError` hierarchy — full rationale and the exact convention in
+    `docs/architecture.md` §2. Each raise site got a more specific message than the single
+    blanket `not_found_detail` string the old router helper covered every not-found reason with.
+    Also fixes, as a side effect, the 34-occurrence mypy-narrowing gap the sentinel convention had
+    across these 14 router files (a router couldn't prove `result` was narrowed after `_raise_for`
+    returned, since nothing enforced that it always raised) — a function that only returns success
+    or raises doesn't have that problem, so the stale `Literal[...] |` unions came off every one of
+    these return types. `idol_service._validate_refs` (and its sibling helpers) deliberately keep
+    the old sentinel-return shape — it's a private helper two callers inspect and sometimes
+    override before deciding whether the result is actually an error, not something that should
+    raise directly. Verified after every domain: `py_compile`, `import main` (164 routes,
+    unchanged), `pytest tests/unit` (213/213, unchanged — sentinel assertions became
+    `pytest.raises(...)`, integration tests needed no changes since HTTP status codes are
+    identical), `ruff check .` (clean, 0 findings).
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't

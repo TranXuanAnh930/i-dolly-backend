@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.identity import Users
 from app.db.models.shared import Notification
+from app.exception.common import ForbiddenError, NotFoundError
 
 
 class NotificationService:
@@ -48,12 +49,12 @@ class NotificationService:
         return result
 
     @staticmethod
-    def mark_as_read(db: Session, notification_id: uuid.UUID, current_user: Users) -> Notification | Literal["not_found", "forbidden"]:
+    def mark_as_read(db: Session, notification_id: uuid.UUID, current_user: Users) -> Notification:
         notification = db.get(Notification, notification_id)
         if not notification:
-            return "not_found"
+            raise NotFoundError("Notification not found")
         if notification.user_id != current_user.id:
-            return "forbidden"
+            raise ForbiddenError("This notification doesn't belong to you")
         if not notification.is_read:
             notification.is_read = True
             notification.read_at = datetime.now(timezone.utc)

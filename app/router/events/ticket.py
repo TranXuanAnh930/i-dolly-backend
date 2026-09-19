@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, List, Literal
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from app.exception.checkout import (
     TicketTypeNotFoundError,
     UnsupportedGatewayError,
 )
+from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
 from app.schema.events import (
     TicketCheckoutCreate,
@@ -34,14 +35,6 @@ from app.services.events.ticket_service import TicketService
 # §7.4). Fans buy direct-sale tickets through /checkout, and can only read
 # their own tickets otherwise.
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
-
-def _raise_for(result: Literal["not_found", "conflict", "fan_only"], not_found_detail: str) -> None:
-    if result == "not_found":
-        raise HTTPException(status_code=404, detail=not_found_detail)
-    if result == "conflict":
-        raise HTTPException(status_code=400, detail="This user already holds a live ticket for this concert")
-    if result == "fan_only":
-        raise HTTPException(status_code=403, detail="Tickets can only be issued to fan accounts")
 
 @router.post("/checkout", response_model=TicketRead)
 async def checkout_new_ticket(data: TicketCheckoutCreate, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> Ticket:
@@ -83,12 +76,11 @@ async def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheck
 @router.post("/add", response_model=TicketRead)
 async def add_new_ticket(data: TicketCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
     try:
-        result = TicketService.add_ticket(db, data)
+        return TicketService.add_ticket(db, data)
     except TriggerViolationError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    if isinstance(result, str):
-        _raise_for(result, "Ticket type, user, or lottery entry not found")
-    return result
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/mine", response_model=List[TicketRead])
 async def list_my_tickets(current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Ticket]:
@@ -105,12 +97,10 @@ async def get_concert_sales(
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    result = TicketService.get_concert_ticket_sales(db, concert_id, current_user, page, limit)
-    if result == "not_found":
-        raise HTTPException(status_code=404, detail="Concert not found")
-    if result == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only view ticket sales for their own company's concerts")
-    return result
+    try:
+        return TicketService.get_concert_ticket_sales(db, concert_id, current_user, page, limit)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/{id}", response_model=TicketRead)
 async def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> Ticket:
@@ -123,14 +113,15 @@ async def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_curr
 
 @router.put("/update/{id}", response_model=TicketRead)
 async def update_existing_ticket(id: uuid.UUID, data: TicketUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
-    result = TicketService.update_ticket(db, id, data)
-    if isinstance(result, str):
-        _raise_for(result, "Ticket not found")
-    return result
+    try:
+        return TicketService.update_ticket(db, id, data)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.delete("/delete/{id}")
 async def delete_existing_ticket(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, str]:
-    result = TicketService.delete_ticket(db, id)
-    if isinstance(result, str):
-        _raise_for(result, "Ticket not found")
+    try:
+        TicketService.delete_ticket(db, id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     return {"msg": "Ticket deleted successfully"}
