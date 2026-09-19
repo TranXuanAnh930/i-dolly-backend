@@ -18,14 +18,10 @@ from app.schema.talent import (
 
 class IdolService:
 
-    # Eager-loads exactly what IdolWithPositions needs (idol.py schema) so a
-    # page-shaped endpoint returns fully-formed idols in one query instead of
-    # the client resolving positions/color via separate lookups. Built lazily
-    # (called, not evaluated at import time) — selectinload()/joinedload()
-    # force SQLAlchemy to configure every mapper right then, and this module
-    # loads early in main.py's router import chain, before routers that
-    # register unrelated models (e.g. genre.py's AlbumGenre, referenced by a
-    # relationship() on AlbumDetail) have run.
+    # Eager-loads exactly what IdolWithPositions needs so a page-shaped endpoint returns
+    # fully-formed idols in one query. Built lazily (called, not evaluated at import time) —
+    # this module loads early in main.py's router import chain, before routers that register
+    # unrelated models SQLAlchemy needs to resolve relationships have run.
     @staticmethod
     def _with_positions_and_color() -> tuple[Any, ...]:
         return (
@@ -34,18 +30,11 @@ class IdolService:
             joinedload(Idol.group),
         )
 
-    # Error convention for this module (all mutating functions): NotFoundError =
-    # a referenced row (company/group/color/idol) doesn't exist at all (-> 404);
-    # BadRequestError = "company_mismatch" (group_id points at a group belonging
-    # to a DIFFERENT company than company_id — database-design.md §3.4) or
-    # "group_inactive" (group_id exists and matches company_id but is
-    # deactivated — new/changed membership into it is blocked, database-design.md
-    # §3.3); ForbiddenError = everything above is valid, but the caller is a
-    # manager acting outside their own company_id (database-design.md §4's "Not
-    # yet done" note — now done). A plain admin never hits ForbiddenError.
-    # _validate_refs itself stays a private, sentinel-returning helper (not
-    # raising) since its two callers below need to inspect and sometimes
-    # override its result before deciding whether it's actually an error.
+    # Error convention: NotFoundError for a missing referenced row; BadRequestError for
+    # "company_mismatch" (group_id belongs to a different company) or "group_inactive"
+    # (deactivated group, blocks new membership); ForbiddenError for a manager acting outside
+    # their own company. _validate_refs stays a private, sentinel-returning helper — its callers
+    # need to inspect and sometimes override its result before deciding it's an error.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:

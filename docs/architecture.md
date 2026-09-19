@@ -1,252 +1,151 @@
 # Architecture
 
-How this codebase is put together and how to extend it consistently. This describes the
-**actual current state of the code**, verified against the source — keep it that way as things
-change. For *what the data model is* (tables, RBAC, business logic), see `database-design.md` in
-this same folder. For *what's built vs. still open*, see `project_status.md`.
+How the codebase is organized and the conventions new code should follow. For the data model
+(tables, RBAC, business logic), see `database-design.md`. For what's built vs. still open, see
+`project_status.md`.
 
 ## 1. Tech stack
 
 - **FastAPI** 0.122 (Python 3.12) + **Pydantic v2** (2.12.4) for request/response schemas.
-- **PostgreSQL** via **SQLAlchemy 2.0** ORM (`app/db/models/*`), **Alembic 1.17** for migrations
-  — one linear chain, no branches, one concern per migration.
-- **Redis** for caching (`app/cache/cache_service.py`, msgpack-serialized, 5 min TTL on the
-  product list) and rate limiting (`app/cache/rate_limit.py`, fixed-window counters — see
-  `project_status.md`'s known-issues list for a real bug in this).
-- **Celery** (`app/celery_app.py`), broker + result backend on the same Redis instance but
-  `CELERY_BROKER_DB` (default `1`) instead of `REDIS_DB` (default `0`), so task/result keys never
-  collide with the cache or rate-limiter keyspace. Currently a bare skeleton — one placeholder
-  task (`app/tasks/example.py`'s `ping`) proves the worker/broker/backend wiring, nothing else
-  runs through it yet. See `project_status.md` §5 for which background jobs (the lottery draw,
-  async email, the ETL pipeline) are still undecided/unbuilt on top of this.
-- **JWT** (python-jose, HS256): short-lived access tokens (`sub` = user id) + opaque UUID refresh
-  tokens persisted in a `refresh_tokens` table, rotated on every login/refresh, delivered as an
-  httponly/secure/samesite=none cookie — samesite=none (not lax) because the frontend and this API
-  are deployed on different origins (e.g. Vercel + Render); a Lax cookie is never sent on the
-  cross-site XHR/fetch POST /account/refresh call the frontend makes after a page reload, only on
-  top-level navigations, so refresh always failed there and every reload logged fans out. A
-  *separate* JWT secret (`JWT_EMAIL_SECRET_KEY`) signs
-  email-verification and password-reset tokens, discriminated by a `type` claim (`verify` vs.
-  `reset`), checked on decode so one can't be replayed as the other.
+- **PostgreSQL** via **SQLAlchemy 2.0** (`app/db/models/*`), **Alembic 1.17** for migrations — one
+  linear chain, one concern per migration.
+- **Redis** for caching (`app/cache/cache_service.py`, msgpack-serialized, 5-minute TTL) and rate
+  limiting (`app/cache/rate_limit.py`, fixed-window counters).
+- **Celery** (`app/celery_app.py`), broker + result backend on the same Redis instance but a
+  separate DB index (`CELERY_BROKER_DB=1` vs `REDIS_DB=0`) so task keys never collide with
+  cache/rate-limiter keys. Runs the lottery draw job and every transactional email send
+  (`app/tasks/lottery.py`, `app/tasks/email.py`) today; new tasks go in `app/tasks/` and must be
+  added to `celery_app.py`'s `include=[...]` list — a task not listed there is never discovered by
+  a worker, even if it's `@celery_app.task`-decorated.
+- **JWT** (python-jose, HS256): short-lived access tokens + opaque UUID refresh tokens in a
+  `refresh_tokens` table, rotated on every login/refresh, delivered as an
+  `httponly/secure/samesite=none` cookie. `samesite=none` because the frontend and API are on
+  different origins — a `Lax` cookie wouldn't survive the cross-site refresh call. A separate
+  secret (`JWT_EMAIL_SECRET_KEY`) signs email-verification/password-reset tokens, discriminated by
+  a `type` claim so one can't be replayed as the other.
 - **bcrypt** via passlib for password hashing.
-- A `mock` payment gateway only (`PaymentGateway.mock`, driven by a `simulate_succ` flag) —
-  real gateway integration (Paypal or otherwise) is deferred to a later phase; `PaymentGateway`
-  stays an enum with one member rather than being collapsed away, so a real gateway has somewhere
-  to slot in later.
-- **SendGrid** for transactional email, sent via FastAPI `BackgroundTasks`, never inline.
-  `settings.DEBUG` (default `false`) is a dev-only escape hatch, not a real email provider switch:
-  `app/utils/email_sender.py`'s `send_email` prints the full body — including whatever
-  verification/reset token it carries — to the console before attempting the real SendGrid call,
-  and swallows that call's failure instead of raising inside the background task. Needed because
-  `.env.example`'s `SENDGRID_API_KEY` is a placeholder, so local dev never actually delivers mail;
-  without this the token had nowhere visible to land. Must stay `false` in production — these
-  bodies carry live auth tokens.
-- **boto3** (optional — only imported when `STORAGE_BACKEND=s3`) for S3-compatible image storage;
-  see §5.
+- A `mock` payment gateway (`PaymentGateway.mock`, driven by `simulate_succ`) plus PayPal;
+  `PaymentGateway` stays an enum so a future gateway has somewhere to slot in.
+- **SendGrid** for transactional email, sent from the `app.tasks.email.send_email` Celery task —
+  not `BackgroundTasks`, so a non-request-scoped caller (`lottery_draw_service.draw_lottery`, also
+  a Celery task) can send mail too. Subject/body text for each email lives in
+  `app/utils/email_templates.py`'s `EmailTemplate` enum, not inlined at the call site. With
+  `settings.DEBUG=true`, email bodies (including verification/reset tokens) print to the console
+  instead of sending, since `.env.example`'s `SENDGRID_API_KEY` is a placeholder — must stay
+  `false` in production.
+- **boto3** (only imported when `STORAGE_BACKEND=s3`) for S3-compatible image storage — see §3.
 - Docker Compose (`app` + `postgres:16` + `redis`) for local dev; the Dockerfile runs
-  `alembic upgrade head` before `uvicorn`; `PYTHONDONTWRITEBYTECODE=1` is set to avoid a real
-  stale-bytecode bug seen on Docker Desktop Windows bind mounts (coarse mtime resolution can fool
-  Python's source-changed check) — see `project_status.md`.
-- pytest + pytest-cov + **fakeredis** (`test/conftest.py` patches the real Redis client with a
-  fake one for the whole test session) + GitHub Actions → Codecov → Render deploy hook.
+  `alembic upgrade head` before `uvicorn`. `PYTHONDONTWRITEBYTECODE=1` avoids a stale-bytecode
+  issue on Docker Desktop Windows bind mounts.
+- pytest + pytest-cov + fakeredis (`tests/conftest.py` swaps in a fake Redis client for the whole
+  test session) + GitHub Actions → Codecov → Render deploy.
 
-## 2. Layered architecture — keep this shape for new domain code
+## 2. Layered architecture
 
-Every feature follows the same three-layer split. Each layer's directory is further split into
-the four domain subpackages from CLAUDE.md §4 (`identity/`, `talent/`, `events/`, `marketplace/`),
-plus a `shared/` subpackage for the one genuinely cross-domain feature (notifications — used by
-all four, owned by none). `cart`/`order`/`payment`/`shipping` live under `marketplace/` per
-CLAUDE.md §4's own framing ("Marketplace... reusing the original cart/order/payment/shipping
-machinery"), even though `events/`'s ticket checkout also depends on `payment_service` — that's an
-accepted cross-domain import, not a sign the file is misplaced. New domain code goes in whichever
-of the five subpackages its concept belongs to; if it's genuinely used by all four (like
-notifications), it goes in `shared/`, not force-fit into one:
+Every feature follows the same three-layer split, inside one of four domain subpackages
+(`identity/`, `talent/`, `events/`, `marketplace/`) plus a `shared/` subpackage for the one
+genuinely cross-domain feature (notifications). `cart`/`order`/`payment`/`shipping` live under
+`marketplace/`; `events`'s ticket checkout depending on `payment_service` crosses that boundary on
+purpose.
 
-1. **`app/router/<domain>/<feature>.py`** — FastAPI route functions only. Pulls `get_db`,
-   `get_current_user`, `rate_limit(...)` as dependencies, calls exactly one service method, and
-   translates the return value into an HTTP response/`HTTPException`. No ORM queries, no business
-   logic here.
-2. **`app/services/<domain>/<feature>_service.py`** — every function for one feature grouped into
-   a single class of `@staticmethod`s, e.g. `class TicketService: @staticmethod def
-   checkout_ticket(db: Session, ...): ...`, called as `TicketService.checkout_ticket(db, ...)` —
-   the class is a pure namespace, not an instance: `db: Session` is still passed into each call
-   like before, nothing is bound at construction (there is no `__init__`, and these are never
-   instantiated). Private helpers (`_manager_scope_violation` and friends) are `@staticmethod`s on
-   the same class too — call them via `ClassName._helper(...)`, a bare `_helper(...)` no longer
-   resolves once it's a method. Module-level constants a file's methods reference (e.g.
-   `_LIVE_STATUSES`) stay outside the class, sitting above it — moving them in would need
-   `ClassName._LIVE_STATUSES` everywhere for no benefit, since a bare name inside a method already
-   resolves fine via the module's globals regardless of whether the method is classed. Business
-   logic + ORM queries live here, never FastAPI. New domain logic (a lottery draw, seat allocation,
-   scoping checks) belongs here, not in the router.
+1. **`app/router/<domain>/<feature>.py`** — route functions only. Pulls `get_db`,
+   `get_current_user`, `rate_limit(...)` as dependencies, calls one service method, translates the
+   result into an HTTP response or `HTTPException`. No ORM queries, no business logic.
+2. **`app/services/<domain>/<feature>_service.py`** — every function for a feature as
+   `@staticmethod`s on one class (`class TicketService: @staticmethod def checkout_ticket(db,
+   ...): ...`), called as `TicketService.checkout_ticket(db, ...)`. The class is a namespace,
+   never instantiated — `db` is passed per call. Private helpers are `@staticmethod`s on the same
+   class, called via `ClassName._helper(...)`. Module-level constants stay outside the class.
+   Business logic and ORM queries live here, never in the router.
 3. **`app/db/models/<domain>/<feature>.py`** — SQLAlchemy models, all inheriting `Base`.
    `app/schema/<domain>/<feature>.py` holds the paired Pydantic schemas (`*Create`,
-   `*Read`/`*Out`/`*Response`, `*Update`) — request/response shapes are always separate classes
-   from the ORM model, never the ORM model returned directly. A generic ack response
-   (`{"msg": "..."}`, most delete/unassign endpoints and a handful of others that don't return a
-   resource) uses `app/schema/common.py::MessageResponse` with `response_model=MessageResponse`
-   rather than a bare `dict[str, str]` return annotation — same rationale as
-   `app/exception/common.py` living outside every domain: it's genuinely cross-domain, not owned by
-   one feature. `MessageResponse(msg="...")` serializes to exactly the same JSON body a client
-   already receives, so this was a schema/OpenAPI-documentation fix, not an API contract change.
-   `/profile/logout` builds a raw `JSONResponse` (needs to call `delete_cookie`) but its body is
-   `MessageResponse(msg="...").model_dump()`, and still declares `response_model=MessageResponse`
-   for OpenAPI even though returning a `Response` instance bypasses FastAPI's own response-model
-   serialization. `/account/login` and `/account/refresh` stay on a raw `{"access_token": ...}` /
-   `{"msg": ..., "access_token": ...}` body instead — `/refresh`'s extra `access_token` field
-   alongside `msg` doesn't fit `MessageResponse`'s single-field shape.
+   `*Read`/`*Out`/`*Response`, `*Update`) — response shapes are always separate classes from the
+   ORM model, never the ORM model returned directly.
 
-   The same "don't leave a return type as a bare, undocumented `dict`" rule applies beyond acks:
-   `cart.py::check_cart`, `products.py::search_existing_product`/`paginated_product`/
-   `filter_product` used to return a raw dict with no `response_model` at all (`CartDetailRead` and
-   `ProductWithCategoryRead`/`ProductsPageRead`, `app/schema/marketplace/cart.py` and `products.py`,
-   fixed this). `ProductWithCategoryRead` is a deliberately separate schema from `ProductRead` —
-   `ProductRead.category` is a resolved category *name* (`str`, built by hand in
-   `cache_service.get_cached_products` since `Product.category` is really the `Category`
-   relationship, not a string), while these three functions return raw `Product` rows with that
-   relationship still attached, so embedding `CategoryRead` directly is the correct shape for them,
-   not a shortcut.
+   A generic ack response (`{"msg": "..."}`) uses `app/schema/common.py::MessageResponse` with
+   `response_model=MessageResponse`. It lives outside every domain the same way
+   `app/exception/common.py` does, since it's genuinely cross-domain. Page-shaped service
+   functions (across `concert_service`, `idol_service`, `group_service`, `product_service`,
+   `ticket_service`, `cart_service`, `order_service`, `cache_service`) construct and return the
+   actual response schema instance rather than a bare `dict`. `product_service.
+   _build_product_cards` returns `list[ProductCard]`, so callers read it by attribute
+   (`card.artist`), not by dict key. `ProductWithCategoryRead` embeds the full `CategoryRead`
+   object and is a separate schema from `ProductRead`, whose `category` field is a resolved name
+   (`str`) built by `cache_service.get_cached_products`.
 
-   **Every remaining `-> dict[str, Any]` page-shaped service function now constructs and returns
-   the real schema instance instead of a plain dict** (`concert_service.get_events_page`/
-   `get_concert_detail`/`get_manager_events_page`, `ticket_service.get_concert_ticket_sales`,
-   `cart_service.see_cart`, `order_service.get_manager_orders_page`,
-   `product_service.search_product`/`get_store_page`/`get_product_detail`/
-   `get_manager_products_page`/`get_manager_product_form_page`/`get_product_sales_page`/
-   `_build_product_cards` (+ its nested `artist_ref`/`resolve_artist` closures)/`_product_read_dict`,
-   `group_service.get_groups_page`/`get_group_detail`/`get_manager_groups_page`,
-   `idol_service.get_members_page`/`get_idol_detail`/`get_manager_idols_page`/
-   `get_manager_idol_form_page`, `cache_service.get_cached_store_page`). Every one of these already
-   had a matching schema and `response_model=` at the router — the router's own return-type
-   annotation was already `dict[str, Any]` too, just passed through to `response_model` for
-   validation; now both layers agree with what's actually returned. The one place this had a real
-   ripple effect: `product_service._build_product_cards` returning `list[ProductCard]` instead of
-   `list[dict]` meant every caller that read a card by dict key (`card["artist"]`,
-   `card["genres"]`, ...) — `get_product_detail`'s recommendation logic, and
-   `group_service.get_group_detail`'s "products belonging to this group" filter — switched to
-   attribute access (`card.artist`, `card.genres`). `ProductCard` itself deliberately has **no**
-   `from_attributes` config (unlike every other schema mentioned here) — `_build_product_cards`
-   always constructs it directly from already-resolved plain values (a category *name*, nested
-   `AlbumMini`/`ArtistRef` instances it built itself), never validates it off a raw ORM row, so it
-   never needed that config; don't add it on the assumption every `*Read`-shaped class here does.
+Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, never a
+bare function). Two same-named functions in different service files (e.g. both
+`direct_sale_campaign_service.add_campaign` and `lottery_campaign_service.add_campaign`) are
+unrelated and fine to coexist. `unittest.mock.patch()` on a cross-service call needs the
+fully-qualified `"app.services.<domain>.<file>.<ClassName>.<method>"` path.
 
-Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, not a
-bare `create_ticket_payment(...)`) — every router and every service-to-service reference imports
-the class, not individual function names. The two exceptions worth knowing about: two service
-files can legitimately define a same-named private helper or public function independently (e.g.
-`direct_sale_campaign_service.add_campaign` and `lottery_campaign_service.add_campaign` are
-unrelated functions that happen to share a name) — this is harmless as long as no single call site
-ever needs both at once, so nothing was renamed to avoid it. And `unittest.mock.patch()` calls in
-`tests/unit/test_services.py` that target a cross-service function by its old dotted path (e.g.
-patching `_build_product_cards`, called by `group_service` but defined on `ProductService`) now
-need the fully-qualified `"app.services.<domain>.<file>.<ClassName>.<method>"` string instead —
-`mock.patch` supports patching a class attribute this way, same as patching a module-level name.
+`app/db/base.py` aggregates every model via direct import so Alembic's `Base.metadata` sees them
+all — keep its import list in sync by hand when a model file moves.
 
-`app/db/base.py` still aggregates every model with a direct import (not moved — it isn't a
-feature of any one domain), so its own import lines are the one place that must stay in sync by
-hand whenever a model file moves or a new one is added; see its own CORRECTION comment for why
-this matters more than it looks (SQLAlchemy's string-based `relationship()` resolution).
+### Error handling: exceptions, not sentinels
 
-### Error-handling: one unified convention — exceptions, not sentinels
+Services raise `NotFoundError` (404), `ForbiddenError` (403), or `BadRequestError` (400) —
+subclasses of `ServiceError` in `app/exception/common.py` — at the point a check fails, with a
+message naming that specific failure. The router wraps the call once:
 
-All 14 router+service pairs that used to return a string sentinel (`"forbidden"`/`"not_found"`/
-`"company_mismatch"`/`"conflict"`/...) for a mutating function that can fail more than one way,
-paired with a router-side `_raise_for(result)`/`_raise_for_link(result)` helper that mapped each
-sentinel to a status code, have been migrated to `app/exception/common.py`'s exception hierarchy —
-`ServiceError` (base, default 400) with `NotFoundError` (404), `ForbiddenError` (403), and
-`BadRequestError` (400, inherits the base). A service raises the specific subclass at the exact
-point a check fails, with a message naming that specific failure (an improvement over the old
-design, where one blanket `not_found_detail` string covered every possible not-found reason in a
-function); the router wraps the call once: `try: return XService.method(...) except ServiceError as
-e: raise HTTPException(status_code=e.status_code, detail=str(e)) from e`. This also resolves a real
-mypy-surfaced gap the old design had: a router couldn't prove `result` was narrowed after
-`_raise_for` returned (nothing stopped it from falling through), so every one of these functions'
-return type carried a spurious `Literal[...] |` union; a function that only ever returns success or
-raises doesn't have that problem.
+```python
+try:
+    return XService.method(...)
+except ServiceError as e:
+    raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+```
 
-- A private, multi-consumer helper that a public method needs to *inspect and override* before
-  deciding whether something is actually an error (e.g. `idol_service._validate_refs`, whose
-  `"group_inactive"` result `update_idol` overrides to "not an error" when the group_id is
-  unchanged) is the one place that legitimately stays sentinel-returning rather than raising
-  directly — the caller needs the intermediate value, not an immediate raise.
-- Plain-read functions returning `False`/`None` on "not found" (handled inline in the router via
-  `if not result: raise HTTPException(404, ...)`, with no shared `_raise_for`-style helper) were
-  never part of this convention and are unaffected — see `product_service.py` for the largest
-  example.
-- **Exceptions** (checkout/payment only): `app/exception/checkout.py` defines `CartItemError` and
-  subclasses (`InsufficientStockError`, `AddressIdError`, `PaymentAmountMismatch`,
-  `UnsupportedGatewayError`, `OrderError`, `PaymentError`, `PaymentFailedError`). Raised in the
-  service, caught in the router (`order.py`, `payment.py`), mapped to a status code. Follow this
-  pattern for new multi-step flows (a lottery draw, seat reservation) rather than threading
-  sentinel values through several layers — this is the same shape `app/exception/common.py`
-  generalizes for the simpler forbidden/not-found/bad-request case.
-- **DB-trigger errors** (`app/exception/db_triggers.py`): a third, narrower variant of the
-  exceptions pattern above, specifically for the 12 Postgres triggers/8 trigger functions listed
-  in `database-design.md` §4/§4.1-4.2. `TriggerViolationError` + 8 named subclasses, a
-  `translate_trigger_error()` that matches a caught `DBAPIError`'s Postgres message text against
-  each trigger's known wording, and `commit_or_raise()`/`flush_or_raise()` drop-in replacements
-  for a bare `db.commit()`/`db.flush()` at any write a trigger can fire on. Every subclass
-  carries its own `status_code` (403 for the fan-only-purchase trigger, 400 for the rest), so a
-  router's catch is one line: `except TriggerViolationError as e: raise HTTPException(e.status_code,
-  str(e))`. Use this — not a bare `db.commit()` — for any new write that lands on a
-  trigger-covered table; see `project_status.md` §4 item 9 for which service functions already
-  use it and why (only the functions that actually reach a trigger-covered insert/update, not
-  every function that touches that table). A function can raise both a `TriggerViolationError` and
-  a `ServiceError` (e.g. `ticket_service.checkout_ticket`) — the router catches both.
+- A private helper whose result a caller needs to *inspect and override* before deciding it's an
+  error (e.g. `idol_service._validate_refs`) stays sentinel-returning rather than raising directly.
+- Plain reads returning `False`/`None` on "not found," handled inline in the router
+  (`if not result: raise HTTPException(404, ...)`), are unaffected by this convention.
+- **Checkout/payment exceptions** (`app/exception/checkout.py`): `CartItemError` and subclasses
+  (`InsufficientStockError`, `PaymentAmountMismatch`, `UnsupportedGatewayError`, etc.), raised in
+  the service, caught in the router, mapped to a status code. Use this shape for new multi-step
+  flows.
+- **DB-trigger errors** (`app/exception/db_triggers.py`): `TriggerViolationError` + 8 named
+  subclasses matching the 12 Postgres triggers in `database-design.md` §4. `commit_or_raise()` /
+  `flush_or_raise()` replace a bare `db.commit()`/`db.flush()` at any write a trigger can fire on;
+  each subclass carries its own `status_code`. A function can raise both a `TriggerViolationError`
+  and a `ServiceError` (e.g. `ticket_service.checkout_ticket`) — the router catches both.
 
-## 3. Cross-cutting pieces, reused the same way from every router
+## 3. Cross-cutting pieces
 
 - **`app/deps/auth.py::get_current_user`** — decodes the bearer JWT, loads the `Users` row, sets
-  `request.state.user` (read by the rate limiter's `user_key`). `require_admin` and
-  `require_manager_or_admin` (same file) check `current_user.role`
-  (`admin`/`manager`/`fan`, `user_role_enum`), not the deprecated `is_admin` bool.
-- **Company scoping** (multi-tenancy model): shared schema + a `company_id` column + service-layer
-  filtering — **not** per-tenant Postgres schemas (that was drafted and explicitly rejected, see
-  `database-design.md` §7.5's closing note). Every service that manages a company-owned resource
-  (`groups`, `idols`, `concerts`, `ticket_types`, `lottery_campaigns`, `album_details`,
-  `merch_details`) has a `_manager_scope_violation(current_user, company_id)`-shaped helper:
-  `False` for an admin (always) or a manager whose own `company_id` matches the row being touched,
-  `True` otherwise — raised as `ForbiddenError` (§2) in a mutating function. Reads stay unscoped (public
-  listings). `products` uses the same shape but resolves `company_id` indirectly — see
-  `product_service._resolve_product_company_id()` — since a product has no `company_id` column of
-  its own; ownership is derived from whichever of `album_details`/`merch_details` references
-  it. `categories` intentionally has no scoping at all: every category-mutating endpoint is
-  `require_admin`-only, so there's no per-company question to answer there.
-- **`app/cache/rate_limit.py::rate_limit(limit, window, key_func)`** — a dependency factory used
-  as `Depends(rate_limit(5, 60, ip_key))` / `..., user_key)`. This entry was stale: it used to warn
-  that the key didn't include the route (so endpoints sharing a `key_func` shared one counter) —
-  that was fixed early in this file's own history (`_route_key` folds in
-  `request.scope["route"].path`) and this doc never caught up; corrected here. Two other real bugs
-  were found and fixed since (a non-atomic check-then-act race, and no fail-open on a Redis error) —
-  see `project_status.md` §4 item 2 for the fix and the regression tests
-  (`tests/unit/test_rate_limit.py`) that caught two follow-on bugs in the first attempt at that fix.
-  **Still open**: `ip_key` trusts `request.client.host` directly, so behind Render's reverse proxy
-  every visitor likely shares one IP-bucket — `project_status.md` §4 item 2 has the concrete plan
-  (`uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware`, not a hand-rolled `X-Forwarded-For`
-  parse, which would be spoofable).
+  `request.state.user` (read by the rate limiter's `user_key`). `require_admin`/
+  `require_manager_or_admin` check `current_user.role`, not the deprecated `is_admin` bool.
+- **Company scoping**: shared schema + a `company_id` column + service-layer filtering, not
+  per-tenant Postgres schemas. Every service managing a company-owned resource has a
+  `_manager_scope_violation(current_user, company_id)` helper — `True` for a manager acting
+  outside their own company, raised as `ForbiddenError`. Reads stay unscoped. `products` resolves
+  `company_id` indirectly via `product_service._resolve_product_company_id()`, since a product has
+  no `company_id` column of its own. `categories` has no scoping — every mutating endpoint is
+  `require_admin`-only.
+- **`app/cache/rate_limit.py::rate_limit(limit, window, key_func)`** — a dependency factory
+  (`Depends(rate_limit(5, 60, ip_key))`). Keys fold in the route path (`_route_key`) so endpoints
+  sharing a `key_func` don't share a counter. The limiter uses one atomic Redis `INCR` (creates the
+  key at 1, else increments) with `EXPIRE` set only by the request that created the window — no
+  check-then-act race. On a Redis error it logs and lets the request through (fail-open). Behind
+  Render's reverse proxy, `main.py` wraps the app in
+  `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware` (`trusted_hosts="*"`, since only
+  Render's own network can reach the container directly) so `request.client.host` is the real
+  client IP before `ip_key` runs.
 
-  **Coverage policy** — which tier a route belongs to decides whether/how it's rate-limited; a new
-  route should be checked against this table, not left to individual judgement:
+  **Coverage policy**:
 
   | Tier | Key | Typical limit | Why | Examples |
   |---|---|---|---|---|
   | Auth / brute-force | `ip_key` | 3–10 / 60s | Credential stuffing resistance | `register`, `login`, `forgot_password` |
-  | Money / inventory | `user_key` | 3 / 60s | Reserves scarce inventory or money — includes lottery entry, not just checkout | `checkout_order`, `checkout_new_ticket`, `apply_to_lottery`, `add_to_cart` |
+  | Money / inventory | `user_key` | 3 / 60s | Reserves scarce inventory or money | `checkout_order`, `checkout_new_ticket`, `apply_to_lottery`, `add_to_cart` |
   | Privilege escalation | `user_key` | 3 / 60s | Grants elevated access | `make_admin`, `create_manager` |
-  | Authenticated reads | `user_key` | 5–30 / 60s, scaled to how pollable the endpoint is | Cheap and safe, but still worth a ceiling | `notifications/unread-count` (30, polled), `me` (10) |
-  | Public reads | `ip_key` | 5–10 / 60s | Anti-scraping / DB cost control on an unauthenticated GET | `products/all`, `products/search` |
-  | Manager/admin CRUD | `user_key` | 20–30 / 60s | Already gated by auth + company-scoping — this tier is a safety net against a buggy client retry-loop, not a security control | most `talent`/`events`/`marketplace` admin routers |
+  | Authenticated reads | `user_key` | 5–30 / 60s | Cheap, still worth a ceiling | `notifications/unread-count` (30), `me` (10) |
+  | Public reads | `ip_key` | 5–10 / 60s | Anti-scraping / DB cost control | `products/all`, `products/search` |
+  | Manager/admin CRUD | `user_key` | 20–30 / 60s | Safety net against a retry-loop, not a security control | most `talent`/`events`/`marketplace` admin routers |
 
-  Found via this table, not guesswork: `lottery_entries/apply` and `cart/add_cart` were both
-  completely unrated-limited despite being money/inventory-tier — fixed. `direct_sale_campaign`,
-  `lottery_campaign`, `lottery_preference`, `ticket_type`, `album_detail`, `genre`, `merch_detail`
-  routers had zero coverage at all — now on the manager/admin-CRUD tier.
-- **Image storage (`app/utils/storage.py`)** — an ABC (`StorageBackend`) with `LocalStorageBackend`
-  and `S3StorageBackend` implementations, selected by `settings.STORAGE_BACKEND` via
-  `get_storage()`. Every upload call site goes through `get_storage()` and never imports either
-  backend directly, so local-dev vs. S3-for-deploy is a settings change, not a code change. Full
-  detail in `database-design.md` §9.
-- Domain exceptions (§2 above) caught centrally in the router that raises them.
+- **Image storage (`app/utils/storage.py`)** — an ABC (`StorageBackend`) with
+  `LocalStorageBackend`/`S3StorageBackend`, selected by `settings.STORAGE_BACKEND` via
+  `get_storage()`. Every upload call site goes through `get_storage()`, never a backend directly.
+- Domain exceptions (§2) are caught centrally in the router that raises them.
 
 ## 4. Running locally
 
@@ -256,100 +155,50 @@ docker compose up --build
 # API docs: http://localhost:8000/docs
 ```
 
-`docker compose up` also starts a `worker` service (same image, `celery -A app.celery_app worker`)
-alongside `app`/`postgres`/`redis` — see §1's Celery entry. New tasks go in `app/tasks/`, added to
-`app/celery_app.py`'s `include=[...]` list so the worker picks them up (no autodiscovery is
-configured).
+`docker compose up` also starts a `worker` service (`celery -A app.celery_app worker`). New
+tables/columns always go through an Alembic migration, never `Base.metadata.create_all()`. Enum
+types use an atomic idempotent `DO $$ BEGIN CREATE TYPE ... EXCEPTION WHEN duplicate_object THEN
+NULL; END $$;` block rather than `Enum.create(bind, checkfirst=True)`, which isn't
+crash-loop-safe. A `GENERATED ALWAYS AS ... STORED` column can't cast to a Postgres enum (the cast
+function is `STABLE`, not `IMMUTABLE`) — use `VARCHAR` instead (see `venues.size`).
 
-New tables/columns always go through an Alembic migration (`alembic revision --autogenerate -m
-"..."`, then review the generated file), never `Base.metadata.create_all()`. Enum types are
-created with an atomic, idempotent `DO $$ BEGIN CREATE TYPE ... EXCEPTION WHEN duplicate_object
-THEN NULL; END $$;` block (`op.execute(sa.text(...))`) rather than SQLAlchemy's
-`Enum.create(bind, checkfirst=True)` — the latter is not crash-loop-safe if DB state and
-Alembic's `alembic_version` table ever disagree. A `GENERATED ALWAYS AS ... STORED` column can't
-cast to a Postgres user-defined enum (the enum's cast function is `STABLE`, not `IMMUTABLE`, and
-Postgres rejects it) — use a plain `VARCHAR` generated column instead (see `venues.size`).
+Tests: `pytest --cov=app`, split into `tests/unit/` (mocked, no DB) and `tests/integration/` (real
+`TestClient`, needs Postgres). `tests/conftest.py` redirects `DATABASE_URL` onto a dedicated
+`<name>_test` database before integration tests run, so they never touch dev data. CI spins up
+Postgres 16 + Redis, runs migrations, runs pytest with coverage, uploads to Codecov, then deploys
+to Render on `main`.
 
-Tests: `pytest --cov=app` (needs a real Postgres only for `tests/integration/`; `fakeredis` handles
-Redis automatically via `tests/conftest.py`, no real Redis needed locally) — split into
-`tests/unit/` (mocked, no DB) and `tests/integration/` (real `TestClient` against the app). CI
-(`.github/workflows/test.yml`) spins up Postgres 16 + Redis service containers, runs migrations,
-runs pytest with coverage, uploads to Codecov, then deploys to Render on `main`/`master`.
+## 5. Conventions for new code
 
-**Integration tests never touch whatever database `DATABASE_URL` points at.**
-`tests/conftest.py` redirects it onto a dedicated `<name>_test` database (a same-instance sibling,
-not the same one the running `app`/`worker` — or your own manual frontend testing, or
-`scripts/seed.py` — use) before anything else in the process can read the original value; then
-`tests/integration/conftest.py` drops, recreates, and fully migrates that database once per test
-session, before any integration test module is imported. `pytest tests/unit` is unaffected (the
-redirect is a pure string rewrite, no connection attempted) and still needs no live Postgres.
-Practical effect: `pytest tests` is safe to run against any local dev setup, any time, with a
-deterministic result — it can't see or corrupt real seeded/manually-created rows, and doesn't
-require you to keep a scratch database empty by hand. (CI's own standalone "run alembic upgrade
-head" step against its service-container Postgres still runs and still has to pass, but pytest no
-longer actually queries the database that step migrated — it creates and migrates its own
-`<ci-db>_test` sibling instead; harmless, just means that CI step is now an independent
-migration-chain smoke check rather than a precondition pytest depends on.)
-
-## 5. Conventions to follow for new code
-
-- Route prefixes/tags mirror the resource name, capitalized inconsistently in the original
-  boilerplate (`/Cart`, `/Categories` vs. `/order`, `/payment`, `/products`) — match the casing of
-  the *closest* existing sibling resource rather than introducing a third style.
-- Every mutating/user-scoped query filters by `user_id` (fans) or `company_id` (managers) at the
-  query level, not just via `get_current_user` — do the same for new tables.
-- Pydantic schemas that wrap an ORM object always set `model_config = {"from_attributes": True}`.
-- `with_for_update()` is the existing convention for locking a row before a mutating decision —
-  keep the lock and the write in the *same* transaction/commit; don't let another `db.commit()`
-  land in between (this is exactly the bug in `project_status.md`'s checkout item).
-- **Every model file imports `Base` from `app.db.base_class`, never from `app.db.base`.**
-  `app/db/base.py` is a pure aggregator — it imports every model module (for Alembic's
-  `Base.metadata` to see them) and re-exports `Base` from `base_class`. Importing `Base` back
-  from `app.db.base` in a model file reopens a real circular-import bug that was fixed this way
-  (`app/deps/auth.py`/`app/router/marketplace/products.py` import `app.db.models.identity.user`
-  directly, so whichever module Python touches first re-entering the other mid-import throws
-  `ImportError`).
-- New model modules must also be added to `app/db/base.py`'s import list, or standalone scripts
-  (unlike the live app, whose routers transitively import everything) can hit
-  `InvalidRequestError: ... failed to locate a name` when SQLAlchemy tries to resolve a
-  string-based `relationship("ClassName", ...)` reference at mapper-configuration time.
-- New tables that will feed the future ETL pipeline (`project_status.md`) should consider
-  emitting a `domain_events` row in the same transaction as the write, even before the pipeline
-  itself is built — cheap to add now, expensive to backfill later.
-- No live Postgres/FastAPI/network access exists in the environments this has been built in so
-  far — verification has relied on `py_compile` sweeps plus small AST-based static checks (every
-  ORM `ForeignKey` target and `relationship(back_populates=...)` pair resolves and is reciprocal;
-  every intra-app `from app.X import Y` resolves to a real name). Treat `alembic upgrade head` +
-  hitting each endpoint against a real DB as the standing "still needs a real smoke test" item
-  for anything built this way — noted per-feature in `project_status.md` rather than repeated
-  here.
-- **Every function needs a return type, and every parameter needs a type** — enforced by ruff's
-  `ANN` rules (`pyproject.toml`), not just a style preference. Parameters were already ~97% typed
-  before this was enforced; return types were the real gap (88% of ~400 production functions had
-  none). This isn't cosmetic: writing the annotations directly caught two real bugs no test caught
-  first — a stray argument passed to a function that had just been changed to take none
-  (`TypeError` on every call), and a list passed where `model_validate` expected one instance
-  (`ValidationError` on every call) — both are exactly the class of mistake a return/param type
-  makes visible on sight, no runtime repro needed. `tests/*` and `scripts/*` are exempted
-  (pytest conventions don't benefit from typing test functions; measured, not assumed — see the
-  per-file-ignore's own comment).
-  - The old sentinel-return convention (`return "forbidden"`, `return "not_found"`, typed as a
-    precise `Literal[...]` union) has been superseded by the exception hierarchy in §2 for every
-    function that used to pair with a router-side `_raise_for`/`_raise_for_link`; those now return
-    just the success type since the function only ever returns success or raises — including every
-    delete/unassign function in that group, which returns the deleted/unlinked ORM object itself
-    (`-> Idol`, `-> IdolPosition`, ...) rather than `Literal[True]`, so a caller (a test, or future
-    code — the routers themselves still just discard it and reply with `{"msg": ...}`) has the
-    actual row, not just a boolean confirmation. `Literal` is still the right tool for what's left: a
-    plain read's `Literal[False]` empty-result sentinel, or a private multi-value helper like
-    `idol_service._validate_refs` that a caller inspects rather than an exception.
-  - **FastAPI gotcha, found the hard way**: a route function's own return-type annotation is used
-    by FastAPI to build an implicit response schema whenever the decorator has **no**
-    `response_model=`. Annotating such a function's return type as a bare SQLAlchemy ORM class
-    (not a Pydantic model) crashes the app at import time
-    (`FastAPIError: Invalid args for response field!`) — and `py_compile`/`ruff` won't catch it,
-    since it only fires when the decorator actually runs. If a route has no `response_model=` and
-    its real return type isn't a Pydantic-serializable shape (a dict, a list of dicts, `None`),
-    add `response_model=None` to the decorator explicitly rather than relying on the annotation
-    alone — that's FastAPI's own documented way to keep an accurate return-type annotation without
-    it being mistaken for a schema.
+- Route prefixes/tags match the casing of the closest existing sibling resource — the original
+  boilerplate mixed `/Cart`/`/Categories` with `/order`/`/payment`.
+- Every mutating/user-scoped query filters by `user_id` or `company_id` at the query level, not
+  just via `get_current_user`.
+- Pydantic schemas wrapping an ORM object set `model_config = {"from_attributes": True}`.
+- `with_for_update()` locks a row before a mutating decision; keep the lock and the write in the
+  same transaction — don't let another `db.commit()` land in between.
+- **Every model file imports `Base` from `app.db.base_class`, never `app.db.base`.**
+  `app/db/base.py` is a pure aggregator that re-exports `Base` from `base_class`; importing it
+  back from `app.db.base` in a model reopens a circular-import bug (`app/deps/auth.py` and
+  `app/router/marketplace/products.py` both import `app.db.models.identity.user` directly).
+- New model modules must be added to `app/db/base.py`'s import list, or standalone scripts can hit
+  `InvalidRequestError: ... failed to locate a name` when SQLAlchemy resolves a string-based
+  `relationship()` reference.
+- New tables feeding the future ETL pipeline should emit a `domain_events` row in the same
+  transaction as the write.
+- No live Postgres/network access in the environments this is typically verified in —
+  verification relies on `py_compile` sweeps and AST-based static checks (every
+  `ForeignKey`/`relationship(back_populates=...)` pair resolves and is reciprocal; every intra-app
+  import resolves). Treat `alembic upgrade head` plus hitting each endpoint against a real DB as
+  the standing follow-up.
+- **Every function needs a return type, every parameter needs a type** — enforced by ruff's `ANN`
+  rules. `tests/*` and `scripts/*` are exempt.
+  - The old sentinel-return convention (`Literal["forbidden", "not_found"]`) is superseded by the
+    exception hierarchy in §2 wherever a router used `_raise_for`/`_raise_for_link` — those
+    functions now return just the success type. `Literal` is still right for a plain read's
+    `Literal[False]` empty-result sentinel, or a private multi-value helper like
+    `idol_service._validate_refs`.
+  - **FastAPI gotcha**: a route's own return-type annotation becomes an implicit response schema
+    when the decorator has no `response_model=`. A bare SQLAlchemy ORM class there crashes the app
+    at import time. If a route has no `response_model=` and its real return type isn't
+    Pydantic-serializable, set `response_model=None` explicitly.

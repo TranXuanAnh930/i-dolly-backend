@@ -166,15 +166,10 @@ class OrderService:
         db.refresh(order_shippingstatus)
         return order_shippingstatus
 
-    # --- manager/admin orders page (see product_service.py's manager pages for
-    # the same "empty is normal, not a 404" convention). Product has no
-    # company_id of its own, so which orders "belong" to a company is resolved
-    # the same way ManagerProductsPage already is: via album_details/
-    # merch_details -> idol/group -> company_id (resolve_product_company_ids),
-    # ownerless products counting as everyone's. Unlike the idols/groups/
-    # products/concerts manager-*-page bundles, this one requires real auth
-    # (require_manager_or_admin in the router) since orders carry a real
-    # customer's purchase history, not public catalog data.
+    # --- manager/admin orders page. Product has no company_id of its own, so which orders
+    # "belong" to a company is resolved the same way as ManagerProductsPage: via
+    # album_details/merch_details -> idol/group -> company_id, ownerless products counting as
+    # everyone's. Requires real auth (require_manager_or_admin) since orders are customer data.
 
     @staticmethod
     def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> ManagerOrdersPageRead:

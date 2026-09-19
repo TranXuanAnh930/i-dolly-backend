@@ -24,14 +24,9 @@ class Settings(BaseSettings):
     SENDGRID_API_KEY : str
     FROM_EMAIL : str
 
-    # Dev convenience only, defaults off. `.env.example`'s SENDGRID_API_KEY
-    # is a placeholder, so a real send always fails locally — when true,
-    # send_email() prints the full email body (including whatever
-    # verification/reset token it carries) to the console before attempting
-    # to send, and swallows the resulting SendGrid failure instead of
-    # letting it raise inside a BackgroundTask. Never set true in production:
-    # these bodies carry live auth tokens, which have no business sitting in
-    # a shared server log.
+    # Dev convenience only. `.env.example`'s SENDGRID_API_KEY is a placeholder, so a real send
+    # always fails locally — when true, send_email() prints the email body (verification/reset
+    # tokens included) to the console instead. Never set true in production.
     DEBUG: bool = True
 
     # Public base URL of this API — used to build links (e.g. the email
@@ -52,13 +47,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:8080"
 
     # --- image storage (see app/utils/storage.py) ------------------------
-    # "local" saves to LOCAL_UPLOAD_DIR on disk, served back out under
-    # LOCAL_UPLOAD_URL_PREFIX (main.py mounts it via StaticFiles) — fine for
-    # local dev, and it happens to persist across container restarts here
-    # too since docker-compose.yaml already bind-mounts the whole app dir.
-    # Not durable for a real multi-instance/ephemeral-filesystem deploy
-    # though — flip STORAGE_BACKEND to "s3" for that, no code changes
-    # needed at any call site.
+    # "local" saves to LOCAL_UPLOAD_DIR, served back under LOCAL_UPLOAD_URL_PREFIX — fine for
+    # local dev, not durable for a multi-instance/ephemeral-filesystem deploy. Flip to "s3" for
+    # that; no call-site changes needed.
     STORAGE_BACKEND: str = "local"  # "local" | "s3"
     LOCAL_UPLOAD_DIR: str = "uploads"
     LOCAL_UPLOAD_URL_PREFIX: str = "/uploads"

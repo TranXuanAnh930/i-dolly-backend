@@ -1,15 +1,11 @@
 # Database Design — Idol Concert Ticket Reservation + Album/Singles Marketplace
 
-Companion to `../CLAUDE.md` (repo root) and `architecture.md`/`project_status.md` (same
-`docs/` folder) — this is the first real version of the design `CLAUDE.md` had been
-referencing, written from the draft below, not invented ahead of it. `schema.sql` is referenced
-throughout this doc as the reference DDL but does not actually exist as a file in the repo today
-— treat every `schema.sql` citation below as pointing at a DDL that still needs to be written
-(or extracted from the live migrations), not at a file you can open; see `project_status.md`.
-Two editable draw.io exports live at the repo root: `idol-ticket-erd.drawio` (the §2 ER diagram,
-all 28 tables, clustered) and `lottery-business-logic.drawio` (the §5 two-flow business logic,
-as a flowchart rather than a sequence diagram) — open either in
-[diagrams.net](https://app.diagrams.net) or the draw.io desktop app to edit.
+Companion to `../CLAUDE.md` and `architecture.md`/`project_status.md`. `schema.sql` is cited
+throughout as the reference DDL but doesn't exist as a file in the repo — treat every citation as
+pointing at DDL that still needs to be extracted from the live migrations (see
+`project_status.md`). Two editable draw.io exports live at the repo root: `idol-ticket-erd.drawio`
+(the §2 ER diagram, all 28 tables) and `lottery-business-logic.drawio` (the §5 business-logic
+flowchart) — open either in [diagrams.net](https://app.diagrams.net) or the desktop app to edit.
 
 **Source draft (as given):**
 - Three user kinds: admin, company manager, end user (fan who buys albums and tickets).
@@ -949,283 +945,143 @@ Key points this design makes explicit:
 
 ## 6. Resolved questions and remaining open ones
 
-**Resolved this round:**
+**Resolved:**
 
-- Payment only happens *after* the draw, and only for winners — nothing is charged upfront just
-  for entering a lottery. (Confirms §5 as designed.)
+- Payment happens only *after* the lottery draw, and only for winners — nothing is charged
+  upfront just for entering.
 - `sale_method = 'direct'` tiers are real and used, priced higher than the lottery row for the
-  same tier — see §3.10.
-- `idols` gets a single `name` field; `real_name` is deliberately not modeled at all for now
-  (not even as a nullable column), to be reconsidered later.
-- `SUM(ticket_types.total_quantity) <= concerts.capacity` is now a hard, trigger-enforced rule
-  (§3.10) — implemented as "must not exceed," i.e. `<=`, not strictly-less-than. If the intent
-  was actually to always leave at least one seat of headroom below capacity, say so and the
-  trigger's `>` becomes `>=`.
-- `album_details` does not get its own `description` — `products.description` is reused (§3.16).
-- ~~The "max 3 albums → max 3 shots" cap is scoped per lottery campaign...~~ **Superseded this
-  round** — there is no longer a purchase-to-shots mechanic at all. See the fresh entry below.
-- "One ticket per person" is scoped **per concert**, not one ticket ever platform-wide — a fan
-  can hold tickets to multiple different concerts, just not more than one to the same concert
-  (§3.14). Still holds unchanged.
+  same tier (§3.10).
+- `idols` has a single `name` field; `real_name` is deliberately unmodeled for now.
+- `SUM(ticket_types.total_quantity) <= concerts.capacity` is a hard, trigger-enforced rule (§3.10)
+  — "must not exceed" (`<=`), not strictly less than.
+- `album_details` has no own `description` column — `products.description` is reused (§3.16).
+- "One ticket per person" is scoped **per concert** — a fan can hold tickets to multiple
+  concerts, just not two for the same one (§3.14).
 - A fan can't buy more than 3 units of the same album/single/EP, ever — a standing anti-resale
-  cap (§4.2). ~~...that also settles how the lottery-entry cap should behave...~~ **the "how should
-  the lottery cap behave when exceeded" half of this bullet no longer applies** — there's no
-  lottery-entry cap to reject a checkout over anymore; only this purchase cap remains, and it was
-  never about the lottery in the first place.
-- Ranked `lottery_preferences` (§3.11) resolves how a fan can hold entries in multiple
-  simultaneous campaigns for the same concert without ending up with two tickets: the draw
-  cascades rank-by-rank and excludes anyone who already won, rather than only catching the
-  conflict when a second `tickets` row is about to be inserted. Still holds unchanged.
-- Every payment is assumed to succeed for this phase (mock gateway, `simulate_succ=true`) —
-  payment-failure handling (declines, retries, the entry/purchase-cap triggers seeing an unpaid
-  order) is explicitly deferred to a later phase, not designed here.
-- `idols.talent` is dropped entirely, replaced by `color_id` → the new `idol_colors` lookup table
-  (§3.5) — a member's signature color, not a free-text talent description.
+  cap (§4.2), unrelated to the lottery.
+- Ranked `lottery_preferences` (§3.11) is how a fan can hold entries in multiple simultaneous
+  campaigns for one concert without winning two tickets: the draw cascades rank-by-rank and
+  excludes anyone who already won.
+- Every payment is assumed to succeed for this phase (mock gateway, `simulate_succ=true`);
+  payment-failure handling is deferred.
+- `idols.talent` is dropped, replaced by `color_id` → `idol_colors` (§3.5) — a signature color,
+  not a free-text talent description.
 - A fan is **not entered into a tier's lottery unless they've already ranked that tier** in
-  `lottery_preferences` — resolved in favor of "don't enter them" over "enter them at lowest
-  priority." The album purchase itself is unaffected either way; only the entry is skipped
-  (§3.11, §3.13).
-- `lottery_preferences.concert_id` living directly on that table (not derived through
-  `ticket_type_id`) is confirmed correct — it's what makes both the rank-uniqueness constraints
-  and the new preference-required check queryable without a join (§3.11).
-- The anti-resale cap (§4.2) is confirmed **per specific release** — a fan can buy as many
-  different albums/singles/EPs, from the same group or different ones, as they like; only a
-  *single* release is capped at 3 units. No schema change needed; the trigger already worked
-  this way.
-- **Purchases and lottery entries are now fully separate systems** (§3.13, §5) — buying something
-  never earns a lottery entry; applying to a lottery never requires a purchase and costs nothing.
-  `lottery_campaign_eligible_products`, `source_order_item_id`, and `entries_count` are all
-  removed — there's no purchase-side lottery mechanic left to configure.
-- A fan gets **at most one entry per campaign**, "for now" — replacing the earlier 3-shots-per-
-  campaign cap. Enforced by a plain `UNIQUE(campaign_id, user_id)` constraint instead of a
-  summing trigger, since there's no longer a quantity to sum (§3.13).
-- **Singles are now a first-class `categories` row**, not just an enum value — "add a singles
-  product" turned out to already be mostly modeled (§3.15's normalization removed the last piece
-  that made it feel like a special case: `release_type`). A single is a `products` row categorized
-  `Single` with an `album_details` row, same shape as an album, and it participates in
-  `album_genres` exactly as albums always have.
-- **Lightsticks are a new product type** (`lightstick_details`, §3.17), owned by exactly one idol
-  OR one group (strict XOR, unlike albums' "at least one"). Whether to also cap lightstick resale
-  at 3 units was not asked for explicitly — resolved in favor of capping it, since it's the same
-  kind of scarce official merch the album cap protects against; see §4.2 for the reasoning and how
-  cheap it is to reverse.
-- **`categories` is now the single source of truth for product kind**, replacing
-  `album_details.release_type` and the old "does a details row exist" logic in the anti-resale
-  trigger — a data-driven `is_resale_capped` flag per category instead (§3.15, §4.2). This was the
-  literal "normalize the database" ask: one place records what kind of product something is,
-  instead of two columns that had to be kept in sync by hand.
-
-**Resolved this round:**
-
-- **`require_manager_or_admin` is built and wired up** (§4) — `app/deps/auth.py` now has
-  `require_admin` and `require_manager_or_admin` dependencies backed by `Users.role`, not the
-  deprecated `is_admin` flag. Category mutation endpoints require `require_admin`; product
-  mutation endpoints (create/update/delete/bulk-add) and shipping-status updates require
-  `require_manager_or_admin` (a manager can only touch products, not promote other users — that
-  stays `require_admin`-only). This needed `Users.role`/`Users.company_id` actually wired into the
-  ORM model plus a new `ManagementCompany` model, both real code changes, done here rather than
-  deferred again. **Caveat:** this is identity-only — it confirms the caller is *a* manager, not
-  that they're the manager of the company that owns *this specific* product/idol/group. Real
-  company-scoping (filtering queries by `current_user.company_id`) needs the idol/group CRUD
-  services to exist first and is explicitly not done yet.
-- **`products.category_id` is now `NOT NULL`** — live migration `71b1b0443c96`, idempotently seeds
-  a `Merch` category and backfills any existing NULLs before adding the constraint. The "backfill
-  needed first" concern below is resolved by having the migration do the backfill itself.
-- **The anti-resale cap now applies to all products by default**, not just albums/singles/
-  lightsticks — `categories.is_resale_capped` defaults to `true` and the seed data flips every
-  category to capped (§4.2). A category can still opt out with `UPDATE categories SET
-  is_resale_capped = false WHERE ...` without a migration, per the data-driven-configuration
-  pattern already used for this column.
-- **A product can no longer have both `album_details` and `lightstick_details`** — new
-  `fn_enforce_single_product_detail_kind` trigger pair
-  (`trg_album_details_exclusive_kind`/`trg_lightstick_details_exclusive_kind`) rejects the insert
-  at the DB level. Explicitly flagged as an exception to this doc's usual "triggers are for
-  money/fairness invariants, not general cross-table validation" rule (§4), justified because it
-  was asked for directly and a half-album-half-lightstick row would be a genuinely nonsensical
-  state, not just an unusual one.
-- **`lottery_preferences.ticket_type_id` now has a DB-level guarantee it belongs to
-  `lottery_preferences.concert_id`** — new `fn_require_ticket_type_matches_concert`/
-  `trg_lottery_preferences_ticket_type_concert` trigger, so a mismatched preference errors loudly
-  at insert time instead of silently never being considered by the draw job.
-- **The one-entry-per-lottery rule now has an explicit relaxation knob**:
-  `lottery_campaigns.max_entries_per_user` (data-driven, `DEFAULT 1`, `CHECK (> 0)`), enforced by a
-  new `fn_enforce_lottery_entry_cap`/`trg_lottery_entries_cap` trigger replacing the plain
-  `UNIQUE(campaign_id, user_id)` constraint. Raising the cap for a specific campaign is now an
-  `UPDATE`, not a migration. This is deliberately a *different* mechanic from the earlier-removed
-  `entries_count` column — that was a purchase-linked multiplier ("bought 3, get 3 shots"), this is
-  a campaign-level policy knob with no purchase involved, consistent with entries and purchases
-  being fully decoupled (§3.13).
+  `lottery_preferences` (§3.11, §3.13). The album purchase itself is unaffected either way.
+- `lottery_preferences.concert_id` lives directly on that table (not derived through
+  `ticket_type_id`) so the rank-uniqueness and preference-required checks are queryable without a
+  join (§3.11).
+- The anti-resale cap (§4.2) is **per specific release** — a fan can buy any number of different
+  releases; only a single release is capped at 3 units.
+- **Purchases and lottery entries are fully separate systems** (§3.13, §5) — buying something
+  never earns a lottery entry; applying costs nothing and requires no purchase.
+  `lottery_campaign_eligible_products`, `source_order_item_id`, and `entries_count` are removed.
+- A fan gets **at most one entry per campaign**, enforced by `UNIQUE(campaign_id, user_id)`.
+- **Singles are a first-class `categories` row**, not an enum value — a `products` row categorized
+  `Single` with an `album_details` row, same shape as an album, participating in `album_genres`
+  the same way.
+- **Lightsticks are a product type** (`merch_details`, §3.17), owned by exactly one idol OR one
+  group (strict XOR, unlike albums' "at least one"). Capped at 3 units for resale, same as albums
+  — same class of scarce official merch (§4.2).
+- **`categories` is the single source of truth for product kind**, replacing
+  `album_details.release_type` and the old "does a details row exist" check in the anti-resale
+  trigger with a data-driven `is_resale_capped` flag per category (§3.15, §4.2).
+- **`require_manager_or_admin` is built and wired up** (§4) — `app/deps/auth.py`'s
+  `require_admin`/`require_manager_or_admin` check `Users.role`, not the deprecated `is_admin`
+  flag. Category mutation requires `require_admin`; product mutation and shipping-status updates
+  require `require_manager_or_admin`. This is identity-only — it confirms the caller is *a*
+  manager, not that they manage *this* product/idol/group; real company-scoping is a separate,
+  later step.
+- **`products.category_id` is `NOT NULL`** (migration `71b1b0443c96`), backfilled to a seeded
+  `Merch` category before the constraint lands.
+- **The anti-resale cap applies to all products by default** — `categories.is_resale_capped`
+  defaults `true`; a category can opt out via `UPDATE categories` without a migration.
+- **A product can't have both `album_details` and `merch_details`** —
+  `fn_enforce_single_product_detail_kind` (`trg_album_details_exclusive_kind`/
+  `trg_merch_details_exclusive_kind`) rejects the insert at the DB level. The one deliberate
+  exception to "triggers are for money/fairness invariants, not general validation" (§4) — a
+  half-album-half-merch row is a genuinely nonsensical state.
+- **`lottery_preferences.ticket_type_id` has a DB-level guarantee it belongs to
+  `lottery_preferences.concert_id`** — `fn_require_ticket_type_matches_concert`/
+  `trg_lottery_preferences_ticket_type_concert` rejects a mismatch at insert time.
+- **The one-entry-per-lottery rule has an explicit relaxation knob**:
+  `lottery_campaigns.max_entries_per_user` (`DEFAULT 1`, `CHECK (> 0)`), enforced by
+  `fn_enforce_lottery_entry_cap`/`trg_lottery_entries_cap`. Raising the cap for one campaign is an
+  `UPDATE`, not a migration.
 
 **Still open:**
 
-- What a fan should see/be told when they try to apply to a lottery for a tier they haven't
-  ranked yet — the application is rejected outright (§3.13), which is correct per this round's
-  design, but needs a UI nudge ("rank this tier before applying") rather than a raw error.
-- Now that no lottery entry carries any purchase context, the ETL "purchase → entry → draw →
-  ticket" funnel described in earlier rounds (§7's ETL note) only has three of those four stages
-  connected — entries no longer link back to a purchase at all. Worth a look before the data
-  pipeline gets built around an assumption this round quietly invalidated.
-- ~~Real company-scoping for `require_manager_or_admin`~~ **DONE for `groups`/`idols`/
-  `idol_positions`** — see §4's scoping paragraph. Still open for `products` (still the
-  pre-existing, company-agnostic e-commerce endpoints — a product doesn't carry a `company_id`
-  today, it's reached only via `album_details`/`lightstick_details` → `idols`/`groups`, so scoping
-  it means joining through those, not a direct column check) and for the not-yet-built venue/
-  concert/ticket_type/campaign/album routers (§7.2).
-- Whether `Lightstick` should really share the anti-resale cap with albums at the same 3-unit
-  ceiling, or get its own number (official lightsticks are typically a once-per-tour purchase,
-  unlike an album a fan might legitimately want a couple of for gifting) — now that *all* products
-  are capped by default, this is a question of the per-category ceiling value, not whether
-  Lightstick is capped at all; changeable via `UPDATE categories` without a migration either way.
+- No UI nudge for "you haven't ranked this tier yet" — the application is correctly rejected
+  server-side (§3.13), but the client just sees a raw error.
+- No lottery entry carries purchase context anymore, so an ETL "purchase → entry → draw → ticket"
+  funnel only has three connected stages. Worth resolving before the data pipeline is designed
+  around a four-stage assumption.
+- Company-scoping for `require_manager_or_admin` is done for `groups`/`idols`/`idol_positions`
+  (§4) but still open for `products` (no direct `company_id` column — reached only via
+  `album_details`/`merch_details` → `idols`/`groups`) and for any newer router added since.
 
-**Newly proposed, well after the round above — not designed, not implemented, tracked in
-`project_status.md` §5**: should every product be *required* to have an `album_details` or
-`merch_details` row, rather than ownerless being a fully legitimate state the way it is today?
-Raised directly in response to item 14's bug (an ownerless product is silently unscoped — that's
-what let a cross-company edit through in the first place), but turning "possible" into "required"
-is a policy change, not a bug fix, and it collides with something already true of this design:
-product creation is deliberately two-step (§3.15/§6 above already flags this for Album/Single/EP —
-"category says Album but there's no `album_details` row yet is a workflow gap... left to the
-service layer" — the exact same gap, just not yet named as a problem for Merch too). Enforcing
-"must be owned" at the DB level would mean either making creation atomic (one call, not two) or a
-`DEFERRABLE` constraint checked at commit (which only helps if both inserts land in one
-transaction, which they don't today), neither of which is a small change. Also unresolved: does
-this apply to literally every product, meaning there's no such thing as legitimate platform-level/
-unbranded merch in this design at all — or should some products stay intentionally ownerless?
-Not answered here on purpose.
+**Proposed, not designed — tracked in `project_status.md` §5**: should every product be
+*required* to have an `album_details` or `merch_details` row, instead of ownerless being a
+legitimate state? Raised because an ownerless product is silently unscoped, which let a
+cross-company edit through once already. Turning "possible" into "required" is a policy change,
+not a bug fix, and collides with product creation being two-step (a bare `Product` first, an
+ownership row after) — enforcing it at the DB level needs either an atomic creation flow or a
+`DEFERRABLE` constraint checked at commit. Also open: does this apply to every product, or should
+platform-level/unbranded merch stay legitimately ownerless?
 
 ## 7. Priorities: what's urgent vs. next phase
 
-A consolidated read of everything flagged across this doc and `CLAUDE.md`'s known-issues list,
-sorted by how soon it actually bites — not a new set of findings, just gathered into one place so
-it doesn't have to be re-derived from scattered notes.
+Historical planning notes from before the OLTP schema settled — kept for context, not a live
+task list. Current status lives in `project_status.md`.
 
-### 7.1 Blocking — fix before writing the first new migration
+### 7.1 Blocking (fixed before the first new migration)
 
-Both items below are now **FIXED** directly in the repo (`CLAUDE.md`'s known-issues list updated
-to match):
+- `app/db/base.py` didn't import every model, which caused a real circular-import bug: model
+  files imported `Base` from `app.db.base`, while other modules imported specific models
+  directly, so whichever loaded first threw `ImportError` on the other re-entering mid-import.
+  Fixed by moving `Base` into its own `app/db/base_class.py` with no model knowledge; every model
+  imports `Base` from there, and `app/db/base.py` is now a pure aggregator. New model modules
+  must always import `Base` from `app.db.base_class` — see `architecture.md` §5.
+- `requirements.txt` was UTF-16; re-saved as UTF-8.
 
-- ~~**`app/db/base.py` doesn't import `Users`/`RefreshToken`**~~ (`CLAUDE.md` item 3). Fixed in
-  two passes. The first pass (just adding the two imports to `app/db/base.py`) surfaced a real,
-  pre-existing circular-import bug: every model file did `from app.db.base import Base`, while
-  `app/deps/auth.py`/`app/router/marketplace/products.py` (main.py's first router import) import
-  `app.db.models.user` directly — so depending on which module Python touches first, the other
-  one re-entering mid-import threw `ImportError: cannot import name 'Users' from partially
-  initialized module 'app.db.models.user'`. This was latent before; it only started firing once
-  `base.py` imported `user.py` back. **Real fix:** `Base`'s definition moved to a new
-  `app/db/base_class.py` (nothing else in it, no model knowledge), every model file now imports
-  `Base` from `base_class` instead of `base`, and `app/db/base.py` is now a pure aggregator —
-  re-exports `Base`, imports every model module for `Base.metadata` registration.
-  `alembic/env.py`'s `from app.db.base import Base` needed no change. Verified both import orders
-  (model-first and base-first) succeed. **New model modules (`Idol`, `Concert`, and the rest of
-  this design's ~18 new tables) must import `Base` from `app.db.base_class`, never from
-  `app.db.base`** — importing from `app.db.base` reopens this exact cycle; noted in `CLAUDE.md`
-  §9's conventions list too.
-- ~~**`requirements.txt` is UTF-16**~~ (`CLAUDE.md` item 5). Fixed: re-saved as plain UTF-8 with
-  LF line endings, contents unchanged.
+### 7.2 High priority (fixed alongside ticket issuance)
 
-With both cleared, the two remaining prerequisites before writing the first migration are
-sequencing ones, not code fixes: follow the FK-respecting migration order in §7.5, and land the
-`categories` ALTER (§4a in `schema.sql`) before anything that references its seeded rows.
+- Checkout wasn't atomic — `ticket_types.sold_quantity` had the same read-then-write race as
+  `Product.quantity`. Fixed; see `project_status.md` §4 item 1.
+- `require_manager_or_admin` didn't exist. Built in `app/deps/auth.py`, wired into every CRUD
+  router with real `company_id` scoping (§4).
+- Trigger errors had no clean handler — a raw Postgres `RAISE EXCEPTION` surfaced as an
+  unhandled DB-layer exception, not a 4xx. Fixed via `app/exception/db_triggers.py`
+  (`architecture.md` §2).
+- The lottery draw job needed its own concurrency guard against two runs processing the same
+  campaign at once. Fixed with row locking — see `project_status.md` §8.
+- Webhook idempotency for a real payment gateway was deferred until PayPal was actually
+  integrated; see `project_status.md` §7 for how it landed (a payment-status guard, not an
+  event-id ledger).
 
-### 7.2 High priority — fix alongside building ticket issuance, not after
+### 7.3 Cheap fixes (done)
 
-- **Checkout isn't atomic** (`CLAUDE.md` §5 item 3). `ticket_types.sold_quantity` inherits the
-  exact same read-then-write race as `Product.quantity` — except here, overselling means selling
-  the same seat twice, not just going stock-negative. This needs fixing before, not after, the
-  first real ticket purchase flow is built on top of it.
-- ~~**No `require_manager_or_admin` dependency yet**~~ (`CLAUDE.md` item 8). **FIXED**: built
-  (`app/deps/auth.py`) and wired into the existing routers per §4's role table. `group`/`idol`
-  CRUD routers now use it too, **plus real `company_id` scoping** (§4) — a manager can no longer
-  touch another company's groups/idols. Company-id scoping is still needed for the remaining new
-  routers this design adds (venue, concert, ticket_type, campaign, album) once they're built, and
-  for `products` (no direct `company_id` column — see §6's "Still open" note on this).
-- **Trigger errors have nowhere clean to land.** None of the 12 triggers in `schema.sql` have a
-  corresponding service/router-level handler. A raw Postgres `RAISE EXCEPTION` (from
-  fan-only-purchase, the anti-resale cap, the entry cap, the preference-required check, the
-  ticket-type/concert mismatch check, the album/lightstick-details exclusivity check, etc.)
-  will surface through SQLAlchemy as a raw DB-layer exception, not a clean 4xx. This needs the
-  same "custom exception → caught in router → mapped to status" treatment `CLAUDE.md` already
-  establishes for checkout (`app/exception/checkout.py`) — extended to cover trigger messages.
-  Nothing in this design has specified that mapping yet. (Trigger count grew this round: +1 for
-  `lottery_preferences`↔`concert_id`, +1 for the entry cap replacing what used to be a plain
-  `UNIQUE` constraint, +2 for the album/lightstick mutual-exclusivity pair.)
-- **The draw job needs its own concurrency guard.** Nothing here stops two draw-job runs (a retry,
-  a double-scheduled task) from processing the same `lottery_campaigns` row at once. Needs a lock
-  — e.g. `SELECT ... FOR UPDATE` while transitioning `status: open → drawn` — designed in before
-  the job is built, not discovered after a duplicate draw in production.
-- **Webhook idempotency** (`CLAUDE.md` §5 item 7) — moot for now: the Paypal webhook and its
-  gateway integration were removed (real payment gateway work is deferred to a later phase; only
-  the mock gateway remains). Whichever gateway gets wired in during that phase will need its
-  webhook handler keyed off the provider's event id before it's allowed to issue tickets, so a
-  replay can't mint a second one — re-derive this from scratch against that gateway's actual
-  webhook semantics rather than assuming Paypal's.
+- Category update checked `is_active` instead of `is_admin` — fixed.
+- Passwords/reset tokens traveled as query params instead of JSON bodies — fixed, moved to
+  Pydantic request bodies.
+- No `.dockerignore` — added.
 
-### 7.3 Cheap, no reason to defer — all three now FIXED
+### 7.4 Deferred, tracked in `project_status.md` §5
 
-- ~~Category update authorization bug — checks `is_active` instead of `is_admin`~~ (`CLAUDE.md`
-  item 6). Fixed: `PUT /Categories/update` now checks `current_user.is_admin`, matching `/add`
-  and `/delete` on the same router.
-- ~~Passwords/reset tokens travel as query params, not JSON bodies~~ (`CLAUDE.md` item 7). Fixed:
-  `change-password`, `forgot-password`, `set-password`, and `make-admin` all now take a Pydantic
-  request body (`app/schema/identity/user.py`) instead of bare function params — nothing sensitive rides
-  in the query string or ends up in access logs/browser history anymore.
-- ~~No `.dockerignore`~~ (`CLAUDE.md` item 10). Fixed: added, excluding `.git/`, Python/venv/editor
-  cruft, and — the actual risk, since a local `.env` exists in this repo — `.env`/`.env.*` (with
-  `.env.example` explicitly re-included).
-
-### 7.4 Deliberately deferred — next phase, not forgotten
-
-- **Payment failure handling** — explicitly scoped out this round; every trigger and flow here
-  assumes success.
-- **The direct/"reservation" checkout flow** (non-lottery ticket purchase) — the schema supports
-  it (`sale_method = 'direct'`), but only the lottery path has been sequence-diagrammed (§5.2).
-- **The draw job's actual runtime** — scheduled task, queue worker, or admin-triggered action;
-  the schema is agnostic, nothing's been chosen.
-- **UI messaging** for "you can't apply to this lottery because you haven't ranked that tier yet"
-  — not a schema question, but a real product gap if unaddressed (§6).
-- **`real_name` on idols** — deliberately left unmodeled (§3.4).
-- **ETL / data pipeline** — untouched by design, matching `CLAUDE.md` §7's own framing as future
-  work. **Weaker than before this round's scope change**: with `source_order_item_id` gone, a
-  lottery entry no longer carries any purchase context, so the "traceable purchase → entry → draw
-  → ticket funnel" this section previously promised only has three connected stages, not four
-  (§6). Worth deciding whether the pipeline needs that link back before it's designed, since
-  reintroducing it later means schema changes, not just pipeline work.
-- **Product "personality"** (theming, voice, fandom flavor) — a backend design pass doesn't touch
-  this; `idol_colors` is the one seed of it so far.
+Payment failure handling, the direct/non-lottery checkout flow's own sequence diagram, UI
+messaging for an unranked-tier lottery application, `idols.real_name`, the ETL/data pipeline, and
+product "personality" (theming/voice) are all still open — see `project_status.md` for current
+status on each.
 
 ### 7.5 Migration sequencing
 
-18 new tables and 12 triggers (trigger count up from 8: +1 `trg_lottery_preferences_ticket_type_
-concert`, +1 `trg_lottery_entries_cap` replacing the plain `UNIQUE(campaign_id, user_id)`
-constraint it used to be, +2 for the `trg_album_details_exclusive_kind`/
-`trg_lightstick_details_exclusive_kind` pair) is still a lot of surface for "one concern per
-migration" (`CLAUDE.md`'s own convention). Suggested order, respecting FK dependencies:
-`management_companies` → `idol_colors` → `groups` → `idols` → `positions`/`idol_positions` →
-`venues` → `concerts` → `concert_performers` → `ticket_types` (+ its capacity trigger) →
-`lottery_preferences` (+ its ticket-type/concert-match trigger) → `lottery_campaigns` (+
-`max_entries_per_user`) → `lottery_entries` (+ its preference-required trigger and its entry-cap
-trigger — no longer a plain table constraint, so this now needs the trigger migration step it used
-to skip) → `tickets` (+ its trigger) → *ALTER `categories`* (UNIQUE + `is_resale_capped` +
-capped-by-default seed rows — this one's on an existing table, so it has to land before anything
-that references a seeded category id, but after nothing new) → `album_details` →
-`lightstick_details` (+ the mutual-exclusivity trigger pair, once both tables exist) → `genres`/
-`album_genres`. The fan-only-purchase and anti-resale triggers attach to already-existing
-`cart`/`orders`/`orders_items`, so they're not FK-blocked by anything above — landing them last
-just keeps every migration before that point scoped to genuinely new tables.
-
-**Already landed:** `management_companies`, `idol_colors`, `positions`, the `Users.role`/
-`Users.company_id` columns and FK, this round's `71b1b0443c96` (`products.category_id` →
-`NOT NULL`, with backfill), the `require_manager_or_admin` dependency (application code, no
-migration), and `groups` (`b51c6b2b4459`), `idols` (`3bb50b855520`), and `idol_positions`
-(`ccbe2a901666`) — chained cleanly onto the head, one linear chain, no branches.
-
-**ORM models and CRUD endpoints now exist for all six of these tables** (§4's "CRUD endpoints
-now exist" paragraph has the detail) — `idol_colors`/`positions` were table-only migrations for a
-round (no ORM model, nothing read them via SQLAlchemy), but that gap is now closed:
-`app/db/models/talent/idol_color.py`, `position.py` (`Position` + `IdolPosition`), `group.py`, and
-`idol.py` all exist, wired into `app/db/base.py`. Verified against a real circular-import test in
-both directions (base-first and model-first, same technique that caught the original circular
-import bug in `CLAUDE.md` §5 item 3) — the new relationships don't reopen it.
+18 tables, 12 triggers, ordered by FK dependency: `management_companies` → `idol_colors` →
+`groups` → `idols` → `positions`/`idol_positions` → `venues` → `concerts` →
+`concert_performers` → `ticket_types` → `lottery_preferences` → `lottery_campaigns` →
+`lottery_entries` → `tickets` → the `categories` ALTER → `album_details` → `merch_details` →
+`genres`/`album_genres`. The fan-only-purchase and anti-resale triggers attach to
+already-existing `cart`/`orders`/`orders_items`, so they land last regardless of FK order. All 18
+tables now have a full ORM model + schema + service + router (§8).
 
 **All remaining tables in this order are now migrated.** `venues` (`965f5718222d`) → `concerts`
 (`f47846f1a638`) → `concert_performers` (`f6117c2d7b78`) → `ticket_types` (`fcea6e36cede`, +
@@ -1239,10 +1095,9 @@ part) → `album_details` (`7c98b35ff6d2`) → `genres` (`44ccae8cac48`) → `al
 (`1afe6efdcccb`) → `lightstick_details` (`a9e33e281ffe`) → the album/lightstick mutual-exclusivity
 trigger pair (`e42a17b5f4ca`) → the fan-only-purchase trigger on
 `cart`/`orders`/`lottery_entries`/`tickets` (`11cc2a1672a1`) → the anti-resale cap trigger on
-`orders_items` (`7abe0b6123b3`). Live head is now `7abe0b6123b3` — 38 migrations total, one
-linear chain, no branches, verified against a chain-walk script the same way as every earlier
-batch this session. Table/trigger/function counts now match `schema.sql`'s own totals exactly:
-18 tables, 12 triggers, 8 trigger functions.
+`orders_items` (`7abe0b6123b3`). Live head is `7abe0b6123b3` — 38 migrations, one linear chain,
+no branches. Table/trigger/function counts match `schema.sql`'s own totals: 18 tables, 12
+triggers, 8 trigger functions.
 
 Every table/trigger/function here was transcribed directly from `schema.sql` (the reference DDL),
 not re-derived — column types, constraints, `ON DELETE`/`ON UPDATE` behavior, and trigger bodies
@@ -1257,41 +1112,32 @@ album/lightstick mutual-exclusivity pair) gets its own migration since it can't 
 table alone.
 
 `idols`/`groups`/`idol_positions` stay in `public` — shared-schema + `company_id` +
-service-layer scoping (§4) is the multi-tenancy model going forward, not a per-tenant-schema
-split. A per-tenant-schema design was drafted and considered for `management_companies` in an
-earlier round of this doc; it was explicitly removed rather than deferred — noted here so it
-isn't quietly re-proposed later without knowing it was already discussed and decided against.
+service-layer scoping (§4) is the multi-tenancy model, not per-tenant schemas. A per-tenant-schema
+design for `management_companies` was drafted and explicitly rejected, not just deferred.
 
-**Later addition, well past the `7abe0b6123b3` head above**: `df79d71c6a2c` added `notifications`
-(§3.19). On top of that, `b60aec9ffc02` merges the `Lightstick` category into `Merch` and renames
-`lightstick_details` → `merch_details` (§3.15/§3.17) — a backfill (reassign every `Lightstick`
-product to `Merch`) and a category-row delete, then the table/constraint/index renames, then a
-`CREATE OR REPLACE` of `fn_enforce_single_product_detail_kind()` since a table rename doesn't
-rewrite the table name hardcoded in that function's PL/pgSQL body. Both are forward migrations,
-not in-place edits — unlike the UUID PK rewrite (§1's intro), every migration up through at least
-`10f9dfa05636` has by now actually run against a real Postgres instance (this project's own local
-Docker Compose stack, confirmed reachable and at that exact head in one session), so editing an
-already-applied migration in place is no longer an option the way it was earlier in this project.
+**Later additions, past the `7abe0b6123b3` head above**: `df79d71c6a2c` adds `notifications`
+(§3.19). `b60aec9ffc02` merges the `Lightstick` category into `Merch` and renames
+`lightstick_details` → `merch_details` (§3.15/§3.17) — backfills every `Lightstick` product to
+`Merch`, deletes that category row, renames the table/constraints/indexes, and re-creates
+`fn_enforce_single_product_detail_kind()` since a table rename doesn't rewrite the table name
+hardcoded into that function's body. Both are forward migrations, not in-place edits — every
+migration through `10f9dfa05636` has run against a real Postgres instance, so editing an
+already-applied migration is no longer an option.
 
-`b60aec9ffc02` turned out to be incomplete, found by querying the live local Postgres directly
-after applying it rather than by re-reading the migration source: it only renamed the objects it
-had given an explicit name to (the `CHECK` constraint, the 3 secondary indexes) — the table's
-primary key constraint and all 4 foreign key constraints were never explicitly named back in
-`a9e33e281ffe`, so Postgres auto-named them `lightstick_details_pkey`/`lightstick_details_
-<column>_fkey`, and `ALTER TABLE ... RENAME TO` doesn't touch constraint names at all, given or
-auto-assigned alike. `133d9b4f9d17` renames all 5. Worth remembering as a general lesson for any
-future table rename in this project: enumerate *every* constraint on the table from Postgres's own
-catalogs before considering a rename migration complete — a migration's own source text only shows
-you the objects someone bothered to name.
+`b60aec9ffc02` was incomplete: it only renamed objects with an explicit name (the `CHECK`
+constraint, 3 secondary indexes) — the primary key and all 4 foreign keys were never explicitly
+named back in `a9e33e281ffe`, so Postgres auto-named them (`lightstick_details_pkey`, etc.), and
+`ALTER TABLE ... RENAME TO` doesn't touch constraint names either way. `133d9b4f9d17` renames all
+5. Lesson for any future table rename: enumerate every constraint from Postgres's own catalogs
+before calling a rename migration complete — the migration's own source only shows the objects
+someone bothered to name.
 
 ## 8. ORM/CRUD build-out: the tables migrated in §7.5
 
-Every table migrated in §7.5 now has a full ORM model + Pydantic schema + service + FastAPI
-router: `venues`, `concerts`/`concert_performers`, `ticket_types`, `lottery_preferences`,
+Every table migrated in §7.5 has a full ORM model + Pydantic schema + service + FastAPI router:
+`venues`, `concerts`/`concert_performers`, `ticket_types`, `lottery_preferences`,
 `lottery_campaigns`, `lottery_entries`, `tickets`, `album_details`, `genres`/`album_genres`,
-`lightstick_details`. Also closed in the same pass: `categories.is_resale_capped` (added by
-`67536a8e127a`) existed in the DB but was never added to `app/db/models/marketplace/category.py` — the ORM
-model, schema, service, and router are all updated now.
+`merch_details`.
 
 **Role wiring, table by table:**
 - `venues` — plain admin-gated CRUD, public reads. Not company-scoped: a venue is a shared
@@ -1303,7 +1149,7 @@ model, schema, service, and router are all updated now.
   clean 400 instead of tripping `chk_ticket_types_capacity` as a raw `IntegrityError`.
 - `lottery_campaigns` — manager/admin CRUD, scoped through a two-level join
   (`ticket_type_id` → `concert_id` → `concert.company_id`).
-- `album_details`, `lightstick_details`, `album_genres` — manager/admin CRUD, scoped by
+- `album_details`, `merch_details`, `album_genres` — manager/admin CRUD, scoped by
   *whichever* of `idol_id`/`group_id` is set on the row (resolved to that idol's or group's
   `company_id`). `idol_id`/`group_id` are write-once at creation and excluded from the `Update`
   schemas — same "ownership is immutable after creation" convention as `Group`/`Idol.company_id`.
@@ -1329,22 +1175,18 @@ model, schema, service, and router are all updated now.
   add, only admin can delete (cross-company impact). Already seeded by the migration
   (K-Pop/Pop/Dance/... ), so the CRUD endpoints are for extending the list, not re-seeding it.
 
-**Verification, given no live Postgres/FastAPI/SQLAlchemy is reachable from either the device
-shell or this cloud container (network blocked both places — confirmed via failed `pip install`
-attempts):** a full `py_compile` sweep across every file in `app/` plus `main.py` passed clean.
-Two static checks then substituted for a real import/DB round-trip, since the stub-package
-circular-import technique used earlier this session wasn't rebuilt this round: (1) an AST-based
-scan of every ORM model's `ForeignKey` targets and `relationship(back_populates=...)` pairs,
-confirming every FK points at a real table.column and every `back_populates` pair resolves and
-is reciprocal — 28 model classes, no issues found; (2) an AST-based scan of all 299 intra-app
-`from app.X import Y` statements, confirming every imported name actually exists in its target
-module — none unresolved. Neither check exercises real SQL or a running app, so a live-DB smoke
-test (`alembic upgrade head` + hitting each new endpoint) is still the recommended next step
-before treating this as done.
+**Verification, without a reachable live Postgres/FastAPI process:** a full `py_compile` sweep
+across `app/` and `main.py` passes clean. Two static checks stand in for a real import/DB
+round-trip: (1) an AST-based scan of every ORM model's `ForeignKey` targets and
+`relationship(back_populates=...)` pairs, confirming every FK points at a real table.column and
+every `back_populates` pair is reciprocal; (2) an AST-based scan of every intra-app
+`from app.X import Y` statement, confirming the imported name exists in its target module. Neither
+exercises real SQL or a running app — `alembic upgrade head` plus hitting each new endpoint
+against a live DB is still the recommended next step.
 
 All new routers are registered in `main.py` in FK order (`venues` → `concerts` → `ticket_types`
 → `lottery_preferences` → `lottery_campaigns` → `lottery_entries` → `tickets` →
-`album_details` → `genres` → `lightstick_details`).
+`album_details` → `genres` → `merch_details`).
 
 ## 9. Image uploads: local storage now, S3-compatible on deploy
 
@@ -1396,15 +1238,11 @@ error.
 
 **New endpoints:** `POST /idols/{id}/image` and `POST /products/{id}/image`, both
 `image: UploadFile = File(...)` (required), replacing only the image on an existing idol/product
-without touching any other field — the complement to the inline upload on creation, for changing
-a photo later. `set_idol_image`/`set_product_image` (`idol_service.py`/`product_service.py`) are
-the corresponding service functions; the idol one follows the existing
-`"forbidden"`/`"not_found"` sentinel convention from §4's scoping work, the product one returns
-the ORM object or `False` (matching every other function in `product_service.py`, none of which
-use the sentinel-string convention).
+without touching any other field — the complement to the inline upload on creation.
+`set_idol_image`/`set_product_image` (`idol_service.py`/`product_service.py`) are the
+corresponding service functions; `set_idol_image` raises `NotFoundError`/`ForbiddenError`
+(`architecture.md` §2), `set_product_image` returns the ORM object or `False`.
 
-**Verification, same static-analysis substitute as §8** (still no live Postgres/FastAPI reachable
-from either environment this session runs in): `py_compile` across every file in `app/` +
-`main.py` + `alembic/` passed clean; the AST-based FK/relationship check (28 model classes) and
-the AST-based intra-app import-resolution check (125 files scanned) both found no issues after
-these changes.
+**Verification**: same static-analysis substitute as §8 — `py_compile` across `app/`, `main.py`,
+and `alembic/` passes clean; the AST-based FK/relationship and import-resolution checks found no
+issues.
