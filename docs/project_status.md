@@ -128,6 +128,23 @@ fail. Fixed at the root: `tests/conftest.py` now redirects `DATABASE_URL` onto a
 session. `pytest tests` is now deterministic regardless of dev-DB state and never touches real
 data. `pytest tests/unit` needs no live Postgres at all — the redirect is a pure string rewrite.
 
+**Unit coverage pass (`pytest --cov=app`, 46% → substantially higher, 213 → 393 unit tests)**:
+filled in every events-domain service that had zero unit coverage (`ticket_type_service`,
+`lottery_campaign_service`, `direct_sale_campaign_service`, `lottery_entry_service`,
+`lottery_preference_service`, `concert_service`, `venue_service`), added `test_cache_service.py`
+(previously untested despite `CacheService` being the whole caching layer — its tests run against
+`tests/conftest.py`'s session-wide `fake_redis`, not a per-test mock, so a cache hit genuinely
+skips the wrapped service call and a delete genuinely clears the key), added
+`test_notification_service.py`, and filled in missing branches in the existing
+`product_service`/`payment_service`/`shipping_service`/`user_service` test files (`get_product_detail`'s
+recommendation logic, `finalize_paypal_payment`'s ticket/order branches, `verify_rtoken`, etc.).
+
+**Deliberately not covered here**: `ticket_service.checkout_ticket`/`checkout_won_ticket` and
+`order_service.checkout` — the `with_for_update()` pessimistic-locking paths behind item 1's
+overselling-race fix. `lottery_draw_service`, which uses the same locking pattern, already has its
+own dedicated test file; these two don't. Left out on purpose rather than gold-plated in a pass
+that was otherwise routine CRUD/RBAC coverage — see §5.
+
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
 Ordered roughly by how much each matters to the idol-ticket domain specifically. Items marked
@@ -461,9 +478,61 @@ newly introduced.
     `payment_service` reads live DB state, not the cache) — it's a display-only staleness, same
     category as item 28's accepted venue/idol-color staleness, just flagged explicitly since it
     touches ticket availability rather than a cosmetic field.
+34. **Integration coverage pass**, run against a real Postgres+Redis (the pre-existing local
+    `i-dolly-backend` Docker Compose project's `postgres`/`redis` containers, driven via the
+    already-built `i-dolly-backend-app` image rather than a fresh env — every test in this item was
+    actually executed, not just statically verified, which is the first time that's been possible
+    for integration tests in a session without a live DB otherwise reachable, per §3). Added
+    `tests/integration/identity/test_profile.py` (`/profile/me`, `/change-password`,
+    `/forgot-password`, `/set-password`, `/logout`, `/make-admin`, `/create-manager`) and
+    `test_account.py` (`/account/refresh`, `/verify-request`, `/verify`);
+    `tests/integration/events/test_venues.py` (full `/venues` CRUD); `tests/integration/shared/
+    test_notifications.py` (all four `/notifications/*` endpoints, seeded with a direct
+    `type="password_reset"` row — the one notification type needing no order/ticket/lottery_entry/
+    concert FK); `tests/integration/marketplace/test_payment.py` (`/payment/status/*`, plus
+    `/payment/paypal/capture` and `/payment/paypal/webhook` with `create_order`/`capture_order`/
+    `verify_webhook_signature` mocked — no real PayPal sandbox call). Extended
+    `tests/integration/test_permissions.py` (reusing its existing `Factory`) with
+    `/lottery_preferences/*`, `/lottery_entries/*` beyond `/apply`, and `/tickets/*` beyond
+    `/checkout`.
+
+    **Found and fixed along the way**: `UserService.promote_admin` (backing `/profile/make-admin`)
+    only ever set the deprecated `is_admin` column, never `role` — but `require_admin` checks
+    `role`, which `database-design.md`/`architecture.md` already document as the actual source of
+    truth. So promoting a user through the only endpoint that does it left them just as unable to
+    reach admin routes as before. Now sets both (still sets `is_admin` too, since that column isn't
+    dropped yet). Caught by a regression test in `test_profile.py`
+    (`test_make_admin_promotes_role_not_just_the_deprecated_flag`) that asserts the promoted user's
+    *existing* access token gains admin access immediately, since `role` is read fresh from the DB
+    per request rather than baked into the token. The two unit tests that exercised the old
+    `is_admin`-only check (`test_user_service.py`) were updated to match.
+
+    **Not covered here, still open**: group/idol CRUD *success* paths as an actual authenticated
+    manager/admin (`test_permissions.py`'s `Factory` has no `group()` builder, and every existing
+    group/idol test — in the domain-split `test_main` files — only reaches the 401/403/404 RBAC
+    boundary, never a real 200). `/payment/status/order/{id}`'s found-case (needs a full
+    product/cart/shipping-address chain behind a real `/order/checkout`, not built here — only its
+    401/404 paths are covered). See §5 for both.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 
+- **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
+  only reaches the RBAC/wiring boundary (401 unauthenticated, 403 wrong role/company, 404
+  not-found-in-empty-table); none proves an actual authenticated manager/admin successfully
+  creates/updates/deletes their own company's group or idol over real HTTP. `test_permissions.py`'s
+  `Factory` would need a `group()` builder (mirrors its existing `idol()`) to build this cheaply.
+- **`/payment/status/order/{id}`'s found-case** — only its 401/404 paths are integration-tested
+  (item 34); a real found-case needs a full product/category/shipping-address chain behind an
+  actual `/order/checkout` call, not built yet. The equivalent ticket-side endpoint
+  (`/payment/status/ticket/{id}`) is fully covered, since a real ticket is cheap to stand up
+  (concert/venue/ticket_type/campaign, already had a `Factory` shape to reuse).
+- **Unit tests for the checkout concurrency/locking paths** (`ticket_service.checkout_ticket`/
+  `checkout_won_ticket`, `order_service.checkout`) — the interview-defensible part of item 1's
+  overselling-race fix (why the row lock has to be held for the whole operation, why UUID-ordering
+  the `order_service` lock acquisition prevents deadlock). Per this project's own convention for
+  this category of logic, that reasoning needs to come from actually writing the tests, not from
+  having them handed over already passing — see the coverage pass note in §3 for what *was*
+  covered in the same session this gap was identified.
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.
