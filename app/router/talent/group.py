@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, List
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -44,18 +44,18 @@ async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session
     return result
 
 @router.get("/groups-page", response_model=GroupsPageRead)
-async def get_groups_page_data(db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_groups_page_data(db: Session = Depends(get_db)) -> GroupsPageRead:
     result = GroupService.get_groups_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No groups found")
     return result
 
 @router.get("/manager-groups-page", response_model=ManagerGroupsPageRead)
-async def get_manager_groups_page_data(db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_manager_groups_page_data(db: Session = Depends(get_db)) -> ManagerGroupsPageRead:
     return GroupService.get_manager_groups_page(db)
 
 @router.get("/{id}/detail", response_model=GroupDetailRead)
-async def get_group_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_group_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> GroupDetailRead:
     result = GroupService.get_group_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Group not found")

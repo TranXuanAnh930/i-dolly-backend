@@ -1,5 +1,4 @@
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -11,7 +10,7 @@ from app.deps.auth import get_current_user
 from app.deps.db import get_db
 from app.exception.db_triggers import TriggerViolationError
 from app.schema.common import MessageResponse
-from app.schema.marketplace import CartItem
+from app.schema.marketplace import CartDetailRead, CartItem
 from app.services.marketplace.cart_service import CartService
 
 router = APIRouter(prefix="/cart", tags=["Cart"])
@@ -28,8 +27,8 @@ async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), 
         raise HTTPException(status_code=404, detail="User not found")
     return cart
 
-@router.get("/see_cart")
-async def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> dict[str, Any]:
+@router.get("/see_cart", response_model=CartDetailRead)
+async def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> CartDetailRead:
     cart = CartService.see_cart(db, user.id)
     if not cart:
         raise HTTPException(status_code=404, detail="Cart is empty")

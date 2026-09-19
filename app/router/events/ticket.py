@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, List
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -97,7 +97,7 @@ async def get_concert_sales(
     limit: int = Query(10, ge=1, le=50),
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+) -> TicketSalesPageRead:
     try:
         return TicketService.get_concert_ticket_sales(db, concert_id, current_user, page, limit)
     except ServiceError as e:

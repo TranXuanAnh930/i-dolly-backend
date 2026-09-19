@@ -1,12 +1,12 @@
 import uuid
-from typing import Any, Literal
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.db.models.identity import Users
 from app.db.models.marketplace import Cart, Product
 from app.exception.db_triggers import FanOnlyPurchaseError, commit_or_raise
-from app.schema.marketplace import CartItem
+from app.schema.marketplace import CartDetailRead, CartItem
 
 
 class CartService:
@@ -36,12 +36,12 @@ class CartService:
         return stmt
 
     @staticmethod
-    def see_cart(db:Session, user_id:uuid.UUID) -> dict[str, Any] | None:
+    def see_cart(db:Session, user_id:uuid.UUID) -> CartDetailRead | None:
         items = db.query(Cart).filter(Cart.user_id==user_id).all()
         if not items:
             return None
         total_price = sum(item.total_price for item in items)
-        return {"items" : items, "total_price" : total_price}
+        return CartDetailRead(items=items, total_price=total_price)
 
     @staticmethod
     def remove_cart(db:Session, user_id:uuid.UUID, cart_id:uuid.UUID) -> Literal[True] | None:

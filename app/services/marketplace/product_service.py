@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, List, Literal
+from typing import List, Literal
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -7,7 +7,21 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import AlbumDetail, AlbumGenre, Category, MerchDetail, Order, OrderItem, Product
 from app.db.models.talent import Group, Idol, IdolColor
 from app.exception.db_triggers import commit_or_raise, flush_or_raise
-from app.schema.marketplace import ProductCreate, ProductWithDetailCreate
+from app.schema.marketplace import (
+    AlbumMini,
+    ArtistRef,
+    ManagerProductFormPageRead,
+    ManagerProductsPageRead,
+    ProductCard,
+    ProductCreate,
+    ProductDetailRead,
+    ProductRead,
+    ProductSaleRead,
+    ProductSalesPageRead,
+    ProductWithCategoryRead,
+    ProductWithDetailCreate,
+    StorePageRead,
+)
 from app.utils.resale import RESALE_CAP_QUANTITY
 
 
@@ -68,19 +82,19 @@ class ProductService:
         return db_products
 
     @staticmethod
-    def search_product(db:Session, id:uuid.UUID) -> dict[str, Any] | Literal[False]:
+    def search_product(db:Session, id:uuid.UUID) -> ProductWithCategoryRead | Literal[False]:
         db_product = db.query(Product).options(selectinload(Product.category)).filter(Product.id==id).first()
         if not db_product:
             return False
-        return {
-            "id": db_product.id,
-            "name": db_product.name,
-            "price": db_product.price,
-            "description": db_product.description,
-            "quantity": db_product.quantity,
-            "image_url": db_product.image_url,
-            "category": db_product.category
-        }
+        return ProductWithCategoryRead(
+            id=db_product.id,
+            name=db_product.name,
+            price=db_product.price,
+            description=db_product.description,
+            quantity=db_product.quantity,
+            image_url=db_product.image_url,
+            category=db_product.category,
+        )
 
     @staticmethod
     def add_product(db: Session, product:ProductCreate) -> Product | Literal[False]:
@@ -267,7 +281,7 @@ class ProductService:
     # this same shape, assembled here in one pass instead of per-card lookups.
 
     @staticmethod
-    def _build_product_cards(db: Session, products: list[Product]) -> list[dict[str, Any]]:
+    def _build_product_cards(db: Session, products: list[Product]) -> list[ProductCard]:
         if not products:
             return []
         product_ids = [p.id for p in products]
@@ -300,11 +314,11 @@ class ProductService:
             key=lambda pair: len(pair[1].name), reverse=True,
         )
 
-        def artist_ref(kind: Literal["idol", "group"], entity: Idol | Group) -> dict[str, Any]:
+        def artist_ref(kind: Literal["idol", "group"], entity: Idol | Group) -> ArtistRef:
             color_hex = entity.color.hex_code if kind == "idol" and getattr(entity, "color", None) else None
-            return {"type": kind, "id": entity.id, "name": entity.name, "color_hex": color_hex}
+            return ArtistRef(type=kind, id=entity.id, name=entity.name, color_hex=color_hex)
 
-        def resolve_artist(product: Product, album: AlbumDetail | None, merch: MerchDetail | None) -> dict[str, Any] | None:
+        def resolve_artist(product: Product, album: AlbumDetail | None, merch: MerchDetail | None) -> ArtistRef | None:
             for detail in (album, merch):
                 if not detail:
                     continue
@@ -321,65 +335,65 @@ class ProductService:
         for product in products:
             album = album_by_product.get(product.id)
             merch = merch_by_product.get(product.id)
-            cards.append({
-                "id": product.id,
-                "name": product.name,
-                "price": product.price,
-                "description": product.description,
-                "quantity": product.quantity,
-                "image_url": product.image_url,
-                "category": product.category.name if product.category else None,
-                "resale_cap_quantity": RESALE_CAP_QUANTITY if (product.category and product.category.is_resale_capped) else None,
-                "album": {
-                    "release_date": album.release_date,
-                    "track_count": album.track_count,
-                    "cover_image_url": album.cover_image_url,
-                } if album else None,
-                "genres": genres_by_product.get(product.id, []),
-                "artist": resolve_artist(product, album, merch),
-            })
+            cards.append(ProductCard(
+                id=product.id,
+                name=product.name,
+                price=product.price,
+                description=product.description,
+                quantity=product.quantity,
+                image_url=product.image_url,
+                category=product.category.name if product.category else None,
+                resale_cap_quantity=RESALE_CAP_QUANTITY if (product.category and product.category.is_resale_capped) else None,
+                album=AlbumMini(
+                    release_date=album.release_date,
+                    track_count=album.track_count,
+                    cover_image_url=album.cover_image_url,
+                ) if album else None,
+                genres=genres_by_product.get(product.id, []),
+                artist=resolve_artist(product, album, merch),
+            ))
         return cards
 
     @staticmethod
-    def get_store_page(db: Session) -> dict[str, Any] | Literal[False]:
+    def get_store_page(db: Session) -> StorePageRead | Literal[False]:
         products = db.query(Product).options(joinedload(Product.category)).all()
         if not products:
             return False
         groups = db.query(Group).all()
-        return {"products": ProductService._build_product_cards(db, products), "groups": groups}
+        return StorePageRead(products=ProductService._build_product_cards(db, products), groups=groups)
 
     @staticmethod
-    def get_product_detail(db: Session, id: uuid.UUID) -> dict[str, Any] | Literal[False]:
+    def get_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | Literal[False]:
         product = db.query(Product).options(joinedload(Product.category)).filter(Product.id == id).first()
         if not product:
             return False
         all_products = db.query(Product).options(joinedload(Product.category)).all()
-        cards_by_id = {c["id"]: c for c in ProductService._build_product_cards(db, all_products)}
+        cards_by_id = {c.id: c for c in ProductService._build_product_cards(db, all_products)}
         card = cards_by_id[product.id]
 
         # Same-artist products (any type/category), plus — for album-family
         # items only — same-genre products, deduped and capped at 8. Mirrors
         # ProductDetailPage.vue's previous client-side recommendation logic.
-        my_genre_ids = {genre.id for genre in card["genres"]}
+        my_genre_ids = {genre.id for genre in card.genres}
         seen = {product.id}
         recommendations = []
-        if card["artist"]:
+        if card.artist:
             for other_id, other in cards_by_id.items():
                 if other_id in seen:
                     continue
-                if other["artist"] and other["artist"]["type"] == card["artist"]["type"] and other["artist"]["id"] == card["artist"]["id"]:
+                if other.artist and other.artist.type == card.artist.type and other.artist.id == card.artist.id:
                     seen.add(other_id)
                     recommendations.append(other)
-        if card["album"] and my_genre_ids:
+        if card.album and my_genre_ids:
             for other_id, other in cards_by_id.items():
-                if other_id in seen or not other["album"]:
+                if other_id in seen or not other.album:
                     continue
-                other_genre_ids = {genre.id for genre in other["genres"]}
+                other_genre_ids = {genre.id for genre in other.genres}
                 if my_genre_ids & other_genre_ids:
                     seen.add(other_id)
                     recommendations.append(other)
 
-        return {"product": card, "recommendations": recommendations[:8]}
+        return ProductDetailRead(product=card, recommendations=recommendations[:8])
 
     # --- manager/admin settings pages (see idol_service.py's equivalent
     # comment — an empty list here is a normal state, not a 404). Plain
@@ -388,16 +402,16 @@ class ProductService:
     # even queried here.
 
     @staticmethod
-    def _product_read_dict(product: Product) -> dict[str, Any]:
-        return {
-            "id": product.id,
-            "name": product.name,
-            "price": product.price,
-            "description": product.description,
-            "quantity": product.quantity,
-            "image_url": product.image_url,
-            "category": product.category.name if product.category else None,
-        }
+    def _product_read_dict(product: Product) -> ProductRead:
+        return ProductRead(
+            id=product.id,
+            name=product.name,
+            price=product.price,
+            description=product.description,
+            quantity=product.quantity,
+            image_url=product.image_url,
+            category=product.category.name if product.category else None,
+        )
 
     # Batch version of _resolve_product_company_id — one query per detail table
     # instead of two per product. A product with neither an album_details nor a
@@ -445,15 +459,15 @@ class ProductService:
     # without this, a manager could see (and try to edit) another company's
     # products and only find out it was forbidden after submitting the form.
     @staticmethod
-    def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None) -> dict[str, Any]:
+    def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None) -> ManagerProductsPageRead:
         products = db.query(Product).options(joinedload(Product.category)).all()
         if company_id is not None:
             company_by_product = ProductService.resolve_product_company_ids(db, products)
             products = [p for p in products if company_by_product[p.id] in (None, company_id)]
-        return {"products": [ProductService._product_read_dict(p) for p in products]}
+        return ManagerProductsPageRead(products=[ProductService._product_read_dict(p) for p in products])
 
     @staticmethod
-    def get_manager_product_form_page(db: Session, company_id: uuid.UUID | None = None) -> dict[str, Any]:
+    def get_manager_product_form_page(db: Session, company_id: uuid.UUID | None = None) -> ManagerProductFormPageRead:
         products = db.query(Product).options(joinedload(Product.category)).all()
         if company_id is not None:
             company_by_product = ProductService.resolve_product_company_ids(db, products)
@@ -467,13 +481,13 @@ class ProductService:
         idols = db.query(Idol).all()
         groups = db.query(Group).all()
         colors = db.query(IdolColor).all()
-        return {
-            "products": [ProductService._product_read_dict(p) for p in products],
-            "categories": categories,
-            "idols": idols,
-            "groups": groups,
-            "colors": colors,
-        }
+        return ManagerProductFormPageRead(
+            products=[ProductService._product_read_dict(p) for p in products],
+            categories=categories,
+            idols=idols,
+            groups=groups,
+            colors=colors,
+        )
 
     # --- sales history — replaces the manager products page's old hard-delete
     # action (deleting a Product with any order history would CASCADE-delete
@@ -484,7 +498,7 @@ class ProductService:
     # a read-only view of what actually sold, paginated newest-first same as
     # /products/pagination's page/limit/count/data shape.
     @staticmethod
-    def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> dict[str, Any] | Literal["not_found", "forbidden"]:
+    def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> ProductSalesPageRead | Literal["not_found", "forbidden"]:
         db_product = db.get(Product, product_id)
         if not db_product:
             return "not_found"
@@ -502,14 +516,14 @@ class ProductService:
         rows = query.offset(offset).limit(limit).all()
 
         data = [
-            {
-                "order_id": item.order_id,
-                "order_status": item.order.status,
-                "order_created_at": item.order.created_at,
-                "quantity": item.quantity,
-                "price": item.price,
-                "line_total": item.price * item.quantity,
-            }
+            ProductSaleRead(
+                order_id=item.order_id,
+                order_status=item.order.status,
+                order_created_at=item.order.created_at,
+                quantity=item.quantity,
+                price=item.price,
+                line_total=item.price * item.quantity,
+            )
             for item in rows
         ]
-        return {"page": page, "limit": limit, "count": len(data), "data": data}
+        return ProductSalesPageRead(page=page, limit=limit, count=len(data), data=data)

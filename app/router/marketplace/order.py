@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, List
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -55,7 +55,7 @@ async def get_manager_orders_page_data(
     limit: int = Query(10, ge=1, le=50),
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+) -> ManagerOrdersPageRead:
     # A manager is always scoped to their own company regardless of any
     # company_id passed — only an admin (no single company of their own)
     # may pick a different one, same trust boundary as every other manager

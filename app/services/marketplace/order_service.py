@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Literal
+from typing import Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
@@ -21,7 +21,14 @@ from app.exception.db_triggers import (
     commit_or_raise,
     flush_or_raise,
 )
-from app.schema.marketplace import OrderStatus, PaymentCreate, PaymentStatus
+from app.schema.marketplace import (
+    ManagerOrderItemRead,
+    ManagerOrderRead,
+    ManagerOrdersPageRead,
+    OrderStatus,
+    PaymentCreate,
+    PaymentStatus,
+)
 from app.schema.marketplace import ShippingStatus as SchemaShippingStatus
 from app.services.marketplace.payment_service import PaymentService
 from app.services.marketplace.product_service import ProductService
@@ -170,7 +177,7 @@ class OrderService:
     # customer's purchase history, not public catalog data.
 
     @staticmethod
-    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> dict[str, Any]:
+    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> ManagerOrdersPageRead:
         products = db.query(Product).all()
         if company_id is None:
             relevant_ids = {p.id for p in products}
@@ -179,7 +186,7 @@ class OrderService:
             relevant_ids = {pid for pid, cid in company_by_product.items() if cid in (None, company_id)}
 
         if not relevant_ids:
-            return {"page": page, "limit": limit, "count": 0, "data": []}
+            return ManagerOrdersPageRead(page=page, limit=limit, count=0, data=[])
 
         order_ids = [
             row[0] for row in
@@ -203,22 +210,22 @@ class OrderService:
             # see what else a customer bought from another company in the same
             # checkout, only their own company's part of it.
             items = [item for item in order.items if item.product_id in relevant_ids]
-            data.append({
-                "id": order.id,
-                "buyer_name": order.user_item.name if order.user_item else "",
-                "buyer_email": order.user_item.email if order.user_item else "",
-                "status": order.status,
-                "created_at": order.created_at,
-                "items": [
-                    {
-                        "product_id": item.product_id,
-                        "product_name": products_by_id[item.product_id].name if item.product_id in products_by_id else "",
-                        "quantity": item.quantity,
-                        "price": item.price,
-                    }
+            data.append(ManagerOrderRead(
+                id=order.id,
+                buyer_name=order.user_item.name if order.user_item else "",
+                buyer_email=order.user_item.email if order.user_item else "",
+                status=order.status,
+                created_at=order.created_at,
+                items=[
+                    ManagerOrderItemRead(
+                        product_id=item.product_id,
+                        product_name=products_by_id[item.product_id].name if item.product_id in products_by_id else "",
+                        quantity=item.quantity,
+                        price=item.price,
+                    )
                     for item in items
                 ],
-                "company_total": sum(item.price * item.quantity for item in items),
-            })
+                company_total=sum(item.price * item.quantity for item in items),
+            ))
 
-        return {"page": page, "limit": limit, "count": len(data), "data": data}
+        return ManagerOrdersPageRead(page=page, limit=limit, count=len(data), data=data)

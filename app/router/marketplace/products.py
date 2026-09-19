@@ -20,6 +20,8 @@ from app.schema.marketplace import (
     ProductDetailRead,
     ProductRead,
     ProductSalesPageRead,
+    ProductsPageRead,
+    ProductWithCategoryRead,
     ProductWithDetailCreate,
     StorePageRead,
 )
@@ -29,32 +31,32 @@ from app.utils.storage import StorageError, get_storage
 router = APIRouter(prefix="/products", tags=["Products"])
 
 @router.get("/all", response_model=List[ProductRead])
-async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> list[dict[str, Any]]:
+async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
     db_products = get_cached_products(db)
     if not db_products:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
 @router.get("/store-page", response_model=StorePageRead)
-async def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)) -> StorePageRead:
     result = get_cached_store_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="Products not found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
-async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> ProductDetailRead:
     result = ProductService.get_product_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
 
 @router.get("/manager-products-page", response_model=ManagerProductsPageRead)
-async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductsPageRead:
     return ProductService.get_manager_products_page(db, company_id)
 
 @router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
-async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductFormPageRead:
     return ProductService.get_manager_product_form_page(db, company_id)
 
 @router.get("/{id}/sales", response_model=ProductSalesPageRead)
@@ -64,7 +66,7 @@ async def get_product_sales(
     limit: int = Query(10, ge=1, le=50),
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+) -> ProductSalesPageRead:
     result = ProductService.get_product_sales_page(db, id, current_user, page, limit)
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only view sales for products belonging to their own company's idols/groups")
@@ -72,8 +74,8 @@ async def get_product_sales(
         raise HTTPException(status_code=404, detail="Product not found")
     return result
 
-@router.get("/search/{id:uuid}")
-async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> dict[str, Any]:
+@router.get("/search/{id:uuid}", response_model=ProductWithCategoryRead)
+async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> ProductWithCategoryRead:
     db_product = ProductService.search_product(db, id)
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -213,17 +215,17 @@ async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=
     delete_cached_products()
     return MessageResponse(msg=f"{len(db_product)} bulk products added successfully")
 
-@router.get("/pagination")
-async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> dict[str, Any]:
+@router.get("/pagination", response_model=ProductsPageRead)
+async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> ProductsPageRead:
     db_product = ProductService.pagination_process(db, page, limit)
-    return {
-        "page":page,
-        "limit":limit,
-        "count":len(db_product),
-        "data":db_product
-    }
+    return ProductsPageRead(
+        page=page,
+        limit=limit,
+        count=len(db_product),
+        data=db_product,
+    )
 
-@router.get("/filter")
+@router.get("/filter", response_model=ProductsPageRead)
 async def filter_product(
     category:str,
     name:str | None = None,
@@ -232,11 +234,11 @@ async def filter_product(
     limit:int=Query(10, ge=1, le=50),
     page:int=Query(1, ge=1),
     db:Session=Depends(get_db)
-    ) -> dict[str, Any]:
+    ) -> ProductsPageRead:
     products = ProductService.filter_products(db, category, name, min_price, max_price, limit, page)
-    return {
-        "page":page,
-        "limit":limit,
-        "count":len(products),
-        "data":products
-    }
+    return ProductsPageRead(
+        page=page,
+        limit=limit,
+        count=len(products),
+        data=products,
+    )

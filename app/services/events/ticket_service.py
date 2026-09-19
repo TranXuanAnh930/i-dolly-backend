@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Literal
 
 from sqlalchemy.orm import Session, selectinload
 
@@ -26,7 +26,14 @@ from app.exception.db_triggers import (
     commit_or_raise,
     flush_or_raise,
 )
-from app.schema.events import TicketCheckoutCreate, TicketCreate, TicketUpdate, WonTicketCheckoutCreate
+from app.schema.events import (
+    TicketCheckoutCreate,
+    TicketCreate,
+    TicketSaleRead,
+    TicketSalesPageRead,
+    TicketUpdate,
+    WonTicketCheckoutCreate,
+)
 from app.schema.marketplace import PaymentStatus
 from app.services.marketplace.payment_service import PaymentService
 from app.services.shared.notification_service import NotificationService
@@ -247,7 +254,7 @@ class TicketService:
     # product_service.get_product_sales_page's shape (page/limit/count/data) for
     # the manager-facing "sales history" list/page pair.
     @staticmethod
-    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> dict[str, Any]:
+    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> TicketSalesPageRead:
         concert = db.get(Concert, concert_id)
         if not concert:
             raise NotFoundError("Concert not found")
@@ -265,17 +272,17 @@ class TicketService:
         rows = query.offset(offset).limit(limit).all()
 
         data = [
-            {
-                "ticket_id": ticket.id,
-                "tier": ticket.ticket_type.tier,
-                "status": ticket.status,
-                "price": ticket.ticket_type.price,
-                "source": "lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
-                "created_at": ticket.created_at,
-            }
+            TicketSaleRead(
+                ticket_id=ticket.id,
+                tier=ticket.ticket_type.tier,
+                status=ticket.status,
+                price=ticket.ticket_type.price,
+                source="lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
+                created_at=ticket.created_at,
+            )
             for ticket in rows
         ]
-        return {"page": page, "limit": limit, "count": len(data), "data": data}
+        return TicketSalesPageRead(page=page, limit=limit, count=len(data), data=data)
 
     @staticmethod
     def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate) -> Ticket:

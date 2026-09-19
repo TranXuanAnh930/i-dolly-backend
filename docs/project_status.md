@@ -767,6 +767,65 @@ newly introduced.
     set the refresh-token cookie, and `/refresh`'s body has an extra `access_token` field alongside
     `msg`, which doesn't fit `MessageResponse`'s single-field shape.
 
+25. ~~**Four more router functions returned a raw `dict` with no `response_model`, undocumented in
+    OpenAPI and unvalidated at the HTTP boundary**~~ — **FIXED**. `cart.py::check_cart` (`GET
+    /cart/see_cart`), `products.py::search_existing_product` (`GET /products/search/{id:uuid}`),
+    `paginated_product` (`GET /products/pagination`), and `filter_product` (`GET /products/filter`)
+    now each declare a real `response_model`. Two schema additions: `CartDetailRead` (`items:
+    list[CartRead]`, `total_price: float` — `CartRead` itself was also missing `model_config =
+    {"from_attributes": True}`, added here, since nothing had ever validated it straight off an ORM
+    `Cart` row before) and `ProductWithCategoryRead` (`ProductBase` + `id` + `category:
+    CategoryRead`, `from_attributes=True`), reused as the `data` element type for a new
+    `ProductsPageRead` (`page/limit/count/data`, matching the existing `ProductSalesPageRead`/
+    `TicketSalesPageRead` shape) so both list endpoints and the single-item search endpoint share
+    one schema. `ProductWithCategoryRead` is deliberately a NEW schema, not a change to the
+    existing `ProductRead` — `ProductRead.category` is a resolved category *name* (`str`), which
+    `cache_service.get_cached_products` has to build by hand precisely because `Product.category`
+    on the ORM side is the full `Category` relationship, not a string; `search_product`/
+    `pagination_process`/`filter_products` return raw `Product` rows with that relationship still
+    attached, so embedding `CategoryRead` directly (rather than resolving a name) is both correct
+    for what these three actually return and needs no service-layer change. Before this, all three
+    endpoints' actual on-the-wire shape for `category` was unverified — no `response_model` meant
+    FastAPI fell back to its default object encoder on a live `Category` ORM instance, a path this
+    project's static-analysis-only verification (§3) can't exercise. Schema-only fix, no service
+    changes; verified with `py_compile`, `import main` (164 routes, unchanged), `pytest tests/unit`
+    (213/213, unchanged), `ruff check .` (clean). `POST /cart/add_cart` was flagged in passing but
+    left alone — it already opts out via `response_model=None` and returns a raw `Cart` ORM object
+    rather than a dict, a related but distinct gap from the one this item covers.
+
+26. ~~**Every remaining service function typed `-> dict[str, Any]` (or router function of the
+    same shape reusing its own `-> dict[str, Any]`) built and returned a plain dict, relying
+    entirely on `response_model=` to shape it into a schema at the HTTP boundary**~~ — **FIXED**.
+    All 21 such functions across 7 service files (`concert_service`, `ticket_service`,
+    `cart_service`, `order_service`, `product_service` (9 — the largest, including the private
+    `_build_product_cards`/`artist_ref`/`resolve_artist`/`_product_read_dict` helpers),
+    `group_service`, `idol_service`) plus `cache_service.get_cached_store_page` now construct and
+    return the real Pydantic schema instance — every one already had a matching schema and
+    `response_model=` at the router, so this closes the gap between what a function's own
+    annotation claimed and what it actually returned, the same class of drift the mypy pass (item
+    22) flagged elsewhere. Full rationale in `docs/architecture.md` §2. Two things worth knowing
+    before touching this code again:
+    - `product_service._build_product_cards` returning `list[ProductCard]` instead of
+      `list[dict]` had a real ripple effect — every caller reading a card by dict key
+      (`get_product_detail`'s recommendation logic, `group_service.get_group_detail`'s
+      artist-match filter) had to switch to attribute access. `ProductCard` itself intentionally
+      has no `from_attributes` config, unlike its siblings — it's always hand-constructed from
+      already-resolved values, never validated off a raw ORM row.
+    - Fixing this surfaced a real unit-test gotcha, not just a mechanical rename: `MagicMock`
+      auto-vivifies *any* attribute access, which defeats a Pydantic `from_attributes` schema's
+      normal "attribute missing -> use the field's default" fallback — a test double that never
+      explicitly set `debut_date`/`created_at`/`idol_positions`/etc. used to pass silently (nothing
+      ever read those fields through real validation), then failed with a `ValidationError` the
+      moment the corresponding service function started constructing the real schema. Fixed by
+      making the shared mock factories (`make_mock_group`, `make_mock_idol`) set every field their
+      target schemas need, and adding `make_mock_venue`/`make_mock_concert`/`make_mock_color` for
+      the two tests (`group_service.get_group_detail`, and its siblings) that validate nested
+      `ConcertWithVenue`/`VenueRead`/`IdolColorRead` chains — any new test that flows a mocked ORM
+      row through a `from_attributes` schema needs the same treatment, not just the fields the test
+      itself asserts on. Verified: `py_compile`, `import main` (164 routes, unchanged),
+      `pytest tests/unit` (213/213, unchanged — all breakage was in test assertions/mocks, not
+      production logic), `ruff check .` (clean).
+
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
 missing `UNIQUE` on `Category.name`) were found and fixed earlier in this project and aren't

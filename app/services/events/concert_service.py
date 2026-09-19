@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Literal
+from typing import Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -18,7 +18,16 @@ from app.db.models.events import (
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, ManagementCompany
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
-from app.schema.events import ConcertCreate, ConcertPerformerAssign, ConcertUpdate
+from app.schema.events import (
+    ConcertCreate,
+    ConcertDetailRead,
+    ConcertPerformerAssign,
+    ConcertUpdate,
+    EventsPageRead,
+    LineupIdol,
+    ManagerEventsPageRead,
+    PerformingGroupMini,
+)
 
 # Once a concert has gone on sale (or further), fans may already hold
 # tickets or lottery entries against its date/capacity — a manager silently
@@ -164,23 +173,23 @@ class ConcertService:
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
     @staticmethod
-    def get_events_page(db: Session) -> dict[str, Any] | Literal[False]:
+    def get_events_page(db: Session) -> EventsPageRead | Literal[False]:
         concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
         if not concerts:
             return False
-        return {"concerts": concerts}
+        return EventsPageRead(concerts=concerts)
 
     @staticmethod
-    def _lineup_idol(idol: Idol) -> dict[str, Any]:
-        return {
-            "id": idol.id,
-            "name": idol.name,
-            "profile_image_url": idol.profile_image_url,
-            "color_hex": idol.color.hex_code if idol.color else None,
-        }
+    def _lineup_idol(idol: Idol) -> LineupIdol:
+        return LineupIdol(
+            id=idol.id,
+            name=idol.name,
+            profile_image_url=idol.profile_image_url,
+            color_hex=idol.color.hex_code if idol.color else None,
+        )
 
     @staticmethod
-    def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = None) -> dict[str, Any] | Literal[False]:
+    def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = None) -> ConcertDetailRead | Literal[False]:
         concert = db.query(Concert).options(joinedload(Concert.venue)).filter(Concert.id == id).first()
         if not concert:
             return False
@@ -203,7 +212,7 @@ class ConcertService:
             if performer.group_id and performer.group:
                 if performer.group_id not in seen_group_ids:
                     seen_group_ids.add(performer.group_id)
-                    performing_groups.append({"id": performer.group.id, "name": performer.group.name})
+                    performing_groups.append(PerformingGroupMini(id=performer.group.id, name=performer.group.name))
                 members = db.query(Idol).options(selectinload(Idol.color)).filter(Idol.group_id == performer.group_id).all()
                 for member in members:
                     if member.id not in seen_idol_ids:
@@ -300,23 +309,23 @@ class ConcertService:
                 .all()
             )
 
-        return {
-            "concert": concert,
-            "venue": concert.venue,
-            "ticket_types": ticket_types,
-            "lineup": lineup,
-            "performing_groups": performing_groups,
-            "lottery_campaigns": lottery_campaigns,
-            "direct_sale_campaigns": direct_sale_campaigns,
-            "has_ticket": has_ticket,
-            "has_won_lottery": has_won_lottery,
-            "entered_campaign_ids": entered_campaign_ids,
-            "my_lottery_preferences": my_lottery_preferences,
-        }
+        return ConcertDetailRead(
+            concert=concert,
+            venue=concert.venue,
+            ticket_types=ticket_types,
+            lineup=lineup,
+            performing_groups=performing_groups,
+            lottery_campaigns=lottery_campaigns,
+            direct_sale_campaigns=direct_sale_campaigns,
+            has_ticket=has_ticket,
+            has_won_lottery=has_won_lottery,
+            entered_campaign_ids=entered_campaign_ids,
+            my_lottery_preferences=my_lottery_preferences,
+        )
 
     # --- manager/admin settings page (see idol_service.py's equivalent
     # comment — an empty list here is a normal state, not a 404).
 
     @staticmethod
-    def get_manager_events_page(db: Session) -> dict[str, Any]:
-        return {"concerts": db.query(Concert).all(), "venues": db.query(Venue).all()}
+    def get_manager_events_page(db: Session) -> ManagerEventsPageRead:
+        return ManagerEventsPageRead(concerts=db.query(Concert).all(), venues=db.query(Venue).all())

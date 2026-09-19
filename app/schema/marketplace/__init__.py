@@ -2,7 +2,7 @@
 
 from .album_detail import AlbumDetailBase, AlbumDetailCreate, AlbumDetailRead, AlbumDetailUpdate
 from .artist import ArtistRef
-from .cart import CartItem, CartOut, CartRead
+from .cart import CartDetailRead, CartItem, CartOut, CartRead
 from .category import CategoryBase, CategoryCreate, CategoryRead, CategoryUpdate
 from .genre import AlbumGenreAssign, AlbumGenreRead, GenreBase, GenreCreate, GenreRead
 from .merch_detail import MerchDetailBase, MerchDetailCreate, MerchDetailRead, MerchDetailUpdate
@@ -19,7 +19,9 @@ from .products import (
     ProductRead,
     ProductSaleRead,
     ProductSalesPageRead,
+    ProductsPageRead,
     ProductUpdate,
+    ProductWithCategoryRead,
     ProductWithDetailCreate,
     StorePageRead,
 )
@@ -34,6 +36,7 @@ __all__ = [
     "CartItem",
     "CartOut",
     "CartRead",
+    "CartDetailRead",
     "CategoryBase",
     "CategoryCreate",
     "CategoryUpdate",
@@ -61,6 +64,8 @@ __all__ = [
     "ProductUpdate",
     "ProductCreate",
     "ProductRead",
+    "ProductWithCategoryRead",
+    "ProductsPageRead",
     "ProductWithDetailCreate",
     "AlbumMini",
     "ProductCard",

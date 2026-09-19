@@ -6,7 +6,14 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, IdolColor, IdolPosition, ManagementCompany
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
-from app.schema.talent import IdolCreate, IdolUpdate
+from app.schema.talent import (
+    IdolCreate,
+    IdolDetailRead,
+    IdolUpdate,
+    ManagerIdolFormPageRead,
+    ManagerIdolsPageRead,
+    MembersPageRead,
+)
 
 
 class IdolService:
@@ -106,17 +113,17 @@ class IdolService:
     # --- page-shaped reads (see idol.py schema's equivalent comment) ---
 
     @staticmethod
-    def get_members_page(db: Session) -> dict[str, Any] | Literal[False]:
+    def get_members_page(db: Session) -> MembersPageRead | Literal[False]:
         # Store-facing browse page — same is_active filter as get_idols, plus
         # the group-unit dropdown only offers active groups.
         idols = db.query(Idol).options(*IdolService._with_positions_and_color()).filter(Idol.is_active.is_(True)).all()
         if not idols:
             return False
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
-        return {"idols": idols, "groups": groups}
+        return MembersPageRead(idols=idols, groups=groups)
 
     @staticmethod
-    def get_idol_detail(db: Session, id: uuid.UUID) -> dict[str, Any] | Literal[False]:
+    def get_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | Literal[False]:
         # Public idol profile page — a deactivated idol reads as "not found"
         # here, same as get_idols/get_members_page; only the manager/admin
         # settings surfaces (get_manager_idols_page, plain get_idol) still see it.
@@ -132,22 +139,22 @@ class IdolService:
         siblings_query = db.query(Idol).filter(Idol.id != id, Idol.is_active.is_(True))
         siblings_query = siblings_query.filter(Idol.group_id == idol.group_id) if idol.group_id else siblings_query.filter(Idol.group_id.is_(None))
         siblings = siblings_query.options(*IdolService._with_positions_and_color()).all()
-        return {"idol": idol, "group": group, "siblings": siblings}
+        return IdolDetailRead(idol=idol, group=group, siblings=siblings)
 
     # --- manager/admin settings pages (see idol.py schema's equivalent comment
     # — empty lists here are a normal state, not a 404).
 
     @staticmethod
-    def get_manager_idols_page(db: Session) -> dict[str, Any]:
-        return {"idols": db.query(Idol).all(), "groups": db.query(Group).all()}
+    def get_manager_idols_page(db: Session) -> ManagerIdolsPageRead:
+        return ManagerIdolsPageRead(idols=db.query(Idol).all(), groups=db.query(Group).all())
 
     @staticmethod
-    def get_manager_idol_form_page(db: Session) -> dict[str, Any]:
-        return {
-            "idols": db.query(Idol).all(),
-            "groups": db.query(Group).all(),
-            "colors": db.query(IdolColor).all(),
-        }
+    def get_manager_idol_form_page(db: Session) -> ManagerIdolFormPageRead:
+        return ManagerIdolFormPageRead(
+            idols=db.query(Idol).all(),
+            groups=db.query(Group).all(),
+            colors=db.query(IdolColor).all(),
+        )
 
     @staticmethod
     def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users) -> Idol:

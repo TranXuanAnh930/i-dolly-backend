@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from typing import Any, List
+from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -78,14 +78,14 @@ async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session 
 # Page-shaped reads — registered before /{id} so the literal "members-page"
 # segment isn't swallowed by the {id}: uuid.UUID route.
 @router.get("/members-page", response_model=MembersPageRead)
-async def get_members_page_data(db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_members_page_data(db: Session = Depends(get_db)) -> MembersPageRead:
     result = IdolService.get_members_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No idols found")
     return result
 
 @router.get("/{id}/detail", response_model=IdolDetailRead)
-async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> IdolDetailRead:
     result = IdolService.get_idol_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Idol not found")
@@ -95,11 +95,11 @@ async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) ->
 # (no colors); ManagerIdolFormPage needs all three for its dropdowns. Both
 # registered before /{id} for the same reason as the routes above.
 @router.get("/manager-idols-page", response_model=ManagerIdolsPageRead)
-async def get_manager_idols_page_data(db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_manager_idols_page_data(db: Session = Depends(get_db)) -> ManagerIdolsPageRead:
     return IdolService.get_manager_idols_page(db)
 
 @router.get("/manager-idol-form-page", response_model=ManagerIdolFormPageRead)
-async def get_manager_idol_form_page_data(db: Session = Depends(get_db)) -> dict[str, Any]:
+async def get_manager_idol_form_page_data(db: Session = Depends(get_db)) -> ManagerIdolFormPageRead:
     return IdolService.get_manager_idol_form_page(db)
 
 @router.get("/{id}", response_model=IdolRead)

@@ -27,6 +27,25 @@ class ProductRead(ProductBase):
     id: uuid.UUID
     category : str
 
+# Distinct from ProductRead — ProductRead.category is a resolved category
+# NAME (str), which needs manual resolution from the ORM's Category
+# relationship (see cache_service.get_cached_products's own comment on why).
+# search_existing_product/paginated_product/filter_product return raw
+# Product rows straight off the ORM instead, so category here is the full
+# CategoryRead object Pydantic can validate directly off product.category —
+# no service-layer resolution needed for these three.
+class ProductWithCategoryRead(ProductBase):
+    id: uuid.UUID
+    category: CategoryRead
+
+    model_config = {"from_attributes": True}
+
+class ProductsPageRead(BaseModel):
+    page: int
+    limit: int
+    count: int
+    data: list[ProductWithCategoryRead]
+
 # Bundles a Product with its AlbumDetail/MerchDetail row into one request
 # (product_service.add_product_with_detail) — a bare add_product left a
 # product with no album_details/merch_details row until a separate,

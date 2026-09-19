@@ -42,31 +42,26 @@ def get_cached_products(db:Session) -> list[dict[str, Any]]:
     redis_client.setex(cache_key, 60 * 5, msgpack.packb(payload))
     return payload
 
-def get_cached_store_page(db: Session) -> dict[str, Any] | Literal[False]:
+def get_cached_store_page(db: Session) -> StorePageRead | Literal[False]:
     cache_key = "products:store_page"
     cached = redis_client.get(cache_key)
     if cached:
-        return msgpack.unpackb(cached, raw=False)
+        return StorePageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
-    # get_store_page returns {"products": [ProductCard-shaped dicts, but with
-    # raw ORM Genre objects for "genres" and a raw Group for each list entry
-    # under "groups"], "groups": [Group ORM rows]} — not the flat ProductRead
-    # shape get_cached_products above caches. Rather than hand-roll a second
-    # parallel dict (the same drift risk that one already carries — nothing
-    # would catch it silently falling out of sync with StorePageRead),
-    # validate straight through the real schema: model_validate resolves the
-    # nested ORM objects via each nested model's from_attributes config
-    # (GenreRead, GroupMini), and model_dump(mode="json") turns the result
-    # into the same UUID-as-str / date-as-isoformat-string shapes msgpack can
-    # store — so this cache can't diverge from StorePageRead without a
-    # validation error at write time, not a silent shape mismatch at read time.
+    # get_store_page already returns a real StorePageRead instance (nested
+    # ORM objects — Genre, Group — resolved via each nested model's
+    # from_attributes config), so this cache can't diverge from the schema
+    # without a validation error at write time. model_dump(mode="json") turns
+    # it into the UUID-as-str / date-as-isoformat-string shapes msgpack can
+    # store; the cache-hit branch above reconstructs the same StorePageRead
+    # from that stored dict.
     result = ProductService.get_store_page(db)
     if not result:
         return False
 
-    payload = StorePageRead.model_validate(result).model_dump(mode="json")
+    payload = result.model_dump(mode="json")
     redis_client.setex(cache_key, 60 * 5, msgpack.packb(payload))
-    return payload
+    return result
 
 
 def delete_cached_products() -> None:

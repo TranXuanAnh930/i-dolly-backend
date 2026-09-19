@@ -88,11 +88,47 @@ notifications), it goes in `shared/`, not force-fit into one:
    rather than a bare `dict[str, str]` return annotation — same rationale as
    `app/exception/common.py` living outside every domain: it's genuinely cross-domain, not owned by
    one feature. `MessageResponse(msg="...")` serializes to exactly the same JSON body a client
-   already receives, so this was a schema/OpenAPI-documentation fix, not an API contract change —
-   the couple of endpoints that instead build a raw `JSONResponse` (`/account/login`,
-   `/account/refresh`, `/profile/logout`) are excluded on purpose: they set cookies on the response
-   object or (in `/account/refresh`'s case) return an extra `access_token` field alongside `msg`,
-   which doesn't fit `MessageResponse`'s single-field shape.
+   already receives, so this was a schema/OpenAPI-documentation fix, not an API contract change.
+   `/profile/logout` builds a raw `JSONResponse` (needs to call `delete_cookie`) but its body is
+   `MessageResponse(msg="...").model_dump()`, and still declares `response_model=MessageResponse`
+   for OpenAPI even though returning a `Response` instance bypasses FastAPI's own response-model
+   serialization. `/account/login` and `/account/refresh` stay on a raw `{"access_token": ...}` /
+   `{"msg": ..., "access_token": ...}` body instead — `/refresh`'s extra `access_token` field
+   alongside `msg` doesn't fit `MessageResponse`'s single-field shape.
+
+   The same "don't leave a return type as a bare, undocumented `dict`" rule applies beyond acks:
+   `cart.py::check_cart`, `products.py::search_existing_product`/`paginated_product`/
+   `filter_product` used to return a raw dict with no `response_model` at all (`CartDetailRead` and
+   `ProductWithCategoryRead`/`ProductsPageRead`, `app/schema/marketplace/cart.py` and `products.py`,
+   fixed this). `ProductWithCategoryRead` is a deliberately separate schema from `ProductRead` —
+   `ProductRead.category` is a resolved category *name* (`str`, built by hand in
+   `cache_service.get_cached_products` since `Product.category` is really the `Category`
+   relationship, not a string), while these three functions return raw `Product` rows with that
+   relationship still attached, so embedding `CategoryRead` directly is the correct shape for them,
+   not a shortcut.
+
+   **Every remaining `-> dict[str, Any]` page-shaped service function now constructs and returns
+   the real schema instance instead of a plain dict** (`concert_service.get_events_page`/
+   `get_concert_detail`/`get_manager_events_page`, `ticket_service.get_concert_ticket_sales`,
+   `cart_service.see_cart`, `order_service.get_manager_orders_page`,
+   `product_service.search_product`/`get_store_page`/`get_product_detail`/
+   `get_manager_products_page`/`get_manager_product_form_page`/`get_product_sales_page`/
+   `_build_product_cards` (+ its nested `artist_ref`/`resolve_artist` closures)/`_product_read_dict`,
+   `group_service.get_groups_page`/`get_group_detail`/`get_manager_groups_page`,
+   `idol_service.get_members_page`/`get_idol_detail`/`get_manager_idols_page`/
+   `get_manager_idol_form_page`, `cache_service.get_cached_store_page`). Every one of these already
+   had a matching schema and `response_model=` at the router — the router's own return-type
+   annotation was already `dict[str, Any]` too, just passed through to `response_model` for
+   validation; now both layers agree with what's actually returned. The one place this had a real
+   ripple effect: `product_service._build_product_cards` returning `list[ProductCard]` instead of
+   `list[dict]` meant every caller that read a card by dict key (`card["artist"]`,
+   `card["genres"]`, ...) — `get_product_detail`'s recommendation logic, and
+   `group_service.get_group_detail`'s "products belonging to this group" filter — switched to
+   attribute access (`card.artist`, `card.genres`). `ProductCard` itself deliberately has **no**
+   `from_attributes` config (unlike every other schema mentioned here) — `_build_product_cards`
+   always constructs it directly from already-resolved plain values (a category *name*, nested
+   `AlbumMini`/`ArtistRef` instances it built itself), never validates it off a raw ORM row, so it
+   never needed that config; don't add it on the assumption every `*Read`-shaped class here does.
 
 Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, not a
 bare `create_ticket_payment(...)`) — every router and every service-to-service reference imports

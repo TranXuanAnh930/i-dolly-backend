@@ -23,7 +23,7 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 # normal client never sees a 429; it's still capped, since an unbounded
 # per-user endpoint is exactly what a runaway/misbehaving poller would hit.
 @router.get("/unread-count", response_model=NotificationUnreadCount)
-async def get_unread_count(current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, int]:
+async def get_unread_count(current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> NotificationUnreadCount:
     return {"count": NotificationService.count_unread(db, current_user)}
 
 @router.get("/mine", response_model=List[NotificationRead])
