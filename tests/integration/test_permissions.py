@@ -856,4 +856,310 @@ def test_checkout_ticket_allowed_with_lost_lottery_entry(factory):
         "/tickets/checkout", json=_ticket_checkout_payload(direct_tt), headers=factory.token(fan),
     )
     assert response.status_code == 200
+
+
+# ─────────────────────────────────────────────────────────────
+# Lottery Preferences — fan-facing, self-scoped (no cross-company checks;
+# any authenticated fan just ranks their own preferences)
+# ─────────────────────────────────────────────────────────────
+
+def test_set_preferences_unauthenticated(factory):
+    response = client.post("/lottery_preferences/set", json={"concert_id": str(uuid.uuid4()), "ticket_type_ids_in_order": [str(uuid.uuid4())]})
+    assert response.status_code == 401
+
+
+def test_set_preferences_concert_not_found(factory):
+    fan = factory.user(role="fan")
+    response = client.post(
+        "/lottery_preferences/set",
+        json={"concert_id": str(uuid.uuid4()), "ticket_type_ids_in_order": [str(uuid.uuid4())]},
+        headers=factory.token(fan),
+    )
+    assert response.status_code == 404
+
+
+def test_set_preferences_duplicate_ticket_type_rejected(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="lottery")
+
+    response = client.post(
+        "/lottery_preferences/set",
+        json={"concert_id": str(concert.id), "ticket_type_ids_in_order": [str(tt.id), str(tt.id)]},
+        headers=factory.token(fan),
+    )
+    assert response.status_code == 400
+
+
+def test_set_preferences_direct_sale_ticket_type_rejected(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="direct")
+
+    response = client.post(
+        "/lottery_preferences/set",
+        json={"concert_id": str(concert.id), "ticket_type_ids_in_order": [str(tt.id)]},
+        headers=factory.token(fan),
+    )
+    assert response.status_code == 400
+
+
+def test_set_preferences_success_then_list_then_clear(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    vip = factory.ticket_type(concert.id, tier="vip", sale_method="lottery")
+    premium = factory.ticket_type(concert.id, tier="premium", sale_method="lottery")
+
+    set_response = client.post(
+        "/lottery_preferences/set",
+        json={"concert_id": str(concert.id), "ticket_type_ids_in_order": [str(vip.id), str(premium.id)]},
+        headers=factory.token(fan),
+    )
+    assert set_response.status_code == 200
+    ranked = set_response.json()
+    assert [row["ticket_type_id"] for row in ranked] == [str(vip.id), str(premium.id)]
+    assert [row["rank"] for row in ranked] == [1, 2]
+    for row in ranked:
+        factory.created.append(factory.db.get(LotteryPreference, uuid.UUID(row["id"])))
+
+    list_response = client.get(f"/lottery_preferences/mine/{concert.id}", headers=factory.token(fan))
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 2
+
+    delete_response = client.delete(f"/lottery_preferences/mine/{concert.id}", headers=factory.token(fan))
+    assert delete_response.status_code == 200
+    factory.created = [obj for obj in factory.created if not isinstance(obj, LotteryPreference)]  # already deleted by the request above
+
+    assert client.get(f"/lottery_preferences/mine/{concert.id}", headers=factory.token(fan)).status_code == 404
+
+
+def test_list_my_preferences_none_set(factory):
+    fan = factory.user(role="fan")
+    response = client.get(f"/lottery_preferences/mine/{uuid.uuid4()}", headers=factory.token(fan))
+    assert response.status_code == 404
+
+
+def test_clear_my_preferences_none_set(factory):
+    fan = factory.user(role="fan")
+    response = client.delete(f"/lottery_preferences/mine/{uuid.uuid4()}", headers=factory.token(fan))
+    assert response.status_code == 404
+
+
+# ─────────────────────────────────────────────────────────────
+# Lottery Entries — beyond /apply (already covered above via the
+# direct/lottery cross-checks)
+# ─────────────────────────────────────────────────────────────
+
+def test_list_my_entries_none(factory):
+    fan = factory.user(role="fan")
+    response = client.get("/lottery_entries/mine", headers=factory.token(fan))
+    assert response.status_code == 404
+
+
+def test_list_my_entries_found(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="lottery")
+    campaign = factory.lottery_campaign(tt.id)
+    factory.lottery_preference(concert.id, fan.id, tt.id, rank=1)
+
+    apply_response = client.post("/lottery_entries/apply", json={"campaign_id": str(campaign.id)}, headers=factory.token(fan))
+    assert apply_response.status_code == 200
+    factory.created.append(factory.db.get(LotteryEntry, uuid.UUID(apply_response.json()["id"])))
+
+    response = client.get("/lottery_entries/mine", headers=factory.token(fan))
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+def test_list_campaign_entries_unauthenticated(factory):
+    response = client.get(f"/lottery_entries/campaign/{uuid.uuid4()}")
+    assert response.status_code == 401
+
+
+def test_list_campaign_entries_fan_forbidden(factory):
+    fan = factory.user(role="fan")
+    response = client.get(f"/lottery_entries/campaign/{uuid.uuid4()}", headers=factory.token(fan))
+    assert response.status_code == 403
+
+
+def test_list_campaign_entries_manager_wrong_company_forbidden(factory):
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="lottery")
+    campaign = factory.lottery_campaign(tt.id)
+
+    response = client.get(f"/lottery_entries/campaign/{campaign.id}", headers=factory.token(other_manager))
+    assert response.status_code == 403
+
+
+def test_list_campaign_entries_success_for_owning_manager(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    manager = factory.user(role="manager", company_id=company.id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="lottery")
+    campaign = factory.lottery_campaign(tt.id)
+    factory.lottery_preference(concert.id, fan.id, tt.id, rank=1)
+
+    apply_response = client.post("/lottery_entries/apply", json={"campaign_id": str(campaign.id)}, headers=factory.token(fan))
+    factory.created.append(factory.db.get(LotteryEntry, uuid.UUID(apply_response.json()["id"])))
+
+    response = client.get(f"/lottery_entries/campaign/{campaign.id}", headers=factory.token(manager))
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+# ─────────────────────────────────────────────────────────────
+# Tickets — beyond /checkout (already covered above)
+# ─────────────────────────────────────────────────────────────
+
+def test_add_ticket_requires_admin(factory):
+    manager = factory.user(role="manager", company_id=factory.company().id)
+    response = client.post(
+        "/tickets/add", json={"ticket_type_id": str(uuid.uuid4()), "user_id": str(uuid.uuid4())}, headers=factory.token(manager),
+    )
+    assert response.status_code == 403
+
+
+def test_add_ticket_admin_can_issue_directly(factory):
+    admin = factory.user(role="admin")
+    target_fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="lottery")
+
+    response = client.post(
+        "/tickets/add", json={"ticket_type_id": str(tt.id), "user_id": str(target_fan.id)}, headers=factory.token(admin),
+    )
+    assert response.status_code == 200
     factory.created.append(factory.db.get(Ticket, uuid.UUID(response.json()["id"])))
+
+
+def test_get_ticket_by_id_not_found(factory):
+    fan = factory.user(role="fan")
+    response = client.get(f"/tickets/{uuid.uuid4()}", headers=factory.token(fan))
+    assert response.status_code == 404
+
+
+def test_get_ticket_by_id_other_fan_forbidden(factory):
+    owner = factory.user(role="fan")
+    other_fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="direct")
+    factory.direct_sale_campaign(tt.id)
+    checkout_response = client.post("/tickets/checkout", json=_ticket_checkout_payload(tt), headers=factory.token(owner))
+    ticket_id = checkout_response.json()["id"]
+    factory.created.append(factory.db.get(Ticket, uuid.UUID(ticket_id)))
+
+    response = client.get(f"/tickets/{ticket_id}", headers=factory.token(other_fan))
+    assert response.status_code == 403
+
+
+def test_get_ticket_by_id_owner_and_admin_both_allowed(factory):
+    owner = factory.user(role="fan")
+    admin = factory.user(role="admin")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="direct")
+    factory.direct_sale_campaign(tt.id)
+    checkout_response = client.post("/tickets/checkout", json=_ticket_checkout_payload(tt), headers=factory.token(owner))
+    ticket_id = checkout_response.json()["id"]
+    factory.created.append(factory.db.get(Ticket, uuid.UUID(ticket_id)))
+
+    assert client.get(f"/tickets/{ticket_id}", headers=factory.token(owner)).status_code == 200
+    assert client.get(f"/tickets/{ticket_id}", headers=factory.token(admin)).status_code == 200
+
+
+def test_get_concert_sales_unauthenticated(factory):
+    response = client.get(f"/tickets/concert/{uuid.uuid4()}/sales")
+    assert response.status_code == 401
+
+
+def test_get_concert_sales_cross_company_manager_forbidden(factory):
+    other_manager = factory.user(role="manager", company_id=factory.company().id)
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+
+    response = client.get(f"/tickets/concert/{concert.id}/sales", headers=factory.token(other_manager))
+    assert response.status_code == 403
+
+
+def test_get_concert_sales_owning_manager_success(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    manager = factory.user(role="manager", company_id=company.id)
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="direct")
+    factory.direct_sale_campaign(tt.id)
+    checkout_response = client.post("/tickets/checkout", json=_ticket_checkout_payload(tt), headers=factory.token(fan))
+    factory.created.append(factory.db.get(Ticket, uuid.UUID(checkout_response.json()["id"])))
+
+    response = client.get(f"/tickets/concert/{concert.id}/sales", headers=factory.token(manager))
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    assert data["data"][0]["source"] == "direct"
+
+
+def test_update_ticket_requires_admin(factory):
+    manager = factory.user(role="manager", company_id=factory.company().id)
+    response = client.put(f"/tickets/update/{uuid.uuid4()}", json={"status": "used"}, headers=factory.token(manager))
+    assert response.status_code == 403
+
+
+def test_update_ticket_admin_success(factory):
+    admin = factory.user(role="admin")
+    owner = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="direct")
+    factory.direct_sale_campaign(tt.id)
+    checkout_response = client.post("/tickets/checkout", json=_ticket_checkout_payload(tt), headers=factory.token(owner))
+    ticket_id = checkout_response.json()["id"]
+    factory.created.append(factory.db.get(Ticket, uuid.UUID(ticket_id)))
+
+    response = client.put(f"/tickets/update/{ticket_id}", json={"status": "used"}, headers=factory.token(admin))
+    assert response.status_code == 200
+    assert response.json()["status"] == "used"
+
+
+def test_delete_ticket_requires_admin(factory):
+    manager = factory.user(role="manager", company_id=factory.company().id)
+    response = client.delete(f"/tickets/delete/{uuid.uuid4()}", headers=factory.token(manager))
+    assert response.status_code == 403
+
+
+def test_delete_ticket_admin_success(factory):
+    admin = factory.user(role="admin")
+    owner = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="direct")
+    factory.direct_sale_campaign(tt.id)
+    checkout_response = client.post("/tickets/checkout", json=_ticket_checkout_payload(tt), headers=factory.token(owner))
+    ticket_id = checkout_response.json()["id"]
+
+    response = client.delete(f"/tickets/delete/{ticket_id}", headers=factory.token(admin))
+    assert response.status_code == 200
+    # Already deleted by the request above — nothing left for the fixture's
+    # own teardown to clean up.

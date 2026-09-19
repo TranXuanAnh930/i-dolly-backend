@@ -77,8 +77,13 @@ class UserService:
         user = db.get(Users, user_id)
         if not user:
             return None
-        if user.is_admin:
+        # role is the source of truth for require_admin (architecture.md's own note) — checking/
+        # setting only the deprecated is_admin column here left this endpoint unable to actually
+        # grant admin access. is_admin is still set alongside role, not removed, since it isn't
+        # dropped yet (database-design.md §4's two-step migration plan) and UserOut still reads it.
+        if user.role == "admin":
             return False
+        user.role = "admin"
         user.is_admin = True
         db.commit()
         db.refresh(user)
