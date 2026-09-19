@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session, selectinload
 
@@ -40,7 +41,7 @@ _UNRESOLVED_LOTTERY_STATUSES = ("pending", "won")
 class TicketService:
 
     @staticmethod
-    def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
+    def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> Ticket | None:
         return (
             db.query(Ticket)
             .join(TicketType, Ticket.ticket_type_id == TicketType.id)
@@ -53,7 +54,7 @@ class TicketService:
         )
 
     @staticmethod
-    def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
+    def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> LotteryEntry | None:
         # A fan mid-lottery for this concert (still "pending", or "won" but
         # hasn't paid/expired yet — a live ticket from that win is already
         # caught by _existing_live_ticket above, but a *won* entry whose ticket
@@ -193,7 +194,7 @@ class TicketService:
         return ticket
 
     @staticmethod
-    def add_ticket(db: Session, data: TicketCreate):
+    def add_ticket(db: Session, data: TicketCreate) -> Ticket | Literal["not_found", "fan_only", "conflict"]:
         ticket_type = db.get(TicketType, data.ticket_type_id)
         if not ticket_type:
             return "not_found"
@@ -220,7 +221,7 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def get_my_tickets(db: Session, current_user: Users):
+    def get_my_tickets(db: Session, current_user: Users) -> list[Ticket] | Literal[False]:
         result = (
             db.query(Ticket)
             .filter(Ticket.user_id == current_user.id)
@@ -232,7 +233,7 @@ class TicketService:
         return result
 
     @staticmethod
-    def get_ticket(db: Session, id: uuid.UUID):
+    def get_ticket(db: Session, id: uuid.UUID) -> Ticket | None:
         return (
             db.query(Ticket)
             .filter(Ticket.id == id)
@@ -245,7 +246,7 @@ class TicketService:
     # product_service.get_product_sales_page's shape (page/limit/count/data) for
     # the manager-facing "sales history" list/page pair.
     @staticmethod
-    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10):
+    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> dict[str, Any] | Literal["not_found", "forbidden"]:
         concert = db.get(Concert, concert_id)
         if not concert:
             return "not_found"
@@ -276,7 +277,7 @@ class TicketService:
         return {"page": page, "limit": limit, "count": len(data), "data": data}
 
     @staticmethod
-    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate):
+    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate) -> Ticket | Literal["not_found"]:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
             return "not_found"
@@ -293,7 +294,7 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def delete_ticket(db: Session, id: uuid.UUID):
+    def delete_ticket(db: Session, id: uuid.UUID) -> Literal["not_found", True]:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
             return "not_found"

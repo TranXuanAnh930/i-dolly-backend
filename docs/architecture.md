@@ -260,3 +260,27 @@ migration-chain smoke check rather than a precondition pytest depends on.)
   hitting each endpoint against a real DB as the standing "still needs a real smoke test" item
   for anything built this way — noted per-feature in `project_status.md` rather than repeated
   here.
+- **Every function needs a return type, and every parameter needs a type** — enforced by ruff's
+  `ANN` rules (`pyproject.toml`), not just a style preference. Parameters were already ~97% typed
+  before this was enforced; return types were the real gap (88% of ~400 production functions had
+  none). This isn't cosmetic: writing the annotations directly caught two real bugs no test caught
+  first — a stray argument passed to a function that had just been changed to take none
+  (`TypeError` on every call), and a list passed where `model_validate` expected one instance
+  (`ValidationError` on every call) — both are exactly the class of mistake a return/param type
+  makes visible on sight, no runtime repro needed. `tests/*` and `scripts/*` are exempted
+  (pytest conventions don't benefit from typing test functions; measured, not assumed — see the
+  per-file-ignore's own comment).
+  - This codebase's sentinel-return convention (`return "forbidden"`, `return "not_found"`, ...
+    alongside an ORM object or `None`/`False`) should be typed as a precise `Literal["forbidden",
+    "not_found"]` union, not a loose `str` — a `Literal` catches a typo'd sentinel
+    (`"forbiden"`) as a type error; `str` doesn't.
+  - **FastAPI gotcha, found the hard way**: a route function's own return-type annotation is used
+    by FastAPI to build an implicit response schema whenever the decorator has **no**
+    `response_model=`. Annotating such a function's return type as a bare SQLAlchemy ORM class
+    (not a Pydantic model) crashes the app at import time
+    (`FastAPIError: Invalid args for response field!`) — and `py_compile`/`ruff` won't catch it,
+    since it only fires when the decorator actually runs. If a route has no `response_model=` and
+    its real return type isn't a Pydantic-serializable shape (a dict, a list of dicts, `None`),
+    add `response_model=None` to the decorator explicitly rather than relying on the annotation
+    alone — that's FastAPI's own documented way to keep an accurate return-type annotation without
+    it being mistaken for a schema.

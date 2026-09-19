@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -14,7 +15,7 @@ class NotificationService:
     # lottery/auth flow now calls into.
 
     @staticmethod
-    def create_notification(db: Session, user_id: uuid.UUID, notification_type: str, **entity_ids) -> Notification:
+    def create_notification(db: Session, user_id: uuid.UUID, notification_type: str, **entity_ids: uuid.UUID | None) -> Notification:
         """Adds (does not commit) one notification row. Called from inside an
         existing service transaction (order_service.checkout,
         ticket_service.checkout_ticket, lottery_draw_service.draw_lottery,
@@ -37,7 +38,7 @@ class NotificationService:
         )
 
     @staticmethod
-    def get_my_notifications(db: Session, current_user: Users, unread_only: bool = False):
+    def get_my_notifications(db: Session, current_user: Users, unread_only: bool = False) -> list[Notification] | Literal[False]:
         query = db.query(Notification).filter(Notification.user_id == current_user.id)
         if unread_only:
             query = query.filter(Notification.is_read == False)
@@ -47,7 +48,7 @@ class NotificationService:
         return result
 
     @staticmethod
-    def mark_as_read(db: Session, notification_id: uuid.UUID, current_user: Users):
+    def mark_as_read(db: Session, notification_id: uuid.UUID, current_user: Users) -> Notification | Literal["not_found", "forbidden"]:
         notification = db.get(Notification, notification_id)
         if not notification:
             return "not_found"

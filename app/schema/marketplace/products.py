@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -52,7 +53,7 @@ class ProductWithDetailCreate(BaseModel):
     color_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
-    def _check_kind_and_owner(self):
+    def _check_kind_and_owner(self) -> Self:
         if self.detail_kind == "album":
             if self.idol_id is None and self.group_id is None:
                 raise ValueError("At least one of idol_id or group_id must be set for an album/single/EP product")

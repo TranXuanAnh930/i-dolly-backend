@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -13,11 +14,11 @@ class DirectSaleCampaignService:
     # concert.company_id — same pattern as lottery_campaign_service.
 
     @staticmethod
-    def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
+    def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_campaign(db: Session, data: DirectSaleCampaignCreate, current_user: Users):
+    def add_campaign(db: Session, data: DirectSaleCampaignCreate, current_user: Users) -> DirectSaleCampaign | Literal["not_found", "not_direct_sale_ticket_type", "forbidden"]:
         ticket_type = db.get(TicketType, data.ticket_type_id)
         if not ticket_type:
             return "not_found"
@@ -35,18 +36,18 @@ class DirectSaleCampaignService:
         return db_campaign
 
     @staticmethod
-    def get_campaigns(db: Session, ticket_type_id: uuid.UUID):
+    def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[DirectSaleCampaign] | Literal[False]:
         result = db.query(DirectSaleCampaign).filter(DirectSaleCampaign.ticket_type_id == ticket_type_id).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_campaign(db: Session, id: uuid.UUID):
+    def get_campaign(db: Session, id: uuid.UUID) -> DirectSaleCampaign | None:
         return db.get(DirectSaleCampaign, id)
 
     @staticmethod
-    def _company_id_for_campaign(db: Session, db_campaign: DirectSaleCampaign):
+    def _company_id_for_campaign(db: Session, db_campaign: DirectSaleCampaign) -> uuid.UUID | None:
         ticket_type = db.get(TicketType, db_campaign.ticket_type_id)
         if not ticket_type:
             return None
@@ -54,7 +55,7 @@ class DirectSaleCampaignService:
         return concert.company_id if concert else None
 
     @staticmethod
-    def update_campaign(db: Session, id: uuid.UUID, data: DirectSaleCampaignUpdate, current_user: Users):
+    def update_campaign(db: Session, id: uuid.UUID, data: DirectSaleCampaignUpdate, current_user: Users) -> DirectSaleCampaign | Literal["not_found", "forbidden"]:
         db_campaign = db.get(DirectSaleCampaign, id)
         if not db_campaign:
             return "not_found"
@@ -70,7 +71,7 @@ class DirectSaleCampaignService:
         return db_campaign
 
     @staticmethod
-    def delete_campaign(db: Session, id: uuid.UUID, current_user: Users):
+    def delete_campaign(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
         db_campaign = db.get(DirectSaleCampaign, id)
         if not db_campaign:
             return "not_found"

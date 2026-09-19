@@ -1,5 +1,5 @@
 import uuid
-from typing import List
+from typing import Any, List, Literal
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -30,7 +30,7 @@ class ProductService:
     # own scoping.
 
     @staticmethod
-    def _resolve_product_company_id(db: Session, product_id: uuid.UUID):
+    def _resolve_product_company_id(db: Session, product_id: uuid.UUID) -> uuid.UUID | None:
         album = db.get(AlbumDetail, product_id)
         if album:
             if album.idol_id is not None:
@@ -61,14 +61,14 @@ class ProductService:
         return current_user.company_id != company_id
 
     @staticmethod
-    def list_of_products(db:Session):
+    def list_of_products(db:Session) -> list[Product] | Literal[False]:
         db_products = db.query(Product).options(selectinload(Product.category)).all()
         if not db_products:
             return False
         return db_products
 
     @staticmethod
-    def search_product(db:Session, id:uuid.UUID):
+    def search_product(db:Session, id:uuid.UUID) -> dict[str, Any] | Literal[False]:
         db_product = db.query(Product).options(selectinload(Product.category)).filter(Product.id==id).first()
         if not db_product:
             return False
@@ -83,7 +83,7 @@ class ProductService:
         }
 
     @staticmethod
-    def add_product(db: Session, product:ProductCreate):
+    def add_product(db: Session, product:ProductCreate) -> Product | Literal[False]:
         if not db.get(Category, product.category_id):
             return False  # invalid category_id — was an uncaught IntegrityError -> 500 at commit
         db_product = Product(**product.model_dump())
@@ -99,7 +99,7 @@ class ProductService:
     # convention of a small scoping helper per service file (concert_service,
     # ticket_type_service, lottery_campaign_service all do the same).
     @staticmethod
-    def _resolve_owner_company_id(db: Session, idol_id, group_id):
+    def _resolve_owner_company_id(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> uuid.UUID | None:
         if idol_id is not None:
             idol = db.get(Idol, idol_id)
             return idol.company_id if idol else None
@@ -109,7 +109,7 @@ class ProductService:
         return None
 
     @staticmethod
-    def _owner_active_or_missing(db: Session, idol_id, group_id) -> bool:
+    def _owner_active_or_missing(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> bool:
         if idol_id is not None:
             idol = db.get(Idol, idol_id)
             return idol is None or idol.is_active
@@ -126,7 +126,7 @@ class ProductService:
     # module's top comment), this is scoped from the start: the schema itself
     # requires idol_id/group_id, so there's always an owner to check against.
     @staticmethod
-    def add_product_with_detail(db: Session, data: ProductWithDetailCreate, image_url: str | None, current_user: Users):
+    def add_product_with_detail(db: Session, data: ProductWithDetailCreate, image_url: str | None, current_user: Users) -> Product | Literal["category_not_found", "owner_not_found", "artist_inactive", "forbidden"]:
         if not db.get(Category, data.category_id):
             return "category_not_found"
         if data.idol_id is not None and not db.get(Idol, data.idol_id):
@@ -165,7 +165,7 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user:Users):
+    def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user:Users) -> Product | Literal[False, "forbidden", "price_locked", "category_not_found"]:
         db_product = db.get(Product, id)
         if not db_product:
             return False
@@ -189,7 +189,7 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def set_product_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users):
+    def set_product_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Product | Literal[False, "forbidden"]:
         """Used by the dedicated /products/{id}/image upload endpoint — updates
         only the image, leaving every other field untouched (unlike
         update_product, which replaces the whole row from a ProductCreate)."""
@@ -204,7 +204,7 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def delete_product(db:Session, id: uuid.UUID, current_user: Users):
+    def delete_product(db:Session, id: uuid.UUID, current_user: Users) -> Product | Literal[False, "forbidden"]:
         db_product = db.get(Product, id)
         if not db_product:
             return False
@@ -215,7 +215,7 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def add_bulk_products(db:Session, product:List[ProductRead]):
+    def add_bulk_products(db:Session, product:List[ProductRead]) -> list[Product] | Literal[False]:
         db_products = [Product(**p.model_dump()) for p in product]
         if not db_products:
             return False
@@ -230,7 +230,7 @@ class ProductService:
         return db_products
 
     @staticmethod
-    def pagination_process(db:Session, page:int=1, limit:int=10):
+    def pagination_process(db:Session, page:int=1, limit:int=10) -> list[Product]:
         offset = (page-1)*limit
         products = db.query(Product).offset(offset).limit(limit).all()
         return products
@@ -243,7 +243,7 @@ class ProductService:
             min_price:int | None = None, 
             max_price:int | None = None, 
             limit:int=5, page:int=1
-        ):
+        ) -> list[Product]:
         stmt = db.query(Product).options(selectinload(Product.category))
         filters=[]
         if category:
@@ -267,7 +267,7 @@ class ProductService:
     # this same shape, assembled here in one pass instead of per-card lookups.
 
     @staticmethod
-    def _build_product_cards(db: Session, products: list[Product]):
+    def _build_product_cards(db: Session, products: list[Product]) -> list[dict[str, Any]]:
         if not products:
             return []
         product_ids = [p.id for p in products]
@@ -300,11 +300,11 @@ class ProductService:
             key=lambda pair: len(pair[1].name), reverse=True,
         )
 
-        def artist_ref(kind, entity):
+        def artist_ref(kind: Literal["idol", "group"], entity: Idol | Group) -> dict[str, Any]:
             color_hex = entity.color.hex_code if kind == "idol" and getattr(entity, "color", None) else None
             return {"type": kind, "id": entity.id, "name": entity.name, "color_hex": color_hex}
 
-        def resolve_artist(product, album, merch):
+        def resolve_artist(product: Product, album: AlbumDetail | None, merch: MerchDetail | None) -> dict[str, Any] | None:
             for detail in (album, merch):
                 if not detail:
                     continue
@@ -341,7 +341,7 @@ class ProductService:
         return cards
 
     @staticmethod
-    def get_store_page(db: Session):
+    def get_store_page(db: Session) -> dict[str, Any] | Literal[False]:
         products = db.query(Product).options(joinedload(Product.category)).all()
         if not products:
             return False
@@ -349,7 +349,7 @@ class ProductService:
         return {"products": ProductService._build_product_cards(db, products), "groups": groups}
 
     @staticmethod
-    def get_product_detail(db: Session, id: uuid.UUID):
+    def get_product_detail(db: Session, id: uuid.UUID) -> dict[str, Any] | Literal[False]:
         product = db.query(Product).options(joinedload(Product.category)).filter(Product.id == id).first()
         if not product:
             return False
@@ -388,7 +388,7 @@ class ProductService:
     # even queried here.
 
     @staticmethod
-    def _product_read_dict(product: Product):
+    def _product_read_dict(product: Product) -> dict[str, Any]:
         return {
             "id": product.id,
             "name": product.name,
@@ -410,7 +410,7 @@ class ProductService:
     # them belong to a company, the same "which detail row, then which of
     # idol_id/group_id" chain.
     @staticmethod
-    def resolve_product_company_ids(db: Session, products: list[Product]):
+    def resolve_product_company_ids(db: Session, products: list[Product]) -> dict[uuid.UUID, uuid.UUID | None]:
         product_ids = [p.id for p in products]
         if not product_ids:
             return {}
@@ -445,7 +445,7 @@ class ProductService:
     # without this, a manager could see (and try to edit) another company's
     # products and only find out it was forbidden after submitting the form.
     @staticmethod
-    def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None):
+    def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None) -> dict[str, Any]:
         products = db.query(Product).options(joinedload(Product.category)).all()
         if company_id is not None:
             company_by_product = ProductService.resolve_product_company_ids(db, products)
@@ -453,7 +453,7 @@ class ProductService:
         return {"products": [ProductService._product_read_dict(p) for p in products]}
 
     @staticmethod
-    def get_manager_product_form_page(db: Session, company_id: uuid.UUID | None = None):
+    def get_manager_product_form_page(db: Session, company_id: uuid.UUID | None = None) -> dict[str, Any]:
         products = db.query(Product).options(joinedload(Product.category)).all()
         if company_id is not None:
             company_by_product = ProductService.resolve_product_company_ids(db, products)
@@ -484,7 +484,7 @@ class ProductService:
     # a read-only view of what actually sold, paginated newest-first same as
     # /products/pagination's page/limit/count/data shape.
     @staticmethod
-    def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10):
+    def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> dict[str, Any] | Literal["not_found", "forbidden"]:
         db_product = db.get(Product, product_id)
         if not db_product:
             return "not_found"

@@ -1,3 +1,4 @@
+from typing import Any, Literal
 
 import msgpack
 from sqlalchemy.orm import Session
@@ -7,7 +8,7 @@ from app.schema.marketplace import ProductRead, StorePageRead
 from app.services.marketplace.product_service import ProductService
 
 
-def get_cached_products(db:Session):
+def get_cached_products(db:Session) -> list[dict[str, Any]]:
     cache_key = "products:list"
     cached = redis_client.get(cache_key)
     if cached:
@@ -41,7 +42,7 @@ def get_cached_products(db:Session):
     redis_client.setex(cache_key, 60 * 5, msgpack.packb(payload))
     return payload
 
-def get_cached_store_page(db: Session):
+def get_cached_store_page(db: Session) -> dict[str, Any] | Literal[False]:
     cache_key = "products:store_page"
     cached = redis_client.get(cache_key)
     if cached:
@@ -68,6 +69,6 @@ def get_cached_store_page(db: Session):
     return payload
 
 
-def delete_cached_products():
+def delete_cached_products() -> None:
     redis_client.delete("products:list")
     redis_client.delete("products:store_page")

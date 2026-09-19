@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,7 @@ class TicketTypeService:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_ticket_type(db: Session, data: TicketTypeCreate, current_user: Users):
+    def add_ticket_type(db: Session, data: TicketTypeCreate, current_user: Users) -> TicketType | Literal["not_found", "forbidden"]:
         concert = db.get(Concert, data.concert_id)
         if not concert:
             return "not_found"
@@ -37,18 +38,18 @@ class TicketTypeService:
         return db_tt
 
     @staticmethod
-    def get_ticket_types(db: Session, concert_id: uuid.UUID):
+    def get_ticket_types(db: Session, concert_id: uuid.UUID) -> list[TicketType] | Literal[False]:
         result = db.query(TicketType).filter(TicketType.concert_id == concert_id).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_ticket_type(db: Session, id: uuid.UUID):
+    def get_ticket_type(db: Session, id: uuid.UUID) -> TicketType | None:
         return db.get(TicketType, id)
 
     @staticmethod
-    def update_ticket_type(db: Session, id: uuid.UUID, data: TicketTypeUpdate, current_user: Users):
+    def update_ticket_type(db: Session, id: uuid.UUID, data: TicketTypeUpdate, current_user: Users) -> TicketType | Literal["not_found", "forbidden", "capacity_locked", "invalid", "price_locked"]:
         db_tt = db.get(TicketType, id)
         if not db_tt:
             return "not_found"
@@ -79,7 +80,7 @@ class TicketTypeService:
         return db_tt
 
     @staticmethod
-    def delete_ticket_type(db: Session, id: uuid.UUID, current_user: Users):
+    def delete_ticket_type(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
         db_tt = db.get(TicketType, id)
         if not db_tt:
             return "not_found"

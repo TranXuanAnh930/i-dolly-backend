@@ -124,28 +124,28 @@ class PaymentService:
         return payment
 
     @staticmethod
-    def fetch_payment_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
+    def fetch_payment_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Payment | None:
         payment = db.query(Payment).filter(Payment.user_id==user_id, Payment.order_id==order_id).first()
         if not payment:
             return None
         return payment
 
     @staticmethod
-    def fetch_ticket_payment_status(db:Session, user_id:uuid.UUID, ticket_id:uuid.UUID):
+    def fetch_ticket_payment_status(db:Session, user_id:uuid.UUID, ticket_id:uuid.UUID) -> Payment | None:
         payment = db.query(Payment).filter(Payment.user_id==user_id, Payment.ticket_id==ticket_id).first()
         if not payment:
             return None
         return payment
 
     @staticmethod
-    def fetch_all_payments(db:Session, user_id:uuid.UUID):
+    def fetch_all_payments(db:Session, user_id:uuid.UUID) -> list[Payment] | None:
         payment = db.query(Payment).filter(Payment.user_id==user_id).all()
         if not payment:
             return None
         return payment
 
     @staticmethod
-    def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | None):
+    def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | None) -> Payment | None:
         payment = db.query(Payment).filter(Payment.pg_order_id==pg_order_id).with_for_update().first()
         if not payment or payment.status != PaymentStatus.pending or (user_id and payment.user_id!= user_id):
             return None

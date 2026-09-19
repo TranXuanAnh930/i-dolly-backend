@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -18,7 +19,7 @@ class IdolService:
     # register unrelated models (e.g. genre.py's AlbumGenre, referenced by a
     # relationship() on AlbumDetail) have run.
     @staticmethod
-    def _with_positions_and_color():
+    def _with_positions_and_color() -> tuple[Any, ...]:
         return (
             selectinload(Idol.idol_positions).joinedload(IdolPosition.position),
             selectinload(Idol.color),
@@ -41,7 +42,7 @@ class IdolService:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None):
+    def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None) -> Literal["company_not_found", "group_not_found", "company_mismatch", "group_inactive", "color_not_found"] | None:
         company = db.get(ManagementCompany, company_id)
         if not company:
             return "company_not_found"
@@ -67,7 +68,7 @@ class IdolService:
         return None
 
     @staticmethod
-    def add_idol(db: Session, idol: IdolCreate, current_user: Users):
+    def add_idol(db: Session, idol: IdolCreate, current_user: Users) -> Idol | Literal["forbidden", "company_mismatch", "group_inactive", "not_found"]:
         if IdolService._manager_scope_violation(current_user, idol.company_id):
             return "forbidden"
         error = IdolService._validate_refs(db, idol.company_id, idol.group_id, idol.color_id)
@@ -84,7 +85,7 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def get_idols(db: Session):
+    def get_idols(db: Session) -> list[Idol] | Literal[False]:
         # Public "browse all idols" list — deactivated idols don't belong on a
         # store-facing listing (database-design.md §3.4).
         result = db.query(Idol).filter(Idol.is_active.is_(True)).all()
@@ -93,7 +94,7 @@ class IdolService:
         return result
 
     @staticmethod
-    def get_idol(db: Session, id: uuid.UUID):
+    def get_idol(db: Session, id: uuid.UUID) -> Idol | None:
         # Deliberately NOT filtered by is_active — see group_service.get_group's
         # equivalent comment; a manager's edit form needs this to load a
         # deactivated idol.
@@ -102,7 +103,7 @@ class IdolService:
     # --- page-shaped reads (see idol.py schema's equivalent comment) ---
 
     @staticmethod
-    def get_members_page(db: Session):
+    def get_members_page(db: Session) -> dict[str, Any] | Literal[False]:
         # Store-facing browse page — same is_active filter as get_idols, plus
         # the group-unit dropdown only offers active groups.
         idols = db.query(Idol).options(*IdolService._with_positions_and_color()).filter(Idol.is_active.is_(True)).all()
@@ -112,7 +113,7 @@ class IdolService:
         return {"idols": idols, "groups": groups}
 
     @staticmethod
-    def get_idol_detail(db: Session, id: uuid.UUID):
+    def get_idol_detail(db: Session, id: uuid.UUID) -> dict[str, Any] | Literal[False]:
         # Public idol profile page — a deactivated idol reads as "not found"
         # here, same as get_idols/get_members_page; only the manager/admin
         # settings surfaces (get_manager_idols_page, plain get_idol) still see it.
@@ -134,11 +135,11 @@ class IdolService:
     # — empty lists here are a normal state, not a 404).
 
     @staticmethod
-    def get_manager_idols_page(db: Session):
+    def get_manager_idols_page(db: Session) -> dict[str, Any]:
         return {"idols": db.query(Idol).all(), "groups": db.query(Group).all()}
 
     @staticmethod
-    def get_manager_idol_form_page(db: Session):
+    def get_manager_idol_form_page(db: Session) -> dict[str, Any]:
         return {
             "idols": db.query(Idol).all(),
             "groups": db.query(Group).all(),
@@ -146,7 +147,7 @@ class IdolService:
         }
 
     @staticmethod
-    def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users):
+    def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users) -> Idol | Literal["not_found", "forbidden", "company_mismatch", "group_inactive"]:
         db_idol = db.get(Idol, id)
         if not db_idol:
             return "not_found"
@@ -182,7 +183,7 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def delete_idol(db: Session, id: uuid.UUID, current_user: Users):
+    def delete_idol(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
         # Soft delete, not db.delete(): concert_performers CASCADEs off
         # idols.id and album_details/merch_details SET NULL their idol_id —
         # hard-deleting an idol with concert or product history would destroy
@@ -198,7 +199,7 @@ class IdolService:
         return True
 
     @staticmethod
-    def reactivate_idol(db: Session, id: uuid.UUID, current_user: Users):
+    def reactivate_idol(db: Session, id: uuid.UUID, current_user: Users) -> Idol | Literal["not_found", "forbidden"]:
         db_idol = db.get(Idol, id)
         if not db_idol:
             return "not_found"
@@ -210,7 +211,7 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def set_idol_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users):
+    def set_idol_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Idol | Literal["not_found", "forbidden"]:
         """Used by POST /idols/{id}/image — updates only profile_image_url,
         leaving every other field untouched (update_idol replaces the whole
         profile from an IdolUpdate, which isn't what a plain image swap wants)."""

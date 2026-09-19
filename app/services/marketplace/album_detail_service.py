@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -17,11 +18,11 @@ class AlbumDetailService:
     # join but resolved by "which FK is non-null" instead of a fixed path).
 
     @staticmethod
-    def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
+    def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def _resolve_company_id(db: Session, idol_id, group_id):
+    def _resolve_company_id(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> uuid.UUID | None:
         if idol_id is not None:
             idol = db.get(Idol, idol_id)
             return idol.company_id if idol else None
@@ -31,7 +32,7 @@ class AlbumDetailService:
         return None
 
     @staticmethod
-    def _artist_active_or_missing(db: Session, idol_id, group_id) -> bool:
+    def _artist_active_or_missing(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> bool:
         # True unless the referenced idol/group exists AND is deactivated — a
         # nonexistent id is left for the "not_found" check right after this to
         # catch, so this only ever blocks a genuine "new release under a
@@ -45,7 +46,7 @@ class AlbumDetailService:
         return True
 
     @staticmethod
-    def add_album_detail(db: Session, data: AlbumDetailCreate, current_user: Users):
+    def add_album_detail(db: Session, data: AlbumDetailCreate, current_user: Users) -> AlbumDetail | Literal["not_found", "conflict", "artist_inactive", "forbidden"]:
         if not db.get(Product, data.product_id):
             return "not_found"
         if db.get(AlbumDetail, data.product_id):
@@ -64,18 +65,18 @@ class AlbumDetailService:
         return db_album
 
     @staticmethod
-    def get_album_detail(db: Session, product_id: uuid.UUID):
+    def get_album_detail(db: Session, product_id: uuid.UUID) -> AlbumDetail | None:
         return db.get(AlbumDetail, product_id)
 
     @staticmethod
-    def get_album_details(db: Session):
+    def get_album_details(db: Session) -> list[AlbumDetail] | Literal[False]:
         result = db.query(AlbumDetail).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def update_album_detail(db: Session, product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users):
+    def update_album_detail(db: Session, product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users) -> AlbumDetail | Literal["not_found", "forbidden"]:
         db_album = db.get(AlbumDetail, product_id)
         if not db_album:
             return "not_found"
@@ -91,7 +92,7 @@ class AlbumDetailService:
         return db_album
 
     @staticmethod
-    def delete_album_detail(db: Session, product_id: uuid.UUID, current_user: Users):
+    def delete_album_detail(db: Session, product_id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
         db_album = db.get(AlbumDetail, product_id)
         if not db_album:
             return "not_found"

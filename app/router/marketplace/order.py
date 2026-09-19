@@ -1,11 +1,13 @@
 import uuid
-from typing import List
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
+from app.db.models.marketplace import Order as OrderModel
+from app.db.models.marketplace import ShippingStatus as ModelShippingStatus
 from app.deps.auth import get_current_user, require_admin, require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.checkout import (
@@ -25,7 +27,7 @@ from app.services.marketplace.order_service import OrderService
 router = APIRouter(prefix="/order", tags=["Order"])
 
 @router.post("/checkout", response_model=Order)
-async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
+async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     try:
         order = OrderService.checkout(db, user.id, data)
         return order
@@ -53,7 +55,7 @@ async def get_manager_orders_page_data(
     limit: int = Query(10, ge=1, le=50),
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
-):
+) -> dict[str, Any]:
     # A manager is always scoped to their own company regardless of any
     # company_id passed — only an admin (no single company of their own)
     # may pick a different one, same trust boundary as every other manager
@@ -62,21 +64,21 @@ async def get_manager_orders_page_data(
     return OrderService.get_manager_orders_page(db, scoped_company_id, page, limit)
 
 @router.get("/fetch_placed_order", response_model=List[Order])
-async def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
+async def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> list[OrderModel]:
     order = OrderService.fetch_placed_order(db, user.id)
     if not order:
         raise HTTPException(status_code=404, detail="No orders found")
     return order
 
 @router.get("/single_placed_order/{order_id}", response_model=Order)
-async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)):
+async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     order = OrderService.fetch_single_placed_order(db, user.id, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
 @router.patch("/cancel/{order_id}", response_model=Order)
-async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
+async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> OrderModel:
     order = OrderService.cancel_placed_order(db, user.id, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found!")
@@ -84,15 +86,15 @@ async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user),
         raise HTTPException(status_code=400, detail="Order is already shipped and cannot be cancelled")
     return order
 
-@router.get("/shipping_status/{order_id}")
-async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)):
+@router.get("/shipping_status/{order_id}", response_model=None)
+async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> ModelShippingStatus:
     shipstat = OrderService.get_user_shipping_status(db, user.id, order_id)
     if shipstat is None:
         raise HTTPException(status_code=404, detail="Order not found or not authorized")
     return shipstat
 
-@router.patch("/update_shipping_status/{order_id}")
-async def update_status(new_status:SchemaShippingStatus, order_id:uuid.UUID, user:Users=Depends(require_admin), db:Session=Depends(get_db)):
+@router.patch("/update_shipping_status/{order_id}", response_model=None)
+async def update_status(new_status:SchemaShippingStatus, order_id:uuid.UUID, user:Users=Depends(require_admin), db:Session=Depends(get_db)) -> ModelShippingStatus:
     order = OrderService.update_shipping_status(db, new_status, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found/is cancelled")

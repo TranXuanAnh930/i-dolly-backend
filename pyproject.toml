@@ -16,6 +16,7 @@ select = [
     "F",               # pyflakes — undefined names, unused imports/variables, etc.
     "B",               # flake8-bugbear — real bug patterns (mutable defaults, bare except, ...)
     "I",               # isort — import ordering
+    "ANN",             # flake8-annotations — require type hints; see docs/architecture.md §5
 ]
 ignore = [
     # E711/E712 want `Model.col is None` / `not Model.col` — correct for a
@@ -26,6 +27,14 @@ ignore = [
     # tell a SQLAlchemy filter clause from a plain bool, so this stays off
     # rather than risk a real bug from ever applying its own "fix".
     "E711", "E712",
+    # ANN401 (disallow `Any`) is a stylistic-purity rule, not a real-bug
+    # catcher like the rest of ANN — `Any` is the correct type in a few
+    # legitimate spots (e.g. a dependency-injected callable's return, a
+    # generic JSON-shaped payload), and banning it would just trade one
+    # kind of imprecision for another (a `# type: ignore`-style escape
+    # hatch instead of an honest `Any`). Same reasoning as E711/E712 above:
+    # off because it would fight real code, not catch bugs.
+    "ANN401",
 ]
 
 [tool.ruff.lint.flake8-bugbear]
@@ -52,3 +61,13 @@ extend-immutable-calls = [
 # — meaningless functionally, but isort would keep re-flagging it, so I001
 # is off for this file too.
 "app/db/base.py" = ["F401", "I001"]
+# ANN's whole point is catching a real return-type/param-type bug (see
+# docs/architecture.md §5 for two this project actually hit) — that value
+# doesn't carry over to test functions (pytest fixtures/tests are
+# conventionally untyped; `-> None` on every `def test_x(self):` is
+# boilerplate, not a bug-catcher) or a one-off seed/fixture-generation
+# script. Measured before excluding, not assumed: 625 of the repo's 1031
+# raw ANN findings were in tests/scripts/ — this exclusion is why the
+# select above only needs to cover real production code from here on.
+"tests/*" = ["ANN"]
+"scripts/*" = ["ANN"]

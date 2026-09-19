@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -13,7 +14,7 @@ class LotteryCampaignBase(BaseModel):
     max_entries_per_user: int = Field(1, gt=0)
 
     @model_validator(mode="after")
-    def _check_window(self):
+    def _check_window(self) -> Self:
         if self.entry_end_at <= self.entry_start_at:
             raise ValueError("entry_end_at must be after entry_start_at")
         return self

@@ -699,6 +699,28 @@ newly introduced.
     any call signature unless given `autospec=True`. Caught by direct inspection + a manual repro
     (`python -c` calling the real function), not a new test; fixed by dropping the stray argument and
     tightening both call sites to fire only on the success branch, as described above.
+22. ~~**Almost no function had a return type, and ~3% of parameters had none**~~ — **FIXED**.
+    Audited before touching anything: 406 real findings across `app/router` (188) and
+    `app/services` (167 missing return types alone, since every service function is now a
+    `@staticmethod` — see the class-refactor entry above), plus a handful in `app/cache`/`app/utils`/
+    `app/schema`/`app/deps`/`main.py`. Enforced going forward via ruff's `ANN` rules
+    (`pyproject.toml`), not just fixed once — `tests/*`/`scripts/*` exempted (625 of the raw 1031
+    findings were there, and pytest conventions don't benefit from typing test functions).
+    Sentinel-return functions (this codebase's `return "forbidden"` convention) got precise
+    `Literal["forbidden", "not_found"]` unions, not a loose `str`, so a typo'd sentinel string is a
+    type error, not a silent runtime miss. Full reasoning and the two real bugs this caught while
+    writing the annotations (a stray-argument `TypeError`, a list-where-instance-expected
+    `ValidationError`) plus a genuine FastAPI gotcha it surfaced (a route's own return-type
+    annotation becomes an implicit `response_model` when the decorator has none — a bare ORM class
+    there crashes the app at import time, fixed with `response_model=None`, hit 3 times in
+    `cart.py`/`order.py`) are in `docs/architecture.md` §5, not repeated here. Verified after every
+    domain, not just once at the end: `py_compile`, `import main` (164 routes, unchanged),
+    `pytest tests/unit` (213/213, unchanged), `ruff check .` (clean, 0 findings). Two small,
+    genuinely-wrong pre-existing annotations were corrected along the way, found only because this
+    pass touched every signature: `category_service.get_categories` was typed `-> CategoryCreate`
+    (a single instance of the wrong schema) when it actually returns `list[Category] | Literal[False]`;
+    several `_manager_scope_violation`-style helpers across services were typed `company_id:
+    uuid.UUID` when callers can and do pass `None` (the correct type is `uuid.UUID | None`).
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
@@ -837,9 +859,16 @@ idempotency mechanism ended up being that status guard rather than a separate ev
    PayPal successfully take a buyer's money for an order that turns out unfulfillable), then marks
    `Payment`/`Order`/`Ticket` success and commits once. Two router endpoints in
    `app/router/marketplace/payment.py`: `POST /payment/paypal/capture/{pg_order_id}` (fast path, authenticated)
-   and `POST /payment/paypal/webhook` (reconciliation path, signature-verified, no auth).
-   `GET /payment/paypal/return` and `/cancel` are placeholder JSON responses standing in for the
-   frontend routes PayPal's `return_url`/`cancel_url` need once one exists — see
+   and `POST /payment/paypal/webhook` (reconciliation path, signature-verified, no auth). This entry
+   was stale: it previously described `GET /payment/paypal/return`/`/cancel` as backend placeholder
+   JSON responses standing in for frontend routes that didn't exist yet — checked directly against
+   the current code while updating this section: those backend endpoints don't exist at all anymore,
+   and `create_order()` (`app/utils/paypal_client.py`) sets `return_url`/`cancel_url` straight to
+   `{FRONTEND_BASE_URL}/payment/paypal/return` / `/cancel`. The frontend side is fully built, not a
+   placeholder: `PaypalReturnPage.vue` reads `token` off the query string, calls
+   `POST /payment/paypal/capture/{pg_order_id}` itself, renders a real success/decline confirmation
+   UI, and force-refetches the orders/tickets stores on success so "View Details" doesn't show a
+   stale pre-payment snapshot; `PaypalCancelPage.vue` handles the cancel redirect separately. See
    `docs/api-spec.md` §6 "PayPal checkout flow" for the full frontend-facing sequence.
 
 **Deviations from the original plan**:
@@ -854,7 +883,14 @@ idempotency mechanism ended up being that status guard rather than a separate ev
 
 **Verified so far**: a real PayPal Sandbox ticket checkout end-to-end — create order → approve on
 PayPal's sandbox UI → `POST /payment/paypal/capture/{pg_order_id}` → `Payment`/`Ticket` both flip to
-success/paid correctly.
+success/paid correctly. **Now also confirmed against the actual deployed Render app**, not just
+local Docker Compose — the same ticket-checkout flow was re-run end-to-end against the live Render
+deployment and completed successfully, meaning the real production env vars (`PAYPAL_MODE`,
+`PAYPAL_CLIENT_ID`/`SECRET`, `BASE_URL`, `FRONTEND_BASE_URL`, CORS) are correctly wired together
+there, not just in local dev. Not yet re-confirmed on Render specifically: the order-flow checkout,
+the webhook path, and the decline path below — each was already open before this deployment and
+stays open, this only closes "does ticket checkout work in the real deployed environment," not
+those other gaps.
 
 **Not yet verified — known limitations, not silently assumed working**:
 - **The order-flow (marketplace) checkout has not been run end-to-end against real PayPal** — only

@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -14,7 +15,7 @@ class PositionService:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_position(db: Session, position: PositionCreate):
+    def add_position(db: Session, position: PositionCreate) -> Position | Literal[False]:
         db_position = Position(**position.model_dump())
         if not db_position:
             return False
@@ -24,14 +25,14 @@ class PositionService:
         return db_position
 
     @staticmethod
-    def get_positions(db: Session):
+    def get_positions(db: Session) -> list[Position] | Literal[False]:
         result = db.query(Position).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def update_position(db: Session, id: uuid.UUID, data: PositionBase):
+    def update_position(db: Session, id: uuid.UUID, data: PositionBase) -> Position | Literal[False]:
         db_position = db.get(Position, id)
         if not db_position:
             return False
@@ -41,7 +42,7 @@ class PositionService:
         return db_position
 
     @staticmethod
-    def delete_position(db: Session, id: uuid.UUID):
+    def delete_position(db: Session, id: uuid.UUID) -> Literal[False, True]:
         db_position = db.get(Position, id)
         if not db_position:
             return False
@@ -57,7 +58,7 @@ class PositionService:
     # exists) -> 400.
 
     @staticmethod
-    def assign_idol_position(db: Session, data: IdolPositionAssign, current_user: Users):
+    def assign_idol_position(db: Session, data: IdolPositionAssign, current_user: Users) -> IdolPosition | Literal["not_found", "forbidden", "conflict"]:
         idol = db.get(Idol, data.idol_id)
         position = db.get(Position, data.position_id)
         if not idol or not position:
@@ -78,21 +79,21 @@ class PositionService:
         return db_link
 
     @staticmethod
-    def get_idol_positions(db: Session, idol_id: uuid.UUID):
+    def get_idol_positions(db: Session, idol_id: uuid.UUID) -> list[IdolPosition] | Literal[False]:
         result = db.query(IdolPosition).filter(IdolPosition.idol_id == idol_id).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_all_idol_positions(db: Session):
+    def get_all_idol_positions(db: Session) -> list[IdolPosition] | Literal[False]:
         result = db.query(IdolPosition).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def update_idol_position_primary(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users):
+    def update_idol_position_primary(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users) -> IdolPosition | Literal["not_found", "forbidden"]:
         link = db.get(IdolPosition, (idol_id, position_id))
         if not link:
             return "not_found"
@@ -104,7 +105,7 @@ class PositionService:
         return link
 
     @staticmethod
-    def remove_idol_position(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users):
+    def remove_idol_position(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
         link = db.get(IdolPosition, (idol_id, position_id))
         if not link:
             return "not_found"

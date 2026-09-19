@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from app.utils.jwt_manager import create_access_token, create_email_verification
 class AuthService:
 
     @staticmethod
-    def create_user(db:Session, user: UserCreate):
+    def create_user(db:Session, user: UserCreate) -> Users | Literal[False]:
         check_existing_user = db.query(Users).filter(Users.email == user.email).first()
         if check_existing_user:
             return False
@@ -31,14 +32,14 @@ class AuthService:
         return new_user
 
     @staticmethod
-    def authenticate_user(db: Session, email: str, password: str):
+    def authenticate_user(db: Session, email: str, password: str) -> Users | None:
         db_user = db.query(Users).filter(Users.email == email).first()
         if not db_user or not verify_password(password, db_user.hashed_password):
             return None
         return db_user
 
     @staticmethod
-    def create_tokens(db: Session, user: Users):
+    def create_tokens(db: Session, user: Users) -> dict[str, str]:
         # Revoke all existing refresh tokens for this user
         db.query(RefreshToken).filter(
             RefreshToken.user_id == user.id,
@@ -63,7 +64,7 @@ class AuthService:
         }
 
     @staticmethod
-    def verify_refresh_token(db: Session, token: str):
+    def verify_refresh_token(db: Session, token: str) -> Users | None:
         db_token = db.query(RefreshToken).filter(RefreshToken.token == token).first()
         if db_token and not db_token.revoked:
             expires = db_token.expires_at
@@ -73,7 +74,7 @@ class AuthService:
         return None
 
     @staticmethod
-    def email_verification_process(background_tasks:BackgroundTasks, user: Users):
+    def email_verification_process(background_tasks:BackgroundTasks, user: Users) -> dict[str, str]:
         token = create_email_verification_token(user.id)
         link = f"{settings.BASE_URL}/account/verify?token={token}"
         email_body = f"""
@@ -88,7 +89,7 @@ class AuthService:
         return {"msg" : "email verification link sent"}
 
     @staticmethod
-    def verify_email_token(db: Session, token: str):
+    def verify_email_token(db: Session, token: str) -> bool | None:
         user_id = verify_token_and_get_user_id(token, "verify")
         if not user_id:
             return None
@@ -101,7 +102,7 @@ class AuthService:
         return True
 
     @staticmethod
-    def cleanup_expired_tokens(db: Session):
+    def cleanup_expired_tokens(db: Session) -> int:
         """Delete expired and revoked refresh tokens from the database."""
         deleted = db.query(RefreshToken).filter(
             (RefreshToken.expires_at < datetime.now(timezone.utc)) | (RefreshToken.revoked == True)

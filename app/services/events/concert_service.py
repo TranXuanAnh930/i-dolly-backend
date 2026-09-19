@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -38,7 +39,7 @@ class ConcertService:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_concert(db: Session, concert: ConcertCreate, current_user: Users):
+    def add_concert(db: Session, concert: ConcertCreate, current_user: Users) -> Concert | Literal["forbidden", "not_found"]:
         if ConcertService._manager_scope_violation(current_user, concert.company_id):
             return "forbidden"
         if not db.get(ManagementCompany, concert.company_id):
@@ -52,18 +53,18 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def get_concerts(db: Session):
+    def get_concerts(db: Session) -> list[Concert] | Literal[False]:
         result = db.query(Concert).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_concert(db: Session, id: uuid.UUID):
+    def get_concert(db: Session, id: uuid.UUID) -> Concert | None:
         return db.get(Concert, id)
 
     @staticmethod
-    def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users):
+    def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users) -> Concert | Literal["not_found", "forbidden", "event_locked"]:
         db_concert = db.get(Concert, id)
         if not db_concert:
             return "not_found"
@@ -94,7 +95,7 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def delete_concert(db: Session, id: uuid.UUID, current_user: Users):
+    def delete_concert(db: Session, id: uuid.UUID, current_user: Users) -> Concert | Literal["not_found", "forbidden"]:
         # Cancel, not db.delete(): ticket_types CASCADEs off concerts.id, and
         # tickets/lottery_entries cascade off ticket_types in turn — hard-
         # deleting a concert with any sales or lottery history would destroy it.
@@ -114,7 +115,7 @@ class ConcertService:
     # --- concert_performers ---
 
     @staticmethod
-    def assign_performer(db: Session, data: ConcertPerformerAssign, current_user: Users):
+    def assign_performer(db: Session, data: ConcertPerformerAssign, current_user: Users) -> ConcertPerformer | Literal["invalid", "not_found", "forbidden"]:
         if (data.idol_id is None) == (data.group_id is None):
             return "invalid"  # exactly one of idol_id/group_id, matching chk_concert_performers_one_of
         concert = db.get(Concert, data.concert_id)
@@ -133,21 +134,21 @@ class ConcertService:
         return db_link
 
     @staticmethod
-    def get_performers(db: Session, concert_id: uuid.UUID):
+    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer] | Literal[False]:
         result = db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_all_performers(db: Session):
+    def get_all_performers(db: Session) -> list[ConcertPerformer] | Literal[False]:
         result = db.query(ConcertPerformer).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def remove_performer(db: Session, id: uuid.UUID, current_user: Users):
+    def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
         link = db.get(ConcertPerformer, id)
         if not link:
             return "not_found"
@@ -161,14 +162,14 @@ class ConcertService:
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
     @staticmethod
-    def get_events_page(db: Session):
+    def get_events_page(db: Session) -> dict[str, Any] | Literal[False]:
         concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
         if not concerts:
             return False
         return {"concerts": concerts}
 
     @staticmethod
-    def _lineup_idol(idol: Idol):
+    def _lineup_idol(idol: Idol) -> dict[str, Any]:
         return {
             "id": idol.id,
             "name": idol.name,
@@ -177,7 +178,7 @@ class ConcertService:
         }
 
     @staticmethod
-    def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = None):
+    def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = None) -> dict[str, Any] | Literal[False]:
         concert = db.query(Concert).options(joinedload(Concert.venue)).filter(Concert.id == id).first()
         if not concert:
             return False
@@ -315,5 +316,5 @@ class ConcertService:
     # comment — an empty list here is a normal state, not a 404).
 
     @staticmethod
-    def get_manager_events_page(db: Session):
+    def get_manager_events_page(db: Session) -> dict[str, Any]:
         return {"concerts": db.query(Concert).all(), "venues": db.query(Venue).all()}

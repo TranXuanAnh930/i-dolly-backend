@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,7 @@ class LotteryPreferenceService:
     # whole, in rank order.
 
     @staticmethod
-    def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users):
+    def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users) -> list[LotteryPreference] | Literal["not_found", "invalid", "not_lottery_ticket_type"]:
         concert = db.get(Concert, data.concert_id)
         if not concert:
             return "not_found"
@@ -55,7 +56,7 @@ class LotteryPreferenceService:
         return rows
 
     @staticmethod
-    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users):
+    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryPreference] | Literal[False]:
         result = (
             db.query(LotteryPreference)
             .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)
@@ -67,7 +68,7 @@ class LotteryPreferenceService:
         return result
 
     @staticmethod
-    def clear_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users):
+    def clear_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> bool:
         deleted = (
             db.query(LotteryPreference)
             .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)

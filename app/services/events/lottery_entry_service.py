@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -22,7 +23,7 @@ class LotteryEntryService:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users):
+    def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry | Literal["fan_only", "not_found", "already_has_ticket", "no_preference", "cap_reached"]:
         if current_user.role != "fan":
             return "fan_only"  # primary check for trg_lottery_entries_fan_only
         campaign = db.get(LotteryCampaign, data.campaign_id)
@@ -81,7 +82,7 @@ class LotteryEntryService:
         return db_entry
 
     @staticmethod
-    def get_my_entries(db: Session, current_user: Users):
+    def get_my_entries(db: Session, current_user: Users) -> list[LotteryEntry] | Literal[False]:
         # joinedload both hops — LotteryEntryRead embeds campaign (which embeds
         # ticket_type), and this list can span many different campaigns across
         # a fan's whole history, so lazy-loading each would be its own N+1 at
@@ -98,7 +99,7 @@ class LotteryEntryService:
         return result
 
     @staticmethod
-    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users):
+    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry] | Literal["not_found", "forbidden", False]:
         """Manager/admin view of who has entered a campaign under their own
         company (company_id resolved the same way as lottery_campaign_service:
         campaign -> ticket_type -> concert.company_id)."""

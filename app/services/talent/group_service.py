@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -25,7 +26,7 @@ class GroupService:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_group(db: Session, group: GroupCreate, current_user: Users):
+    def add_group(db: Session, group: GroupCreate, current_user: Users) -> Group | Literal["forbidden", "not_found"]:
         if GroupService._manager_scope_violation(current_user, group.company_id):
             return "forbidden"
         company = db.get(ManagementCompany, group.company_id)
@@ -38,7 +39,7 @@ class GroupService:
         return db_group
 
     @staticmethod
-    def get_groups(db: Session):
+    def get_groups(db: Session) -> list[Group] | Literal[False]:
         # Public "browse all groups" list — deactivated groups don't belong on
         # a store-facing listing (database-design.md §3.3).
         result = db.query(Group).filter(Group.is_active.is_(True)).all()
@@ -47,14 +48,14 @@ class GroupService:
         return result
 
     @staticmethod
-    def get_group(db: Session, id: uuid.UUID):
+    def get_group(db: Session, id: uuid.UUID) -> Group | None:
         # Deliberately NOT filtered by is_active: this is the plain by-id lookup
         # behind GET /groups/{id}, which a manager's edit form also needs to be
         # able to load a deactivated group in order to review/reactivate it.
         return db.get(Group, id)
 
     @staticmethod
-    def update_group(db: Session, id: uuid.UUID, data: GroupUpdate, current_user: Users):
+    def update_group(db: Session, id: uuid.UUID, data: GroupUpdate, current_user: Users) -> Group | Literal["not_found", "forbidden"]:
         db_group = db.get(Group, id)
         if not db_group:
             return "not_found"
@@ -68,7 +69,7 @@ class GroupService:
         return db_group
 
     @staticmethod
-    def delete_group(db: Session, id: uuid.UUID, current_user: Users):
+    def delete_group(db: Session, id: uuid.UUID, current_user: Users) -> Literal["not_found", "forbidden", True]:
         # Soft delete, not db.delete(): concert_performers CASCADEs off
         # groups.id and album_details/merch_details SET NULL their group_id —
         # hard-deleting a group with concert or product history would destroy
@@ -84,7 +85,7 @@ class GroupService:
         return True
 
     @staticmethod
-    def reactivate_group(db: Session, id: uuid.UUID, current_user: Users):
+    def reactivate_group(db: Session, id: uuid.UUID, current_user: Users) -> Group | Literal["not_found", "forbidden"]:
         db_group = db.get(Group, id)
         if not db_group:
             return "not_found"
@@ -98,7 +99,7 @@ class GroupService:
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
     @staticmethod
-    def get_groups_page(db: Session):
+    def get_groups_page(db: Session) -> dict[str, Any] | Literal[False]:
         # Store-facing browse page — same is_active filter as get_groups.
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
         if not groups:
@@ -114,7 +115,7 @@ class GroupService:
         return {"groups": groups}
 
     @staticmethod
-    def get_group_detail(db: Session, id: uuid.UUID):
+    def get_group_detail(db: Session, id: uuid.UUID) -> dict[str, Any] | Literal[False]:
         # Public group profile page — a deactivated group reads as "not found"
         # here, same as get_groups/get_groups_page; only the manager/admin
         # settings surfaces (get_manager_groups_page, plain get_group) still see it.
@@ -164,5 +165,5 @@ class GroupService:
     # — an empty list here is a normal state, not a 404).
 
     @staticmethod
-    def get_manager_groups_page(db: Session):
+    def get_manager_groups_page(db: Session) -> dict[str, Any]:
         return {"groups": db.query(Group).all()}

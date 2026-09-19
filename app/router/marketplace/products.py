@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from typing import List
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import ValidationError
@@ -28,32 +28,32 @@ from app.utils.storage import StorageError, get_storage
 router = APIRouter(prefix="/products", tags=["Products"])
 
 @router.get("/all", response_model=List[ProductRead])
-async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)):
+async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> list[dict[str, Any]]:
     db_products = get_cached_products(db)
     if not db_products:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
 @router.get("/store-page", response_model=StorePageRead)
-async def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)):
+async def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)) -> dict[str, Any]:
     result = get_cached_store_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="Products not found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
-async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)):
+async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> dict[str, Any]:
     result = ProductService.get_product_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
 
 @router.get("/manager-products-page", response_model=ManagerProductsPageRead)
-async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)):
+async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> dict[str, Any]:
     return ProductService.get_manager_products_page(db, company_id)
 
 @router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
-async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)):
+async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> dict[str, Any]:
     return ProductService.get_manager_product_form_page(db, company_id)
 
 @router.get("/{id}/sales", response_model=ProductSalesPageRead)
@@ -63,7 +63,7 @@ async def get_product_sales(
     limit: int = Query(10, ge=1, le=50),
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
-):
+) -> dict[str, Any]:
     result = ProductService.get_product_sales_page(db, id, current_user, page, limit)
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only view sales for products belonging to their own company's idols/groups")
@@ -72,7 +72,7 @@ async def get_product_sales(
     return result
 
 @router.get("/search/{id:uuid}")
-async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)):
+async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> dict[str, Any]:
     db_product = ProductService.search_product(db, id)
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -93,7 +93,7 @@ async def add_new_product(
     image: UploadFile | None = File(None),
     current_user:Users=Depends(require_manager_or_admin),
     db:Session=Depends(get_db),
-):
+) -> dict[str, str]:
     image_url = None
     if image is not None:
         try:
@@ -134,7 +134,7 @@ async def add_new_product_with_detail(
     image: UploadFile | None = File(None),
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
-):
+) -> dict[str, str]:
     try:
         data = ProductWithDetailCreate(
             name=name, price=price, description=description, quantity=quantity,
@@ -165,7 +165,7 @@ async def add_new_product_with_detail(
     return {"msg": "Product added successfully"}
 
 @router.put("/update/{id}")
-async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
     db_product = ProductService.update_product(db, id, product, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
@@ -179,7 +179,7 @@ async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_u
     return {"msg" : "Product Updated successfully"}
 
 @router.post("/{id}/image")
-async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
     """Replace an existing product's image without touching any other
     field — the complement to the inline upload on /products/add_product."""
     try:
@@ -195,7 +195,7 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
     return {"msg" : "Product image updated successfully"}
 
 @router.delete("/delete/{id}")
-async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
     db_product = ProductService.delete_product(db, id, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
@@ -205,7 +205,7 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
     return {"detail" : "Product Deleted successfully"}
 
 @router.post("/bulk_products")
-async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)):
+async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
     db_product = ProductService.add_bulk_products(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add products")
@@ -213,7 +213,7 @@ async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=
     return {"msg" : f"{len(db_product)} bulk products added successfully"}
 
 @router.get("/pagination")
-async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)):
+async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> dict[str, Any]:
     db_product = ProductService.pagination_process(db, page, limit)
     return {
         "page":page,
@@ -231,7 +231,7 @@ async def filter_product(
     limit:int=Query(10, ge=1, le=50),
     page:int=Query(1, ge=1),
     db:Session=Depends(get_db)
-    ):
+    ) -> dict[str, Any]:
     products = ProductService.filter_products(db, category, name, min_price, max_price, limit, page)
     return {
         "page":page,

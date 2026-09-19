@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
@@ -11,7 +12,7 @@ from app.schema.marketplace import CartItem
 class CartService:
 
     @staticmethod
-    def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID):
+    def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID) -> Cart | Literal[False] | None:
         user = db.get(Users, user_id)
         if not user:
             return False
@@ -35,7 +36,7 @@ class CartService:
         return stmt
 
     @staticmethod
-    def see_cart(db:Session, user_id:uuid.UUID):
+    def see_cart(db:Session, user_id:uuid.UUID) -> dict[str, Any] | None:
         items = db.query(Cart).filter(Cart.user_id==user_id).all()
         if not items:
             return None
@@ -43,7 +44,7 @@ class CartService:
         return {"items" : items, "total_price" : total_price}
 
     @staticmethod
-    def remove_cart(db:Session, user_id:uuid.UUID, cart_id:uuid.UUID):
+    def remove_cart(db:Session, user_id:uuid.UUID, cart_id:uuid.UUID) -> Literal[True] | None:
         cart = db.query(Cart).filter(Cart.id==cart_id).first()
         if not cart:
             return None

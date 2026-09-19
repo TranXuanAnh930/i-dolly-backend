@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
@@ -32,7 +33,7 @@ from app.utils.tax import with_tax
 class OrderService:
 
     @staticmethod
-    def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
+    def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate) -> Order:
         user = db.get(Users, user_id)
         if not user or user.role != "fan":
             # Primary check for trg_orders_fan_only — see FanOnlyPurchaseError's docstring.
@@ -107,7 +108,7 @@ class OrderService:
         return order
 
     @staticmethod
-    def fetch_placed_order(db:Session, user_id:uuid.UUID):
+    def fetch_placed_order(db:Session, user_id:uuid.UUID) -> list[Order]:
         order = (
             db.query(Order)
             .filter(Order.user_id==user_id)
@@ -117,7 +118,7 @@ class OrderService:
         return order
 
     @staticmethod
-    def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
+    def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | Literal[False]:
         order = (
             db.query(Order)
             .filter(Order.id==order_id, Order.user_id==user_id)
@@ -129,7 +130,7 @@ class OrderService:
         return order
 
     @staticmethod
-    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
+    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | Literal[False] | None:
         order = OrderService.fetch_single_placed_order(db, user_id, order_id)
         if not order:
             return None
@@ -142,14 +143,14 @@ class OrderService:
         return order
 
     @staticmethod
-    def get_user_shipping_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
+    def get_user_shipping_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> ShippingStatus | None:
         ship_status = db.query(Order).filter(Order.user_id==user_id, Order.id==order_id).options(selectinload(Order.shippingstatus)).first()
         if not ship_status:
             return None
         return ship_status.shippingstatus
 
     @staticmethod
-    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID):
+    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID) -> ShippingStatus | None:
         order_shippingstatus = db.query(ShippingStatus).filter(ShippingStatus.order_id==order_id).first()
         if not order_shippingstatus or order_shippingstatus.status == SchemaShippingStatus.cancelled:
             return None
@@ -169,7 +170,7 @@ class OrderService:
     # customer's purchase history, not public catalog data.
 
     @staticmethod
-    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10):
+    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> dict[str, Any]:
         products = db.query(Product).all()
         if company_id is None:
             relevant_ids = {p.id for p in products}
