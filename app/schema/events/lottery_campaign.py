@@ -39,7 +39,7 @@ class LotteryCampaignRead(LotteryCampaignBase):
     # matters most.
     ticket_type: TicketTypeRead
     # Total fans who've applied — not a mapped column, set as a plain
-    # attribute by concert_service.get_concert_detail before this model
+    # attribute by concert_service.get_concert_detail_public before this model
     # validates the ORM object (from_attributes reads it via getattr same
     # as any real column).
     entry_count: int = 0

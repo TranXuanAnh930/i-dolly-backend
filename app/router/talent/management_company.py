@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.cache_service import CacheService
 from app.cache.rate_limit import ip_key, rate_limit
 from app.db.models.identity import Users
 from app.db.models.talent import ManagementCompany
@@ -24,11 +25,12 @@ async def add_new_company(company: ManagementCompanyCreate, current_user: Users 
     db_company = ManagementCompanyService.add_company(db, company)
     if not db_company:
         raise HTTPException(status_code=400, detail="Invalid input")
+    CacheService.delete_cached_management_companies()
     return db_company
 
 @router.get("/all", response_model=List[ManagementCompanyRead])
 async def list_companies(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[ManagementCompany]:
-    result = ManagementCompanyService.get_companies(db)
+    result = CacheService.get_cached_management_companies(db)
     if not result:
         raise HTTPException(status_code=404, detail="No management companies found")
     return result
@@ -45,6 +47,7 @@ async def update_existing_company(id: uuid.UUID, data: ManagementCompanyBase, cu
     db_company = ManagementCompanyService.update_company(db, id, data)
     if not db_company:
         raise HTTPException(status_code=404, detail="Management company not found")
+    CacheService.delete_cached_management_companies()
     return db_company
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
@@ -52,4 +55,5 @@ async def delete_existing_company(id: uuid.UUID, current_user: Users = Depends(r
     result = ManagementCompanyService.delete_company(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Management company not found")
+    CacheService.delete_cached_management_companies()
     return MessageResponse(msg="Management company deleted successfully")

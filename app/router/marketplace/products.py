@@ -6,9 +6,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.cache.cache_service import delete_cached_products, get_cached_products, get_cached_store_page
+from app.cache.cache_service import CacheService
 from app.cache.rate_limit import ip_key, rate_limit
-from app.cache.redis_client import redis_client
 from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
@@ -32,32 +31,32 @@ router = APIRouter(prefix="/products", tags=["Products"])
 
 @router.get("/all", response_model=List[ProductRead])
 async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
-    db_products = get_cached_products(db)
+    db_products = CacheService.get_cached_products(db)
     if not db_products:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
 @router.get("/store-page", response_model=StorePageRead)
 async def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)) -> StorePageRead:
-    result = get_cached_store_page(db)
+    result = CacheService.get_cached_store_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="Products not found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
 async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> ProductDetailRead:
-    result = ProductService.get_product_detail(db, id)
+    result = CacheService.get_cached_product_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
 
 @router.get("/manager-products-page", response_model=ManagerProductsPageRead)
 async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductsPageRead:
-    return ProductService.get_manager_products_page(db, company_id)
+    return CacheService.get_cached_manager_products_page(db, company_id)
 
 @router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
 async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductFormPageRead:
-    return ProductService.get_manager_product_form_page(db, company_id)
+    return CacheService.get_cached_manager_product_form_page(db, company_id)
 
 @router.get("/{id}/sales", response_model=ProductSalesPageRead)
 async def get_product_sales(
@@ -111,7 +110,9 @@ async def add_new_product(
     db_product = ProductService.add_product(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add product")
-    redis_client.delete("products:list")
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+    CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product added successfully")
 
 # Bundles product creation with its AlbumDetail/MerchDetail row into one
@@ -164,7 +165,9 @@ async def add_new_product_with_detail(
         raise HTTPException(status_code=400, detail="Cannot attach a new product to a deactivated idol/group")
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only create products for their own company's idols/groups")
-    redis_client.delete("products:list")
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+    CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product added successfully")
 
 @router.put("/update/{id}", response_model=MessageResponse)
@@ -178,7 +181,9 @@ async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_u
         raise HTTPException(status_code=403, detail="Managers cannot change product price after creation — ask an admin")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    delete_cached_products()
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+    CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product Updated successfully")
 
 @router.post("/{id}/image", response_model=MessageResponse)
@@ -194,7 +199,9 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    delete_cached_products()
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+    CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product image updated successfully")
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
@@ -204,7 +211,9 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    delete_cached_products()
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+    CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product Deleted successfully")
 
 @router.post("/bulk_products", response_model=MessageResponse)
@@ -212,7 +221,9 @@ async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=
     db_product = ProductService.add_bulk_products(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add products")
-    delete_cached_products()
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+    CacheService.delete_cached_product_details()
     return MessageResponse(msg=f"{len(db_product)} bulk products added successfully")
 
 @router.get("/pagination", response_model=ProductsPageRead)

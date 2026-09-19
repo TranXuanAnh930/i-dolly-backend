@@ -5,6 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app.cache.cache_service import CacheService
 from app.cache.rate_limit import ip_key, rate_limit
 from app.db.models.identity import Users
 from app.db.models.talent import Idol
@@ -64,9 +65,16 @@ async def add_new_idol(
         long_description=long_description, profile_image_url=profile_image_url,
     )
     try:
-        return IdolService.add_idol(db, idol, current_user)
+        result = IdolService.add_idol(db, idol, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_groups_page()  # a new idol shifts its group's member_count
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_idol_details()  # gains a sibling entry on every other idol in its group
+    CacheService.delete_cached_group_details()  # its group's members list just grew
+    return result
 
 @router.get("/all", response_model=List[IdolRead])
 async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Idol]:
@@ -79,14 +87,14 @@ async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session 
 # segment isn't swallowed by the {id}: uuid.UUID route.
 @router.get("/members-page", response_model=MembersPageRead)
 async def get_members_page_data(db: Session = Depends(get_db)) -> MembersPageRead:
-    result = IdolService.get_members_page(db)
+    result = CacheService.get_cached_members_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No idols found")
     return result
 
 @router.get("/{id}/detail", response_model=IdolDetailRead)
 async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> IdolDetailRead:
-    result = IdolService.get_idol_detail(db, id)
+    result = CacheService.get_cached_idol_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Idol not found")
     return result
@@ -96,11 +104,11 @@ async def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) ->
 # registered before /{id} for the same reason as the routes above.
 @router.get("/manager-idols-page", response_model=ManagerIdolsPageRead)
 async def get_manager_idols_page_data(db: Session = Depends(get_db)) -> ManagerIdolsPageRead:
-    return IdolService.get_manager_idols_page(db)
+    return CacheService.get_cached_manager_idols_page(db)
 
 @router.get("/manager-idol-form-page", response_model=ManagerIdolFormPageRead)
 async def get_manager_idol_form_page_data(db: Session = Depends(get_db)) -> ManagerIdolFormPageRead:
-    return IdolService.get_manager_idol_form_page(db)
+    return CacheService.get_cached_manager_idol_form_page(db)
 
 @router.get("/{id}", response_model=IdolRead)
 async def get_idol_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Idol:
@@ -112,9 +120,16 @@ async def get_idol_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Idol:
 @router.put("/update/{id}", response_model=IdolRead)
 async def update_existing_idol(id: uuid.UUID, data: IdolUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Idol:
     try:
-        return IdolService.update_idol(db, id, data, current_user)
+        result = IdolService.update_idol(db, id, data, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_groups_page()  # group_id may have changed, shifting member_count on both ends
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_idol_details()  # old/new group_id both gain or lose this idol as a sibling
+    CacheService.delete_cached_group_details()
+    return result
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
@@ -123,14 +138,27 @@ async def delete_existing_idol(id: uuid.UUID, current_user: Users = Depends(requ
         IdolService.delete_idol(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_idol_details()
+    CacheService.delete_cached_group_details()
     return MessageResponse(msg="Idol deleted successfully")
 
 @router.patch("/activate/{id}", response_model=IdolRead)
 async def activate_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Idol:
     try:
-        return IdolService.reactivate_idol(db, id, current_user)
+        result = IdolService.reactivate_idol(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_idol_details()
+    CacheService.delete_cached_group_details()
+    return result
 
 @router.post("/{id}/image", response_model=IdolRead)
 async def upload_idol_image(id: uuid.UUID, image: UploadFile = File(...), current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Idol:
@@ -141,6 +169,12 @@ async def upload_idol_image(id: uuid.UUID, image: UploadFile = File(...), curren
     except StorageError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     try:
-        return IdolService.set_idol_image(db, id, image_url, current_user)
+        result = IdolService.set_idol_image(db, id, image_url, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_members_page()  # profile_image_url is embedded in the cached page; member_count is untouched
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_idol_details()  # profile_image_url is embedded in this idol's own detail page too
+    CacheService.delete_cached_group_details()  # ...and in its group's members list
+    return result

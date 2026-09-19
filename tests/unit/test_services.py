@@ -790,7 +790,7 @@ class TestShippingService:
         db = MagicMock()
         data = ShippingBase(
             address_line1="123 Main St", city="Mumbai",
-            postal_code=400001, state="MH", country="India"
+            postal_code="400001", state="MH", country="India"
         )
 
         ShippingService.create_shipping_address(db, DEFAULT_ID, data)

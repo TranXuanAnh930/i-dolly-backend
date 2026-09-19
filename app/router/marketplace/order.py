@@ -20,7 +20,7 @@ from app.exception.checkout import (
     UnsupportedGatewayError,
 )
 from app.exception.db_triggers import TriggerViolationError
-from app.schema.marketplace.order import ManagerOrdersPageRead, Order
+from app.schema.marketplace.order import ManagerOrdersPageRead, Order, OrderStatus
 from app.schema.marketplace.payment import PaymentCreate
 from app.schema.marketplace.shipping import ShippingStatus as SchemaShippingStatus
 from app.services.marketplace.order_service import OrderService
@@ -32,10 +32,11 @@ router = APIRouter(prefix="/order", tags=["Order"])
 async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     try:
         order = OrderService.checkout(db, user.id, data)
-        email_body = EmailTemplate.ORDER_PLACED.render(
-            email=user.email, order_id=order.id, total=order.total_price, status=order.status.value
-        )
-        celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.ORDER_PLACED.subject, email_body])
+        if order.status != OrderStatus.cancelled:  # a declined mock payment cancels the order outright — no confirmation email for that
+            email_body = EmailTemplate.ORDER_PLACED.render(
+                email=user.email, order_id=order.id, total=order.total_price, status=order.status.value
+            )
+            celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.ORDER_PLACED.subject, email_body])
         return order
     # Order matters here: PaymentFailedError, InsufficientStockError,
     # PaymentAmountMismatch and UnsupportedGatewayError all subclass

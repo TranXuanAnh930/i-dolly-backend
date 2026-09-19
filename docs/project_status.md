@@ -8,13 +8,17 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `a3f7c9e2b6d4`** (`add_password_reset_to_notification_type`) — 52 migrations, one
-linear chain, no branches. Applied and confirmed against a real Postgres instance:
-`alembic upgrade head` runs clean from empty, `alembic current` reports the head revision, and the
-`notifications` table/enum match the models. The notification feature was also exercised over real
-HTTP end to end (password reset → notification created → read → unread-count clears), and the
-per-route rate limiter was confirmed firing under load (a 30/60s budget returns `429` past the
-30th request).
+**Chain head: `bfadb696c92a`** (`change_shipping_postal_code_to_string`) — 56 migrations, one
+linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
+applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
+empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
+the models. The notification feature was also exercised over real HTTP end to end (password reset
+→ notification created → read → unread-count clears), and the per-route rate limiter was confirmed
+firing under load (a 30/60s budget returns `429` past the 30th request). The app is now also
+deployed against a real Supabase Postgres (§3) — migrations run clean there through the current
+head. The two most recent migrations (`54347349d0f2`, `bfadb696c92a` — item 5's schema-type fix)
+have only been verified statically (`py_compile`, `alembic`'s own revision-chain check) so far, not
+yet re-run against Supabase.
 
 All 18 domain tables from `database-design.md` plus the pre-existing e-commerce tables are
 migrated. `schema.sql`, cited throughout `database-design.md` as "the reference DDL," doesn't
@@ -87,8 +91,17 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 
 ## 3. Verification method (and its limit)
 
-Most of this project has been built without a reachable live Postgres/network connection, so
-changes are verified with:
+~~Most of this project has been built without a reachable live Postgres/network connection~~ —
+**DONE**: the app is deployed to Render (API) with Supabase as the Postgres backend.
+`alembic upgrade head` runs clean against the real Supabase instance, the deployed app is live and
+reachable, and real endpoints have been exercised against it end to end — the PayPal Sandbox
+checkout in §7, confirmed both locally and against this same deployed Render app, is one specific
+example. The full `pytest` suite itself still runs locally against a disposable Postgres
+(`tests/integration/conftest.py`), not against the deployed Supabase database — that's a separate
+exercise from "the deployed app works end to end," not claimed here.
+
+Day-to-day local development still happens without a reachable live Postgres for most changes, so
+those are verified with:
 
 1. A full `py_compile` sweep across `app/`, `main.py`, and `alembic/`.
 2. An AST-based scan of every ORM model's `ForeignKey` targets and
@@ -96,16 +109,15 @@ changes are verified with:
 3. An AST-based scan of every intra-app `from app.X import Y` statement, confirming the imported
    name exists in its target module.
 
-Neither exercises real SQL or a running app. Where a live Postgres/Redis has been reachable, this
-has gone further: a full `pip install` + `import main` end to end, `pytest tests/unit` against
-real imports (not just syntax), and for the notifications feature specifically, a full
-`alembic upgrade head` from empty plus driving the feature over real HTTP (register → request a
-password reset → complete it → confirm the notification through `/notifications/mine`,
-`/unread-count`, and `/read`) and confirming the rate limiter under load (429s past budget). That
-run: 339/339 tests passed, no regressions. The rest of the schema — everything migrated before
-notifications — hasn't had the same live-HTTP treatment, only the static checks above.
-`alembic upgrade head` against a real Postgres, followed by hitting each endpoint, is still the
-outstanding step before treating any of this as production-verified.
+Neither exercises real SQL or a running app — a substitute for the deployment-level verification
+above, not a replacement for it, for whatever a given change hasn't separately exercised there.
+Locally, where a live Postgres/Redis has been reachable, verification has also gone further: a
+full `pip install` + `import main` end to end, `pytest tests/unit` against real imports (not just
+syntax), and for the notifications feature specifically, a full `alembic upgrade head` from empty
+plus driving the feature over real HTTP (register → request a password reset → complete it →
+confirm the notification through `/notifications/mine`, `/unread-count`, and `/read`) and
+confirming the rate limiter under load (429s past budget). That run: 339/339 tests passed, no
+regressions.
 
 **Integration tests used to run directly against the shared dev database** — the same one
 `app`/`worker`/`scripts/seed.py` use. Several tests asserted a table returns `404`/empty with zero
@@ -161,9 +173,14 @@ newly introduced.
    (§7). `finalize_paypal_payment` only does real work when `payment.status == pending`, so a
    duplicate or out-of-order webhook delivery is a no-op rather than a double-fulfillment — see
    §7 for why no separate event-id ledger was needed.
-5. **Minor schema type inconsistencies**: `OrderItem.price` is `Integer` while `Product.price` is
+5. ~~**Minor schema type inconsistencies**: `OrderItem.price` is `Integer` while `Product.price` is
    `Float` (truncates fractional prices in order history); `ShippingAddress.postal_code` is
-   `Integer`, which breaks for alphanumeric postal codes (UK, Canada, Japan).
+   `Integer`, which breaks for alphanumeric postal codes (UK, Canada, Japan)~~ — **FIXED**. Two
+   migrations (`54347349d0f2`, `bfadb696c92a`): `orders_items.price` → `Float`,
+   `shipping_addresses.postal_code` → `String`. Both widen an existing column, so no backfill is
+   needed; the matching Pydantic schemas (`OrderItem`, `ManagerOrderItemRead`, `ProductSaleRead`,
+   `ShippingBase`) were updated to match so the type fix doesn't get silently undone by
+   `response_model=`/request-body coercion at the HTTP boundary.
 6. ~~**CORS `allow_origins` is hardcoded**~~ — **FIXED**. `main.py` builds `origins` from a
    `CORS_ORIGINS` setting (comma-separated, default `http://localhost:8080`) — see
    `docs/deployment.md`.
@@ -335,15 +352,127 @@ newly introduced.
     its own import and recursed into itself instead of ever sending anything; and
     `app/celery_app.py`'s `include` list never listed the new `app.tasks.email` module, so a worker
     would never discover the task at all.
+28. **Extended Redis caching past the product list to every other unauthenticated, unpersonalized
+    page-shaped read**: `GET /concerts/events-page`, `GET /idols/members-page`,
+    `GET /groups/groups-page`, `GET /venues/all`, `GET /idol_colors/all`. Same shape as the
+    existing product cache (`app/cache/cache_service.py`): msgpack-serialized, 5-minute TTL
+    (`_TTL_SECONDS`), invalidated on every add/update/delete/reactivate that can change the cached
+    page, called from the router right after the mutating service call succeeds — not from inside
+    the service, since `cache_service.py` already imports these services for the read side, and a
+    service importing back would be a circular import. `groups-page`'s `member_count` and
+    `members-page`'s active-groups filter each depend on the *other* domain's rows, so an idol
+    add/update/delete/reactivate invalidates both caches, and so does a group
+    add/update/delete/reactivate. Venue/idol-color edits do **not** invalidate `events-page`'s
+    embedded `VenueRead`/an idol's embedded color hex — accepted staleness (up to 5 minutes) on
+    cosmetic, non-money fields, same trade-off the product cache already made and documented in
+    item 21, not chased further here.
+29. **Extended the same caching to every manager/admin settings page**: `GET
+    /idols/manager-idols-page`, `GET /idols/manager-idol-form-page`, `GET
+    /groups/manager-groups-page`, `GET /concerts/manager-events-page`, `GET
+    /products/manager-products-page`, `GET /products/manager-product-form-page`, `GET
+    /management_companies/all`. Same TTL+invalidate-on-write shape as item 28; these never 404 on
+    an empty result (a brand-new company's empty product list is a normal state), so there's no
+    `Literal[False]` branch to cache around, unlike the store-facing pages. The two products pages
+    are the only ones keyed by `company_id` (`products:manager_products_page:<company_id|"all">`)
+    since they're the only ones scoped — a manager's cached page must never leak into another
+    company's, or into the admin's unfiltered view. Their `company_id` isn't a column on `Product`
+    itself (resolved indirectly through `album_details`/`merch_details`), so invalidation clears
+    every company's key via `redis_client.keys(...)` rather than computing which one a given write
+    actually touched — an O(N) scan, fine at this project's key count, not something a
+    high-traffic deployment would want unchanged. Idol/group/idol-color mutations cross-invalidate
+    into whichever manager pages embed their rows (the idol/group form dropdowns, the color
+    picker), same reasoning as item 28's members/groups cross-invalidation. **Separately noticed,
+    not fixed here**: none of these seven manager/admin GET endpoints actually check
+    `require_manager_or_admin`/`require_admin` — no auth dependency at all, unlike every mutating
+    endpoint on the same resources. Caching makes an unauthenticated read of this data cheaper,
+    not more exposed than it already was; flagging so it doesn't get missed as this list is
+    extended further.
+30. ~~**`POST /order/checkout` emailed "your order has been placed" even on a declined mock
+    payment**~~ — **FIXED**. `OrderService.checkout` correctly gates the in-app
+    `order_confirmation` notification on `payment.status == PaymentStatus.success`, but the
+    router's `EmailTemplate.ORDER_PLACED` dispatch had no such gate — it fired on any non-exception
+    return, and a decline (`simulate_succ=false`) doesn't raise, it just sets `order.status =
+    cancelled` and returns normally. Found while writing up the checkout flow for the monolith
+    README; fixed by skipping the email when `order.status == OrderStatus.cancelled`. The
+    equivalent ticket path (`ticket_service.checkout_ticket`) never had this bug — its email
+    dispatch already lives inside the same `if payment.status == PaymentStatus.success:` block as
+    the notification, in the service rather than the router.
+31. **Extended the same caching to the idol/group detail pages**: `GET /idols/{id}/detail`,
+    `GET /groups/{id}/detail`. Same TTL+invalidate-on-write shape as items 28/29, but per-id keyed
+    (`idols:detail:<id>`, `groups:detail:<id>`) rather than one shared key, since each id is its own
+    cache entry. An idol's detail page embeds its group and its siblings (other idols sharing its
+    `group_id`); a group's detail page embeds every member's idol data — so a write to either side
+    can invalidate detail pages keyed by ids the write has no direct handle on (renaming a group
+    must bust the cache of idols the update endpoint never sees an id for). Rather than resolve
+    which ids share a `group_id` before every write, `CacheService.delete_cached_idol_details`/
+    `CacheService.delete_cached_group_details` each clear their whole namespace via
+    `redis_client.keys(...)`, same O(N)-scan tradeoff as item 29's manager-products invalidation —
+    called together from every idol and group mutation (add/update/delete/reactivate/image-upload),
+    since either side's write can affect both caches.
+32. **Converted `cache_service.py` from a flat module of functions to `class CacheService` (all
+    `@staticmethod`s)**, matching the router/service-layer convention documented in
+    `architecture.md` §2 item 2 — every caller across 9 files now imports `CacheService` and calls
+    `CacheService.get_cached_x(...)`/`CacheService.delete_cached_x(...)` instead of importing each
+    function by name. While sweeping for leftover direct `redis_client` calls outside
+    `cache_service.py`, found two in `products.py` (`add_new_product`, `add_new_product_with_detail`)
+    that called `redis_client.delete("products:list")` directly instead of going through
+    `CacheService.delete_cached_products()` — which also clears `products:store_page`. Both spots
+    only cleared the `/products/all` cache, so a product added through either endpoint left the
+    store page's cached product list stale for up to 5 minutes; now fixed as a side effect of
+    routing both through `CacheService`. `rate_limit.py`'s direct `redis_client.incr`/`expire`/`ttl`
+    calls were deliberately left alone — fixed-window rate limiting is a different concern from
+    page caching and has no `CacheService` equivalent to route through.
+33. **Cached `GET /products/{id}/detail` and `GET /concerts/{id}/detail`**, both reported by the
+    frontend as hot paths (`ProductDetailPage.vue`/`EventDetailPage.vue`). The product one is a
+    straight extension of item 31's shape: `products:<id>:detail`, invalidated (namespace-wide,
+    same fan-out reasoning as idol/group details — recommendations pull from every other product)
+    from every product mutation endpoint.
+
+    The concert one is not that simple: `ConcertDetailRead` bundles `has_ticket`/
+    `has_won_lottery`/`entered_campaign_ids`/`my_lottery_preferences` alongside the public
+    concert/venue/ticket-types/lineup/campaigns data, and those four fields are per-viewer —
+    caching the response verbatim would let one fan's cache hit leak another fan's ticket/lottery
+    state. Fixed by splitting `concert_service.get_concert_detail` (removed) into
+    `get_concert_detail_public` (concert/venue/ticket_types/lineup/performing_groups/campaigns
+    only, personalized fields left at their False/empty schema defaults — this is the part
+    `CacheService.get_cached_concert_detail` caches under `concerts:<id>:detail`) and
+    `get_personalization` (the four per-viewer fields, computed fresh on every request, never
+    cached). `get_concert_detail_by_id` merges them with `result.model_copy(update=...)` only
+    when a fan is logged in; a guest gets the cached bundle as-is. Chosen over the simpler
+    alternative (skip the cache entirely for logged-in fans) because it keeps the cache-hit rate
+    for logged-in traffic too, at the cost of one small uncached query per request for ticket/
+    lottery state — same shape as `get_cached_store_page`.
+
+    Unlike the idol/group namespace-wide invalidation, every write that can change a concert's
+    cached bundle (the concert itself, one of its ticket types, a lottery/direct-sale campaign,
+    a performer credit) already knows its own `concert_id` (or can resolve it via
+    `TicketTypeService.get_ticket_type` for campaigns, which only have `ticket_type_id`), so
+    `CacheService.delete_cached_concert_detail(concert_id)` is a precise single-key delete wired
+    into `concert.py` (update/cancel/assign-performer/unassign-performer),
+    `ticket_type.py` (add/update/delete), `lottery_campaign.py`, and `direct_sale_campaign.py`
+    (add/update/delete on both).
+
+    **Known, accepted gap, not fixed here**: `TicketType.sold_quantity` and a lottery campaign's
+    `entry_count`/`status` change during ticket purchase (`ticket_service`, `payment_service`) and
+    lottery draw (`lottery_draw_service`, run async in a Celery worker) — neither invalidates this
+    cache, so a concert's displayed availability/entry-count can lag up to 5 minutes after a
+    purchase or draw. Deliberately not chased into those flows here: unlike item 21's product-cache
+    bug, this never risks overselling (the actual capacity check in `ticket_service`/
+    `payment_service` reads live DB state, not the cache) — it's a display-only staleness, same
+    category as item 28's accepted venue/idol-color staleness, just flagged explicitly since it
+    touches ticket availability rather than a cosmetic field.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.
-- **The direct/"reservation" (non-lottery) checkout flow** — the schema supports it
-  (`ticket_types.sale_method = 'direct'`), but only the lottery path has a sequence diagram
-  (`database-design.md` §5.2) and only `tickets`' admin-only manual-issue endpoint exists so far.
+- ~~**The direct/"reservation" (non-lottery) checkout flow**~~ — **DONE**:
+  `TicketService.checkout_ticket` (`POST /tickets/checkout`) is the real direct-sale purchase
+  path — checks `ticket_types.sale_method == 'direct'`, an open `DirectSaleCampaign` window,
+  remaining stock, and the same one-live-ticket-per-concert/unresolved-lottery-standing gates the
+  lottery path uses, then locks and pays the same way `checkout_won_ticket` does. `add_ticket`
+  (admin-only manual issue) remains a separate stopgap, used for the lottery-draw path only.
 - **The draw job's actual runtime** — **decided: manager-triggered**, not a Celery Beat scheduled
   task — see §8 for the full plan. The Celery skeleton (`app/celery_app.py`, broker on Redis)
   stays unused for this specific job as a result; it may still end up used for winner-notification
@@ -433,10 +562,11 @@ times the webhook re-delivers, with no second table to maintain.
 **Verified**: a real PayPal Sandbox ticket checkout end-to-end (create order → approve → capture
 → `Payment`/`Ticket` flip to success/paid), confirmed both locally and against the deployed
 Render app (so `PAYPAL_MODE`/`BASE_URL`/`FRONTEND_BASE_URL`/CORS are wired correctly there too).
+~~The order-flow (marketplace) checkout hasn't been run end-to-end against real PayPal~~ —
+**DONE**: run against real PayPal Sandbox the same way as the ticket flow, same
+create-order → approve → capture → `Payment`/`Order` success sequence.
 
 **Not yet verified — known limitations**:
-- The order-flow (marketplace) checkout hasn't been run end-to-end against real PayPal — only the
-  ticket flow has. Same code shape, reviewed but not observed working.
 - The webhook path has never received a real or simulated delivery — both a real ngrok tunnel and
   PayPal's own simulator show zero incoming requests, which matches a known PayPal pattern of
   silently dropping delivery to tunnel-flagged domains rather than a confirmed bug in the handler.
