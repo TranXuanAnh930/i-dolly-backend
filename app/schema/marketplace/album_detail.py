@@ -1,5 +1,6 @@
 import uuid
 from datetime import date
+from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -16,7 +17,7 @@ class AlbumDetailCreate(AlbumDetailBase):
     group_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
-    def _check_artist(self):
+    def _check_artist(self) -> Self:
         if self.idol_id is None and self.group_id is None:
             raise ValueError("At least one of idol_id or group_id must be set")
         return self

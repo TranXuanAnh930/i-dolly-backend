@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -9,7 +10,7 @@ from app.schema.marketplace import ShippingBase
 class ShippingService:
 
     @staticmethod
-    def create_shipping_address(db:Session, user_id:uuid.UUID, data:ShippingBase):
+    def create_shipping_address(db:Session, user_id:uuid.UUID, data:ShippingBase) -> ShippingAddress | Literal[False]:
         address = ShippingAddress(**data.model_dump(), user_id=user_id)
         if not address:
             return False
@@ -19,21 +20,21 @@ class ShippingService:
         return address
 
     @staticmethod
-    def fetch_address(db:Session, user_id:uuid.UUID):
+    def fetch_address(db:Session, user_id:uuid.UUID) -> list[ShippingAddress] | None:
         address = db.query(ShippingAddress).filter(ShippingAddress.user_id==user_id).all()
         if not address:
             return None
         return address
 
     @staticmethod
-    def get_address_by_id(db:Session, address_id:uuid.UUID):
+    def get_address_by_id(db:Session, address_id:uuid.UUID) -> ShippingAddress | None:
         address = db.query(ShippingAddress).filter(ShippingAddress.id==address_id).first()
         if not address:
             return None
         return address
 
     @staticmethod
-    def update_address(db:Session, user_id:uuid.UUID, data:ShippingBase, address_id:uuid.UUID):
+    def update_address(db:Session, user_id:uuid.UUID, data:ShippingBase, address_id:uuid.UUID) -> ShippingAddress | None:
         address = db.query(ShippingAddress).filter(ShippingAddress.id==address_id, user_id==user_id).first()
         if not address:
             return None
@@ -49,7 +50,7 @@ class ShippingService:
         return address
 
     @staticmethod
-    def delete_address(db:Session, user_id:uuid.UUID, address_id:uuid.UUID):
+    def delete_address(db:Session, user_id:uuid.UUID, address_id:uuid.UUID) -> Literal[True] | None:
         address = db.query(ShippingAddress).filter(ShippingAddress.id==address_id, user_id==user_id).first()
         if not address:
             return None

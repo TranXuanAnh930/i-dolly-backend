@@ -116,4 +116,11 @@ jobs:
     environment: production
     steps:
       - name: Deploy to Render
-        run: curl ${{ secrets.RENDER_DEPLOY_HOOK }}
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK secret is not set; skipping deploy."
+            exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK"

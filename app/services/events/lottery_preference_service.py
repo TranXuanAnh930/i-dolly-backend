@@ -1,9 +1,11 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.db.models.events import Concert, LotteryPreference, TicketType
 from app.db.models.identity import Users
+from app.exception.common import BadRequestError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
 from app.schema.events import LotteryPreferenceSet
 
@@ -24,20 +26,20 @@ class LotteryPreferenceService:
     # whole, in rank order.
 
     @staticmethod
-    def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users):
+    def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users) -> list[LotteryPreference]:
         concert = db.get(Concert, data.concert_id)
         if not concert:
-            return "not_found"
+            raise NotFoundError("Concert or ticket type not found, or a ticket type doesn't belong to this concert")
         seen = set()
         for tt_id in data.ticket_type_ids_in_order:
             if tt_id in seen:
-                return "invalid"  # duplicate ticket_type_id in the ranked list
+                raise BadRequestError("Duplicate ticket_type_id in the ranked list")
             seen.add(tt_id)
             tt = db.get(TicketType, tt_id)
             if not tt or tt.concert_id != data.concert_id:
-                return "not_found"  # ticket type missing, or belongs to a different concert
+                raise NotFoundError("Concert or ticket type not found, or a ticket type doesn't belong to this concert")
             if tt.sale_method != "lottery":
-                return "not_lottery_ticket_type"  # ranking a direct-sale tier makes no sense — no lottery exists for it
+                raise BadRequestError("Can only rank lottery-sale ticket types")
         db.query(LotteryPreference).filter(
             LotteryPreference.concert_id == data.concert_id,
             LotteryPreference.user_id == current_user.id,
@@ -55,7 +57,7 @@ class LotteryPreferenceService:
         return rows
 
     @staticmethod
-    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users):
+    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryPreference] | Literal[False]:
         result = (
             db.query(LotteryPreference)
             .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)
@@ -67,7 +69,7 @@ class LotteryPreferenceService:
         return result
 
     @staticmethod
-    def clear_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users):
+    def clear_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> bool:
         deleted = (
             db.query(LotteryPreference)
             .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)

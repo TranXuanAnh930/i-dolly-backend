@@ -56,7 +56,7 @@ class LocalStorageBackend(StorageBackend):
     though (a redeploy or a second instance won't see what the first one
     saved) — that's exactly what S3StorageBackend is for."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.root = Path(settings.LOCAL_UPLOAD_DIR)
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -88,7 +88,7 @@ class S3StorageBackend(StorageBackend):
     doesn't need it configured (it does need it installed either way, since
     it's in requirements.txt, but never imported/executed for local dev)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         import boto3  # local import — see class docstring
 
         if not settings.S3_BUCKET_NAME:

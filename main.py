@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -37,7 +38,7 @@ from app.services.identity.auth_service import AuthService
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: clean up expired refresh tokens
     db = SessionLocal()
     try:
@@ -82,7 +83,7 @@ if settings.STORAGE_BACKEND == "local":
 
 
 @app.get("/")
-def root():
+def root() -> dict[str, str]:
     return {
         "message" : "i-dolly-backend is live",
         "docs" : "/docs"

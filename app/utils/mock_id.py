@@ -1,7 +1,7 @@
 import uuid
 
 
-def generate_mock_id():
+def generate_mock_id() -> dict[str, str]:
     rand = uuid.uuid4()
     return {
         "order_id" : f"MOCK-OD-{rand}",

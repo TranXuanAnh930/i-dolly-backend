@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -16,7 +17,17 @@ from app.db.models.events import (
 )
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, ManagementCompany
-from app.schema.events import ConcertCreate, ConcertPerformerAssign, ConcertUpdate
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
+from app.schema.events import (
+    ConcertCreate,
+    ConcertDetailRead,
+    ConcertPerformerAssign,
+    ConcertUpdate,
+    EventsPageRead,
+    LineupIdol,
+    ManagerEventsPageRead,
+    PerformingGroupMini,
+)
 
 # Once a concert has gone on sale (or further), fans may already hold
 # tickets or lottery entries against its date/capacity — a manager silently
@@ -30,21 +41,22 @@ _EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
 
 class ConcertService:
 
-    # Same sentinel convention as group_service/idol_service: "not_found" (404),
-    # "forbidden" (403, manager acting outside their own company_id).
+    # Error convention: NotFoundError (404), ForbiddenError (403, manager
+    # acting outside their own company_id), BadRequestError (400, everything
+    # else — see individual raise sites for the specific business rule).
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
         return current_user.role == "manager" and current_user.company_id != company_id
 
     @staticmethod
-    def add_concert(db: Session, concert: ConcertCreate, current_user: Users):
+    def add_concert(db: Session, concert: ConcertCreate, current_user: Users) -> Concert:
         if ConcertService._manager_scope_violation(current_user, concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         if not db.get(ManagementCompany, concert.company_id):
-            return "not_found"
+            raise NotFoundError("Management company not found")
         if not db.get(Venue, concert.venue_id):
-            return "not_found"
+            raise NotFoundError("Venue not found")
         db_concert = Concert(**concert.model_dump())
         db.add(db_concert)
         db.commit()
@@ -52,23 +64,23 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def get_concerts(db: Session):
+    def get_concerts(db: Session) -> list[Concert] | Literal[False]:
         result = db.query(Concert).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_concert(db: Session, id: uuid.UUID):
+    def get_concert(db: Session, id: uuid.UUID) -> Concert | None:
         return db.get(Concert, id)
 
     @staticmethod
-    def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users):
+    def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users) -> Concert:
         db_concert = db.get(Concert, id)
         if not db_concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         if (
             current_user.role == "manager"
             and db_concert.status in _EVENT_OPEN_STATUSES
@@ -78,9 +90,9 @@ class ConcertService:
                 or data.capacity != db_concert.capacity
             )
         ):
-            return "event_locked"
+            raise ForbiddenError("Concert is already on sale — cancel it first, then edit the date/doors-open time/capacity once it's cancelled")
         if not db.get(Venue, data.venue_id):
-            return "not_found"
+            raise NotFoundError("Venue not found")
         db_concert.venue_id = data.venue_id
         db_concert.title = data.title
         db_concert.description = data.description
@@ -94,7 +106,7 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def delete_concert(db: Session, id: uuid.UUID, current_user: Users):
+    def delete_concert(db: Session, id: uuid.UUID, current_user: Users) -> Concert:
         # Cancel, not db.delete(): ticket_types CASCADEs off concerts.id, and
         # tickets/lottery_entries cascade off ticket_types in turn — hard-
         # deleting a concert with any sales or lottery history would destroy it.
@@ -103,9 +115,9 @@ class ConcertService:
         # same rationale as idol_service.delete_idol's soft delete.
         db_concert = db.get(Concert, id)
         if not db_concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         db_concert.status = "cancelled"
         db.commit()
         db.refresh(db_concert)
@@ -114,18 +126,18 @@ class ConcertService:
     # --- concert_performers ---
 
     @staticmethod
-    def assign_performer(db: Session, data: ConcertPerformerAssign, current_user: Users):
+    def assign_performer(db: Session, data: ConcertPerformerAssign, current_user: Users) -> ConcertPerformer:
         if (data.idol_id is None) == (data.group_id is None):
-            return "invalid"  # exactly one of idol_id/group_id, matching chk_concert_performers_one_of
+            raise BadRequestError("Exactly one of idol_id or group_id must be set")  # matching chk_concert_performers_one_of
         concert = db.get(Concert, data.concert_id)
         if not concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         if data.idol_id is not None and not db.get(Idol, data.idol_id):
-            return "not_found"
+            raise NotFoundError("Idol not found")
         if data.group_id is not None and not db.get(Group, data.group_id):
-            return "not_found"
+            raise NotFoundError("Group not found")
         db_link = ConcertPerformer(concert_id=data.concert_id, idol_id=data.idol_id, group_id=data.group_id)
         db.add(db_link)
         db.commit()
@@ -133,51 +145,51 @@ class ConcertService:
         return db_link
 
     @staticmethod
-    def get_performers(db: Session, concert_id: uuid.UUID):
+    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer] | Literal[False]:
         result = db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_all_performers(db: Session):
+    def get_all_performers(db: Session) -> list[ConcertPerformer] | Literal[False]:
         result = db.query(ConcertPerformer).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def remove_performer(db: Session, id: uuid.UUID, current_user: Users):
+    def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> ConcertPerformer:
         link = db.get(ConcertPerformer, id)
         if not link:
-            return "not_found"
+            raise NotFoundError("Performer assignment not found")
         concert = db.get(Concert, link.concert_id)
         if ConcertService._manager_scope_violation(current_user, concert.company_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage concerts for their own company")
         db.delete(link)
         db.commit()
-        return True
+        return link
 
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
     @staticmethod
-    def get_events_page(db: Session):
+    def get_events_page(db: Session) -> EventsPageRead | Literal[False]:
         concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
         if not concerts:
             return False
-        return {"concerts": concerts}
+        return EventsPageRead(concerts=concerts)
 
     @staticmethod
-    def _lineup_idol(idol: Idol):
-        return {
-            "id": idol.id,
-            "name": idol.name,
-            "profile_image_url": idol.profile_image_url,
-            "color_hex": idol.color.hex_code if idol.color else None,
-        }
+    def _lineup_idol(idol: Idol) -> LineupIdol:
+        return LineupIdol(
+            id=idol.id,
+            name=idol.name,
+            profile_image_url=idol.profile_image_url,
+            color_hex=idol.color.hex_code if idol.color else None,
+        )
 
     @staticmethod
-    def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = None):
+    def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = None) -> ConcertDetailRead | Literal[False]:
         concert = db.query(Concert).options(joinedload(Concert.venue)).filter(Concert.id == id).first()
         if not concert:
             return False
@@ -200,7 +212,7 @@ class ConcertService:
             if performer.group_id and performer.group:
                 if performer.group_id not in seen_group_ids:
                     seen_group_ids.add(performer.group_id)
-                    performing_groups.append({"id": performer.group.id, "name": performer.group.name})
+                    performing_groups.append(PerformingGroupMini(id=performer.group.id, name=performer.group.name))
                 members = db.query(Idol).options(selectinload(Idol.color)).filter(Idol.group_id == performer.group_id).all()
                 for member in members:
                     if member.id not in seen_idol_ids:
@@ -297,23 +309,23 @@ class ConcertService:
                 .all()
             )
 
-        return {
-            "concert": concert,
-            "venue": concert.venue,
-            "ticket_types": ticket_types,
-            "lineup": lineup,
-            "performing_groups": performing_groups,
-            "lottery_campaigns": lottery_campaigns,
-            "direct_sale_campaigns": direct_sale_campaigns,
-            "has_ticket": has_ticket,
-            "has_won_lottery": has_won_lottery,
-            "entered_campaign_ids": entered_campaign_ids,
-            "my_lottery_preferences": my_lottery_preferences,
-        }
+        return ConcertDetailRead(
+            concert=concert,
+            venue=concert.venue,
+            ticket_types=ticket_types,
+            lineup=lineup,
+            performing_groups=performing_groups,
+            lottery_campaigns=lottery_campaigns,
+            direct_sale_campaigns=direct_sale_campaigns,
+            has_ticket=has_ticket,
+            has_won_lottery=has_won_lottery,
+            entered_campaign_ids=entered_campaign_ids,
+            my_lottery_preferences=my_lottery_preferences,
+        )
 
     # --- manager/admin settings page (see idol_service.py's equivalent
     # comment — an empty list here is a normal state, not a 404).
 
     @staticmethod
-    def get_manager_events_page(db: Session):
-        return {"concerts": db.query(Concert).all(), "venues": db.query(Venue).all()}
+    def get_manager_events_page(db: Session) -> ManagerEventsPageRead:
+        return ManagerEventsPageRead(concerts=db.query(Concert).all(), venues=db.query(Venue).all())
