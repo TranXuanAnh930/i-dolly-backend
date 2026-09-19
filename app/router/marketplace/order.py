@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.cache.rate_limit import rate_limit, user_key
+from app.celery_app import celery_app
 from app.db.models.identity import Users
 from app.db.models.marketplace import Order as OrderModel
 from app.db.models.marketplace import ShippingStatus as ModelShippingStatus
@@ -23,6 +24,7 @@ from app.schema.marketplace.order import ManagerOrdersPageRead, Order
 from app.schema.marketplace.payment import PaymentCreate
 from app.schema.marketplace.shipping import ShippingStatus as SchemaShippingStatus
 from app.services.marketplace.order_service import OrderService
+from app.utils.email_templates import EmailTemplate
 
 router = APIRouter(prefix="/order", tags=["Order"])
 
@@ -30,6 +32,10 @@ router = APIRouter(prefix="/order", tags=["Order"])
 async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     try:
         order = OrderService.checkout(db, user.id, data)
+        email_body = EmailTemplate.ORDER_PLACED.render(
+            email=user.email, order_id=order.id, total=order.total_price, status=order.status.value
+        )
+        celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.ORDER_PLACED.subject, email_body])
         return order
     # Order matters here: PaymentFailedError, InsufficientStockError,
     # PaymentAmountMismatch and UnsupportedGatewayError all subclass
