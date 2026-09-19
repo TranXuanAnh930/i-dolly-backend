@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -10,20 +9,20 @@ from app.schema.talent import ManagementCompanyBase, ManagementCompanyCreate
 class ManagementCompanyService:
 
     @staticmethod
-    def add_company(db: Session, company: ManagementCompanyCreate) -> ManagementCompany | Literal[False]:
+    def add_company(db: Session, company: ManagementCompanyCreate) -> ManagementCompany | None:
         db_company = ManagementCompany(**company.model_dump())
         if not db_company:
-            return False
+            return None
         db.add(db_company)
         db.commit()
         db.refresh(db_company)
         return db_company
 
     @staticmethod
-    def get_companies(db: Session) -> list[ManagementCompany] | Literal[False]:
+    def get_companies(db: Session) -> list[ManagementCompany] | None:
         result = db.query(ManagementCompany).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -31,10 +30,10 @@ class ManagementCompanyService:
         return db.get(ManagementCompany, id)
 
     @staticmethod
-    def update_company(db: Session, id: uuid.UUID, data: ManagementCompanyBase) -> ManagementCompany | Literal[False]:
+    def update_company(db: Session, id: uuid.UUID, data: ManagementCompanyBase) -> ManagementCompany | None:
         db_company = db.get(ManagementCompany, id)
         if not db_company:
-            return False
+            return None
         db_company.name = data.name
         db_company.description = data.description
         db_company.contact_email = data.contact_email

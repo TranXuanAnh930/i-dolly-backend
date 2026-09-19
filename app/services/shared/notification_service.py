@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.db.models.identity import Users
 from app.db.models.shared import Notification
 from app.exception.common import ForbiddenError, NotFoundError
+from app.schema.shared import NotificationType
 
 
 class NotificationService:
@@ -16,7 +16,7 @@ class NotificationService:
     # lottery/auth flow now calls into.
 
     @staticmethod
-    def create_notification(db: Session, user_id: uuid.UUID, notification_type: str, **entity_ids: uuid.UUID | None) -> Notification:
+    def create_notification(db: Session, user_id: uuid.UUID, notification_type: NotificationType, **entity_ids: uuid.UUID | None) -> Notification:
         """Adds (does not commit) one notification row. Called from inside an
         existing service transaction (order_service.checkout,
         ticket_service.checkout_ticket, lottery_draw_service.draw_lottery,
@@ -39,13 +39,13 @@ class NotificationService:
         )
 
     @staticmethod
-    def get_my_notifications(db: Session, current_user: Users, unread_only: bool = False) -> list[Notification] | Literal[False]:
+    def get_my_notifications(db: Session, current_user: Users, unread_only: bool = False) -> list[Notification] | None:
         query = db.query(Notification).filter(Notification.user_id == current_user.id)
         if unread_only:
             query = query.filter(Notification.is_read == False)
         result = query.order_by(Notification.created_at.desc()).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod

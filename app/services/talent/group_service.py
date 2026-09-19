@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -9,6 +8,7 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import Product
 from app.db.models.talent import Group, Idol, ManagementCompany
 from app.exception.common import ForbiddenError, NotFoundError
+from app.schema.identity import UserRole
 from app.schema.talent import GroupCreate, GroupDetailRead, GroupsPageRead, GroupUpdate, ManagerGroupsPageRead
 from app.services.marketplace.product_service import ProductService
 from app.services.talent.idol_service import IdolService
@@ -25,7 +25,7 @@ class GroupService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def add_group(db: Session, group: GroupCreate, current_user: Users) -> Group:
@@ -41,12 +41,12 @@ class GroupService:
         return db_group
 
     @staticmethod
-    def get_groups(db: Session) -> list[Group] | Literal[False]:
+    def get_groups(db: Session) -> list[Group] | None:
         # Public "browse all groups" list — deactivated groups don't belong on
         # a store-facing listing (database-design.md §3.3).
         result = db.query(Group).filter(Group.is_active.is_(True)).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -101,11 +101,11 @@ class GroupService:
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
     @staticmethod
-    def get_groups_page(db: Session) -> GroupsPageRead | Literal[False]:
+    def get_groups_page(db: Session) -> GroupsPageRead | None:
         # Store-facing browse page — same is_active filter as get_groups.
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
         if not groups:
-            return False
+            return None
         counts = dict(
             db.query(Idol.group_id, func.count(Idol.id))
             .filter(Idol.group_id.isnot(None))
@@ -117,13 +117,13 @@ class GroupService:
         return GroupsPageRead(groups=groups)
 
     @staticmethod
-    def get_group_detail(db: Session, id: uuid.UUID) -> GroupDetailRead | Literal[False]:
+    def get_group_detail(db: Session, id: uuid.UUID) -> GroupDetailRead | None:
         # Public group profile page — a deactivated group reads as "not found"
         # here, same as get_groups/get_groups_page; only the manager/admin
         # settings surfaces (get_manager_groups_page, plain get_group) still see it.
         group = db.get(Group, id)
         if not group or not group.is_active:
-            return False
+            return None
 
         members = (
             db.query(Idol)

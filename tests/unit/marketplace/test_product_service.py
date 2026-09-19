@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -66,7 +68,7 @@ class TestProductService:
         db.query().options().all.return_value = []
 
         result = ProductService.list_of_products(db)
-        assert result is False
+        assert result is None
 
     def test_search_product_found(self):
         from app.services.marketplace.product_service import ProductService
@@ -85,7 +87,7 @@ class TestProductService:
         db.query().options().filter().first.return_value = None
 
         result = ProductService.search_product(db, MISSING_ID)
-        assert result is False
+        assert result is None
 
     def test_add_product(self):
         from app.schema.marketplace import ProductCreate
@@ -113,9 +115,10 @@ class TestProductService:
 
         result = ProductService.update_product(db, DEFAULT_ID, update_data, admin)
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is mock_prod
 
     def test_update_product_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.marketplace import ProductCreate
         from app.services.marketplace.product_service import ProductService
 
@@ -124,8 +127,8 @@ class TestProductService:
         admin = make_mock_user(role="admin")
         update_data = ProductCreate(name="Updated", price=100.0, description="Updated", quantity=5, category_id=DEFAULT_ID)
 
-        result = ProductService.update_product(db, MISSING_ID, update_data, admin)
-        assert result is False
+        with pytest.raises(NotFoundError):
+            ProductService.update_product(db, MISSING_ID, update_data, admin)
 
     def test_delete_product_found(self):
         from app.services.marketplace.product_service import ProductService
@@ -140,14 +143,15 @@ class TestProductService:
         db.commit.assert_called_once()
 
     def test_delete_product_not_found(self):
+        from app.exception.common import NotFoundError
         from app.services.marketplace.product_service import ProductService
 
         db = MagicMock()
         db.get.return_value = None
         admin = make_mock_user(role="admin")
 
-        result = ProductService.delete_product(db, MISSING_ID, admin)
-        assert result is False
+        with pytest.raises(NotFoundError):
+            ProductService.delete_product(db, MISSING_ID, admin)
 
     def test_pagination_process(self):
         from app.services.marketplace.product_service import ProductService
@@ -223,7 +227,7 @@ class TestProductPages:
         db.query().options().all.return_value = []
 
         result = ProductService.get_store_page(db)
-        assert result is False
+        assert result is None
 
     def test_get_store_page_resolves_idol_artist_from_album_detail(self):
         from app.services.marketplace.product_service import ProductService
@@ -248,7 +252,7 @@ class TestProductPages:
         db.query().options().filter().first.return_value = None
 
         result = ProductService.get_product_detail(db, MISSING_ID)
-        assert result is False
+        assert result is None
 
     def test_get_product_detail_recommends_same_artist_not_unrelated(self):
         from app.services.marketplace.product_service import ProductService
@@ -305,18 +309,20 @@ class TestProductPages:
 class TestProductSalesPage:
 
     def test_not_found(self):
+        from app.exception.common import NotFoundError
         from app.services.marketplace.product_service import ProductService
 
         db = MagicMock()
         db.get.return_value = None
         admin = make_mock_user(role="admin")
 
-        result = ProductService.get_product_sales_page(db, MISSING_ID, admin)
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            ProductService.get_product_sales_page(db, MISSING_ID, admin)
 
     def test_manager_wrong_company_forbidden(self):
         from app.db.models.marketplace import AlbumDetail, Product
         from app.db.models.talent import Idol
+        from app.exception.common import ForbiddenError
         from app.services.marketplace.product_service import ProductService
 
         product = make_mock_product()
@@ -330,8 +336,8 @@ class TestProductSalesPage:
         manager = make_mock_user(role="manager")
         manager.company_id = DEFAULT_ID
 
-        result = ProductService.get_product_sales_page(db, DEFAULT_ID, manager)
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            ProductService.get_product_sales_page(db, DEFAULT_ID, manager)
 
     def test_success_returns_paginated_sales(self):
         from app.db.models.marketplace import AlbumDetail

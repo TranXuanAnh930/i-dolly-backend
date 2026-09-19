@@ -48,7 +48,7 @@ class TestAuthService:
 
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
 
     def test_create_user_duplicate_email(self):
         from app.schema.identity import UserCreate
@@ -59,7 +59,7 @@ class TestAuthService:
         user_data = UserCreate(name="John", email="test@example.com", password="pass123")
 
         result = AuthService.create_user(db, user_data)
-        assert result is False
+        assert result is None
 
     def test_authenticate_user_success(self):
         from app.services.identity.auth_service import AuthService

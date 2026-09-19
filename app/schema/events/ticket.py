@@ -1,11 +1,20 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel
 
-from app.schema.events.ticket_type import TicketTypeRead
+from app.schema.events.ticket_type import SaleMethod, TicketTier, TicketTypeRead
 from app.schema.marketplace import PaymentGateway
 
+
+class TicketStatus(str, Enum):
+    reserved = "reserved"
+    pending_payment = "pending_payment"
+    paid = "paid"
+    cancelled = "cancelled"
+    expired = "expired"
+    used = "used"
 
 class TicketCreate(BaseModel):
     """ADMIN-ONLY STOPGAP (database-design.md §7.4): the draw-job flow that
@@ -19,7 +28,7 @@ class TicketCreate(BaseModel):
     lottery_entry_id: uuid.UUID | None = None
 
 class TicketUpdate(BaseModel):
-    status: str | None = None  # 'reserved' | 'pending_payment' | 'paid' | 'cancelled' | 'expired' | 'used'
+    status: TicketStatus | None = None
     issued_code: str | None = None
     payment_id: uuid.UUID | None = None
     payment_deadline_at: datetime | None = None
@@ -49,7 +58,7 @@ class TicketRead(BaseModel):
     user_id: uuid.UUID
     lottery_entry_id: uuid.UUID | None
     payment_id: uuid.UUID | None
-    status: str
+    status: TicketStatus
     issued_code: str | None
     reserved_at: datetime
     payment_deadline_at: datetime | None
@@ -69,10 +78,10 @@ class TicketRead(BaseModel):
 # has no order/line-item concept of its own.
 class TicketSaleRead(BaseModel):
     ticket_id: uuid.UUID
-    tier: str
-    status: str
+    tier: TicketTier
+    status: TicketStatus
     price: float
-    source: str  # 'lottery' | 'direct' — derived from lottery_entry_id, not a stored column
+    source: SaleMethod  # derived from lottery_entry_id, not a stored column
     created_at: datetime
 
 class TicketSalesPageRead(BaseModel):

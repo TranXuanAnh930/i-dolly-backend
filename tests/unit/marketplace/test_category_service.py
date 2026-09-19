@@ -43,7 +43,7 @@ class TestCategoryService:
         db.query().all.return_value = []
 
         result = CategoryService.get_categories(db)
-        assert result is False
+        assert result is None
 
     def test_update_category_success(self):
         from app.schema.marketplace import CategoryUpdate
@@ -54,7 +54,7 @@ class TestCategoryService:
         db.get.return_value = mock_cat
 
         result = CategoryService.update_category(db, DEFAULT_ID, CategoryUpdate(name="Updated"))
-        assert result is not False
+        assert result is not None
         db.commit.assert_called_once()
 
     def test_update_category_not_found(self):
@@ -65,7 +65,7 @@ class TestCategoryService:
         db.get.return_value = None
 
         result = CategoryService.update_category(db, MISSING_ID, CategoryUpdate(name="Nope"))
-        assert result is False
+        assert result is None
 
     def test_delete_category_success(self):
         from app.services.marketplace.category_service import CategoryService

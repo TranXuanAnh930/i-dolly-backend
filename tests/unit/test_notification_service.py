@@ -66,7 +66,7 @@ class TestNotificationService:
         db.query().filter().order_by().all.return_value = [make_mock_notification()]
 
         result = NotificationService.get_my_notifications(db, make_mock_user())
-        assert result is not False
+        assert result is not None
 
     def test_get_my_notifications_empty(self):
         from app.services.shared.notification_service import NotificationService
@@ -75,7 +75,7 @@ class TestNotificationService:
         db.query().filter().order_by().all.return_value = []
 
         result = NotificationService.get_my_notifications(db, make_mock_user())
-        assert result is False
+        assert result is None
 
     def test_get_my_notifications_unread_only_filters_twice(self):
         from app.services.shared.notification_service import NotificationService
@@ -84,7 +84,7 @@ class TestNotificationService:
         db.query().filter().filter().order_by().all.return_value = [make_mock_notification(is_read=False)]
 
         result = NotificationService.get_my_notifications(db, make_mock_user(), unread_only=True)
-        assert result is not False
+        assert result is not None
 
     def test_mark_as_read_not_found(self):
         from app.services.shared.notification_service import NotificationService

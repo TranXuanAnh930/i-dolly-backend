@@ -1,14 +1,19 @@
 import uuid
 from datetime import date
+from enum import Enum
 from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
 
+class ReleaseFormat(str, Enum):
+    physical = "physical"
+    digital = "digital"
+
 class AlbumDetailBase(BaseModel):
     release_date: date | None = None
     track_count: int | None = Field(None, gt=0)
-    format: str = "physical"  # 'physical' | 'digital'
+    format: ReleaseFormat = ReleaseFormat.physical
     cover_image_url: str | None = None
 
 class AlbumDetailCreate(AlbumDetailBase):

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.identity import Users
 from app.deps.db import get_db
+from app.schema.identity import UserRole
 from app.utils.jwt_manager import decode_token
 
 oauth_scheme = OAuth2PasswordBearer(tokenUrl="account/login")
@@ -43,7 +44,7 @@ def get_current_user_optional(request:Request, token:str|None=Depends(oauth_sche
 
 def require_admin(current_user:Users=Depends(get_current_user)) -> Users:
     """Gate for admin-only actions. Checks `role`, not the deprecated `is_admin` flag."""
-    if current_user.role != "admin":
+    if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
@@ -51,6 +52,6 @@ def require_manager_or_admin(current_user:Users=Depends(get_current_user)) -> Us
     """Gate for actions a company manager can also do. Only checks the role — company-scoping
     (a manager touching only their own company's rows) is a separate query-level filter in each
     service."""
-    if current_user.role not in ("admin", "manager"):
+    if current_user.role not in (UserRole.admin, UserRole.manager):
         raise HTTPException(status_code=403, detail="Manager or admin access required")
     return current_user

@@ -6,6 +6,7 @@ from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user, require_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
 from app.schema.identity import (
     ChangePasswordRequest,
@@ -58,12 +59,10 @@ async def make_admin(payload:MakeAdminRequest, current_user:Users=Depends(requir
 
 @router.post("/create-manager", response_model=UserOut)
 async def create_manager(payload:ManagerCreate, current_user:Users=Depends(require_admin), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> Users:
-    result = UserService.create_manager_user(db, payload)
-    if result == "email_taken":
-        raise HTTPException(status_code=400, detail="E-mail already registered")
-    if result == "company_not_found":
-        raise HTTPException(status_code=404, detail="Management company not found")
-    return result
+    try:
+        return UserService.create_manager_user(db, payload)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(request:Request, db:Session=Depends(get_db)) -> JSONResponse:

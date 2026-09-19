@@ -36,7 +36,7 @@ class TestVenueService:
         db.query().all.return_value = [MagicMock()]
 
         result = VenueService.get_venues(db)
-        assert result is not False
+        assert result is not None
 
     def test_get_venues_empty(self):
         from app.services.events.venue_service import VenueService
@@ -45,7 +45,7 @@ class TestVenueService:
         db.query().all.return_value = []
 
         result = VenueService.get_venues(db)
-        assert result is False
+        assert result is None
 
     def test_get_venue_found(self):
         from app.services.events.venue_service import VenueService
@@ -95,7 +95,7 @@ class TestVenueService:
         )
 
         result = VenueService.update_venue(db, MISSING_ID, data)
-        assert result is False
+        assert result is None
 
     def test_delete_venue_success(self):
         from app.services.events.venue_service import VenueService

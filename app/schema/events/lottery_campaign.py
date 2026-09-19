@@ -1,11 +1,18 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.schema.events.ticket_type import TicketTypeRead
 
+
+class CampaignStatus(str, Enum):
+    open = "open"
+    drawn = "drawn"
+    completed = "completed"
+    cancelled = "cancelled"
 
 class LotteryCampaignBase(BaseModel):
     entry_start_at: datetime
@@ -23,12 +30,12 @@ class LotteryCampaignCreate(LotteryCampaignBase):
     ticket_type_id: uuid.UUID
 
 class LotteryCampaignUpdate(LotteryCampaignBase):
-    status: str | None = None  # 'open' | 'drawn' | 'completed' | 'cancelled'
+    status: CampaignStatus | None = None
 
 class LotteryCampaignRead(LotteryCampaignBase):
     id: uuid.UUID
     ticket_type_id: uuid.UUID
-    status: str
+    status: CampaignStatus
     # Written only by the draw job (app/services/lottery_draw_service.py) —
     # never client-supplied. NULL until this campaign is actually drawn.
     draw_at: datetime | None

@@ -10,10 +10,10 @@ from app.schema.marketplace import ShippingBase
 class ShippingService:
 
     @staticmethod
-    def create_shipping_address(db:Session, user_id:uuid.UUID, data:ShippingBase) -> ShippingAddress | Literal[False]:
+    def create_shipping_address(db:Session, user_id:uuid.UUID, data:ShippingBase) -> ShippingAddress | None:
         address = ShippingAddress(**data.model_dump(), user_id=user_id)
         if not address:
-            return False
+            return None
         db.add(address)
         db.commit()
         db.refresh(address)

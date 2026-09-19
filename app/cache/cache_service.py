@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 import msgpack
 from sqlalchemy.orm import Session
@@ -71,7 +71,7 @@ class CacheService:
         return payload
 
     @staticmethod
-    def get_cached_store_page(db: Session) -> StorePageRead | Literal[False]:
+    def get_cached_store_page(db: Session) -> StorePageRead | None:
         cache_key = "products:store_page"
         cached = redis_client.get(cache_key)
         if cached:
@@ -82,7 +82,7 @@ class CacheService:
         # above reconstructs the same StorePageRead from that stored dict.
         result = ProductService.get_store_page(db)
         if not result:
-            return False
+            return None
 
         payload = result.model_dump(mode="json")
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
@@ -94,7 +94,7 @@ class CacheService:
         redis_client.delete("products:store_page")
 
     @staticmethod
-    def get_cached_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | Literal[False]:
+    def get_cached_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | None:
         cache_key = f"products:{id}:detail"
         cached = redis_client.get(cache_key)
         if cached:
@@ -102,7 +102,7 @@ class CacheService:
 
         result = ProductService.get_product_detail(db, id)
         if not result:
-            return False
+            return None
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -118,7 +118,7 @@ class CacheService:
             redis_client.delete(*keys)
 
     @staticmethod
-    def get_cached_events_page(db: Session) -> EventsPageRead | Literal[False]:
+    def get_cached_events_page(db: Session) -> EventsPageRead | None:
         cache_key = "concerts:events_page"
         cached = redis_client.get(cache_key)
         if cached:
@@ -126,7 +126,7 @@ class CacheService:
 
         result = ConcertService.get_events_page(db)
         if not result:
-            return False
+            return None
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -139,7 +139,7 @@ class CacheService:
     # this payload, so a cache hit here can never leak one fan's ticket/lottery state to
     # another. The router merges those in fresh on every request, cached or not.
     @staticmethod
-    def get_cached_concert_detail(db: Session, id: uuid.UUID) -> ConcertDetailRead | Literal[False]:
+    def get_cached_concert_detail(db: Session, id: uuid.UUID) -> ConcertDetailRead | None:
         cache_key = f"concerts:{id}:detail"
         cached = redis_client.get(cache_key)
         if cached:
@@ -147,7 +147,7 @@ class CacheService:
 
         result = ConcertService.get_concert_detail_public(db, id)
         if not result:
-            return False
+            return None
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -160,7 +160,7 @@ class CacheService:
         redis_client.delete(f"concerts:{id}:detail")
 
     @staticmethod
-    def get_cached_members_page(db: Session) -> MembersPageRead | Literal[False]:
+    def get_cached_members_page(db: Session) -> MembersPageRead | None:
         cache_key = "idols:members_page"
         cached = redis_client.get(cache_key)
         if cached:
@@ -168,7 +168,7 @@ class CacheService:
 
         result = IdolService.get_members_page(db)
         if not result:
-            return False
+            return None
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -177,7 +177,7 @@ class CacheService:
         redis_client.delete("idols:members_page")
 
     @staticmethod
-    def get_cached_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | Literal[False]:
+    def get_cached_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | None:
         cache_key = f"idols:detail:{id}"
         cached = redis_client.get(cache_key)
         if cached:
@@ -185,7 +185,7 @@ class CacheService:
 
         result = IdolService.get_idol_detail(db, id)
         if not result:
-            return False
+            return None
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -204,7 +204,7 @@ class CacheService:
             redis_client.delete(*keys)
 
     @staticmethod
-    def get_cached_groups_page(db: Session) -> GroupsPageRead | Literal[False]:
+    def get_cached_groups_page(db: Session) -> GroupsPageRead | None:
         cache_key = "groups:groups_page"
         cached = redis_client.get(cache_key)
         if cached:
@@ -212,7 +212,7 @@ class CacheService:
 
         result = GroupService.get_groups_page(db)
         if not result:
-            return False
+            return None
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -221,7 +221,7 @@ class CacheService:
         redis_client.delete("groups:groups_page")
 
     @staticmethod
-    def get_cached_group_detail(db: Session, id: uuid.UUID) -> GroupDetailRead | Literal[False]:
+    def get_cached_group_detail(db: Session, id: uuid.UUID) -> GroupDetailRead | None:
         cache_key = f"groups:detail:{id}"
         cached = redis_client.get(cache_key)
         if cached:
@@ -229,7 +229,7 @@ class CacheService:
 
         result = GroupService.get_group_detail(db, id)
         if not result:
-            return False
+            return None
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -248,7 +248,7 @@ class CacheService:
     # construction is needed the way get_cached_products needs for ProductRead.
 
     @staticmethod
-    def get_cached_venues(db: Session) -> list[dict[str, Any]] | Literal[False]:
+    def get_cached_venues(db: Session) -> list[dict[str, Any]] | None:
         cache_key = "venues:all"
         cached = redis_client.get(cache_key)
         if cached:
@@ -256,7 +256,7 @@ class CacheService:
 
         venues = VenueService.get_venues(db)
         if not venues:
-            return False
+            return None
         payload = [VenueRead.model_validate(v).model_dump(mode="json") for v in venues]
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
         return payload
@@ -266,7 +266,7 @@ class CacheService:
         redis_client.delete("venues:all")
 
     @staticmethod
-    def get_cached_idol_colors(db: Session) -> list[dict[str, Any]] | Literal[False]:
+    def get_cached_idol_colors(db: Session) -> list[dict[str, Any]] | None:
         cache_key = "idol_colors:all"
         cached = redis_client.get(cache_key)
         if cached:
@@ -274,7 +274,7 @@ class CacheService:
 
         colors = IdolColorService.get_idol_colors(db)
         if not colors:
-            return False
+            return None
         payload = [IdolColorRead.model_validate(c).model_dump(mode="json") for c in colors]
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
         return payload
@@ -285,7 +285,7 @@ class CacheService:
 
     # --- Manager/admin settings pages. Unlike the store-facing pages above, these never 404 on an
     # empty result (an empty list is a normal state for a brand-new company) — the underlying service
-    # functions always return a real page object, so there's no Literal[False] branch to cache around.
+    # functions always return a real page object, so there's no None branch to cache around.
 
     @staticmethod
     def get_cached_manager_idols_page(db: Session) -> ManagerIdolsPageRead:
@@ -395,7 +395,7 @@ class CacheService:
                 redis_client.delete(*keys)
 
     @staticmethod
-    def get_cached_management_companies(db: Session) -> list[dict[str, Any]] | Literal[False]:
+    def get_cached_management_companies(db: Session) -> list[dict[str, Any]] | None:
         cache_key = "management_companies:all"
         cached = redis_client.get(cache_key)
         if cached:
@@ -403,7 +403,7 @@ class CacheService:
 
         companies = ManagementCompanyService.get_companies(db)
         if not companies:
-            return False
+            return None
         payload = [ManagementCompanyRead.model_validate(c).model_dump(mode="json") for c in companies]
         redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
         return payload

@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.db.models.identity import Users
 from app.db.models.marketplace import AlbumDetail, AlbumGenre, Category, MerchDetail, Order, OrderItem, Product
 from app.db.models.talent import Group, Idol, IdolColor
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise, flush_or_raise
+from app.schema.identity import UserRole
 from app.schema.marketplace import (
     AlbumMini,
     ArtistRef,
@@ -57,7 +59,7 @@ class ProductService:
 
     @staticmethod
     def _manager_scope_violation(db: Session, current_user: Users, product_id: uuid.UUID) -> bool:
-        if current_user.role != "manager":
+        if current_user.role != UserRole.manager:
             return False
         company_id = ProductService._resolve_product_company_id(db, product_id)
         if company_id is None:
@@ -65,17 +67,17 @@ class ProductService:
         return current_user.company_id != company_id
 
     @staticmethod
-    def list_of_products(db:Session) -> list[Product] | Literal[False]:
+    def list_of_products(db:Session) -> list[Product] | None:
         db_products = db.query(Product).options(selectinload(Product.category)).all()
         if not db_products:
-            return False
+            return None
         return db_products
 
     @staticmethod
-    def search_product(db:Session, id:uuid.UUID) -> ProductWithCategoryRead | Literal[False]:
+    def search_product(db:Session, id:uuid.UUID) -> ProductWithCategoryRead | None:
         db_product = db.query(Product).options(selectinload(Product.category)).filter(Product.id==id).first()
         if not db_product:
-            return False
+            return None
         return ProductWithCategoryRead(
             id=db_product.id,
             name=db_product.name,
@@ -87,9 +89,9 @@ class ProductService:
         )
 
     @staticmethod
-    def add_product(db: Session, product:ProductCreate) -> Product | Literal[False]:
+    def add_product(db: Session, product:ProductCreate) -> Product | None:
         if not db.get(Category, product.category_id):
-            return False  # invalid category_id — was an uncaught IntegrityError -> 500 at commit
+            return None  # invalid category_id — was an uncaught IntegrityError -> 500 at commit
         db_product = Product(**product.model_dump())
         db.add(db_product)
         db.commit()
@@ -126,21 +128,21 @@ class ProductService:
     # detail (bad owner, wrong company) rolls the product insert back too. Unlike the bare
     # add_product above, this is scoped from the start — the schema requires idol_id/group_id.
     @staticmethod
-    def add_product_with_detail(db: Session, data: ProductWithDetailCreate, image_url: str | None, current_user: Users) -> Product | Literal["category_not_found", "owner_not_found", "artist_inactive", "forbidden"]:
+    def add_product_with_detail(db: Session, data: ProductWithDetailCreate, image_url: str | None, current_user: Users) -> Product:
         if not db.get(Category, data.category_id):
-            return "category_not_found"
+            raise NotFoundError("category_id does not reference an existing category")
         if data.idol_id is not None and not db.get(Idol, data.idol_id):
-            return "owner_not_found"
+            raise NotFoundError("idol_id, group_id, or color_id does not reference an existing record")
         if data.group_id is not None and not db.get(Group, data.group_id):
-            return "owner_not_found"
+            raise NotFoundError("idol_id, group_id, or color_id does not reference an existing record")
         if data.detail_kind == "merch" and data.color_id is not None and not db.get(IdolColor, data.color_id):
-            return "owner_not_found"
+            raise NotFoundError("idol_id, group_id, or color_id does not reference an existing record")
         if not ProductService._owner_active_or_missing(db, data.idol_id, data.group_id):
-            return "artist_inactive"
+            raise BadRequestError("Cannot attach a new product to a deactivated idol/group")
 
         owner_company_id = ProductService._resolve_owner_company_id(db, data.idol_id, data.group_id)
-        if current_user.role == "manager" and current_user.company_id != owner_company_id:
-            return "forbidden"
+        if current_user.role == UserRole.manager and current_user.company_id != owner_company_id:
+            raise ForbiddenError("Managers can only create products for their own company's idols/groups")
 
         db_product = Product(
             name=data.name, price=data.price, description=data.description,
@@ -165,18 +167,18 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user:Users) -> Product | Literal[False, "forbidden", "price_locked", "category_not_found"]:
+    def update_product(db:Session, id:uuid.UUID, product:ProductCreate, current_user:Users) -> Product:
         db_product = db.get(Product, id)
         if not db_product:
-            return False
+            raise NotFoundError("Product not found")
         if ProductService._manager_scope_violation(db, current_user, id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage products belonging to their own company's idols/groups")
         # Managers can't reprice a product after creation, same rationale as
         # ticket_type_service.update_ticket_type — only an admin can correct it.
-        if current_user.role == "manager" and round(product.price, 2) != round(db_product.price, 2):
-            return "price_locked"
+        if current_user.role == UserRole.manager and round(product.price, 2) != round(db_product.price, 2):
+            raise ForbiddenError("Managers cannot change product price after creation — ask an admin")
         if not db.get(Category, product.category_id):
-            return "category_not_found"  # was an uncaught IntegrityError -> 500 at commit
+            raise NotFoundError("category_id does not reference an existing category")  # was an uncaught IntegrityError -> 500 at commit
         db_product.name = product.name
         db_product.description = product.description
         db_product.price = product.price
@@ -189,42 +191,42 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def set_product_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Product | Literal[False, "forbidden"]:
+    def set_product_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Product:
         """Used by the dedicated /products/{id}/image upload endpoint — updates
         only the image, leaving every other field untouched (unlike
         update_product, which replaces the whole row from a ProductCreate)."""
         db_product = db.get(Product, id)
         if not db_product:
-            return False
+            raise NotFoundError("Product not found")
         if ProductService._manager_scope_violation(db, current_user, id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage products belonging to their own company's idols/groups")
         db_product.image_url = image_url
         db.commit()
         db.refresh(db_product)
         return db_product
 
     @staticmethod
-    def delete_product(db:Session, id: uuid.UUID, current_user: Users) -> Product | Literal[False, "forbidden"]:
+    def delete_product(db:Session, id: uuid.UUID, current_user: Users) -> Product:
         db_product = db.get(Product, id)
         if not db_product:
-            return False
+            raise NotFoundError("Product not found")
         if ProductService._manager_scope_violation(db, current_user, id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only manage products belonging to their own company's idols/groups")
         db.delete(db_product)
         db.commit()
         return db_product
 
     @staticmethod
-    def add_bulk_products(db:Session, product:List[ProductCreate]) -> list[Product] | Literal[False]:
+    def add_bulk_products(db:Session, product:List[ProductCreate]) -> list[Product] | None:
         db_products = [Product(**p.model_dump()) for p in product]
         if not db_products:
-            return False
+            return None
         # All-or-nothing: check every referenced category exists before saving
         # any of them — was an uncaught IntegrityError -> 500 at commit.
         category_ids = {p.category_id for p in product}
         existing_ids = {row[0] for row in db.query(Category.id).filter(Category.id.in_(category_ids)).all()}
         if category_ids - existing_ids:
-            return False
+            return None
         db.bulk_save_objects(db_products)
         db.commit()
         return db_products
@@ -341,18 +343,18 @@ class ProductService:
         return cards
 
     @staticmethod
-    def get_store_page(db: Session) -> StorePageRead | Literal[False]:
+    def get_store_page(db: Session) -> StorePageRead | None:
         products = db.query(Product).options(joinedload(Product.category)).all()
         if not products:
-            return False
+            return None
         groups = db.query(Group).all()
         return StorePageRead(products=ProductService._build_product_cards(db, products), groups=groups)
 
     @staticmethod
-    def get_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | Literal[False]:
+    def get_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | None:
         product = db.query(Product).options(joinedload(Product.category)).filter(Product.id == id).first()
         if not product:
-            return False
+            return None
         all_products = db.query(Product).options(joinedload(Product.category)).all()
         cards_by_id = {c.id: c for c in ProductService._build_product_cards(db, all_products)}
         card = cards_by_id[product.id]
@@ -471,12 +473,12 @@ class ProductService:
     # history). Product has no is_active/status column to soft-delete instead, so the manager UI
     # drops the destructive action entirely in favor of a read-only sales view.
     @staticmethod
-    def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> ProductSalesPageRead | Literal["not_found", "forbidden"]:
+    def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> ProductSalesPageRead:
         db_product = db.get(Product, product_id)
         if not db_product:
-            return "not_found"
+            raise NotFoundError("Product not found")
         if ProductService._manager_scope_violation(db, current_user, product_id):
-            return "forbidden"
+            raise ForbiddenError("Managers can only view sales for products belonging to their own company's idols/groups")
 
         query = (
             db.query(OrderItem)

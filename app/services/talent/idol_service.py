@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, IdolColor, IdolPosition, ManagementCompany
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
+from app.schema.identity import UserRole
 from app.schema.talent import (
     IdolCreate,
     IdolDetailRead,
@@ -38,7 +39,7 @@ class IdolService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None) -> Literal["company_not_found", "group_not_found", "company_mismatch", "group_inactive", "color_not_found"] | None:
@@ -84,12 +85,12 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def get_idols(db: Session) -> list[Idol] | Literal[False]:
+    def get_idols(db: Session) -> list[Idol] | None:
         # Public "browse all idols" list — deactivated idols don't belong on a
         # store-facing listing (database-design.md §3.4).
         result = db.query(Idol).filter(Idol.is_active.is_(True)).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -102,17 +103,17 @@ class IdolService:
     # --- page-shaped reads (see idol.py schema's equivalent comment) ---
 
     @staticmethod
-    def get_members_page(db: Session) -> MembersPageRead | Literal[False]:
+    def get_members_page(db: Session) -> MembersPageRead | None:
         # Store-facing browse page — same is_active filter as get_idols, plus
         # the group-unit dropdown only offers active groups.
         idols = db.query(Idol).options(*IdolService._with_positions_and_color()).filter(Idol.is_active.is_(True)).all()
         if not idols:
-            return False
+            return None
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
         return MembersPageRead(idols=idols, groups=groups)
 
     @staticmethod
-    def get_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | Literal[False]:
+    def get_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | None:
         # Public idol profile page — a deactivated idol reads as "not found"
         # here, same as get_idols/get_members_page; only the manager/admin
         # settings surfaces (get_manager_idols_page, plain get_idol) still see it.
@@ -123,7 +124,7 @@ class IdolService:
             .first()
         )
         if not idol:
-            return False
+            return None
         group = db.get(Group, idol.group_id) if idol.group_id else None
         siblings_query = db.query(Idol).filter(Idol.id != id, Idol.is_active.is_(True))
         siblings_query = siblings_query.filter(Idol.group_id == idol.group_id) if idol.group_id else siblings_query.filter(Idol.group_id.is_(None))

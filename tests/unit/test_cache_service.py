@@ -123,7 +123,7 @@ class TestProductsCache:
         db = MagicMock()
         with patch.object(ProductService, "get_store_page", return_value=False):
             result = CacheService.get_cached_store_page(db)
-        assert result is False
+        assert result is None
 
     def test_delete_cached_products_clears_both_keys(self):
         from app.cache.cache_service import CacheService
@@ -166,7 +166,7 @@ class TestProductDetailCache:
         db = MagicMock()
         with patch.object(ProductService, "get_product_detail", return_value=False):
             result = CacheService.get_cached_product_detail(db, OTHER_ID)
-        assert result is False
+        assert result is None
         assert fake_redis.get(f"products:{OTHER_ID}:detail") is None
 
     def test_delete_cached_product_details_clears_every_id(self):
@@ -218,7 +218,7 @@ class TestConcertDetailCache:
         db = MagicMock()
         with patch.object(ConcertService, "get_concert_detail_public", return_value=False):
             result = CacheService.get_cached_concert_detail(db, OTHER_ID)
-        assert result is False
+        assert result is None
 
     def test_delete_cached_concert_detail_is_precise_not_wildcard(self):
         from app.cache.cache_service import CacheService
@@ -261,7 +261,7 @@ class TestIdolAndGroupDetailCache:
         db = MagicMock()
         with patch.object(IdolService, "get_idol_detail", return_value=False):
             result = CacheService.get_cached_idol_detail(db, OTHER_ID)
-        assert result is False
+        assert result is None
 
     def test_get_cached_group_detail_miss_then_hit(self):
         from app.cache.cache_service import CacheService
@@ -286,7 +286,7 @@ class TestIdolAndGroupDetailCache:
         db = MagicMock()
         with patch.object(GroupService, "get_group_detail", return_value=False):
             result = CacheService.get_cached_group_detail(db, OTHER_ID)
-        assert result is False
+        assert result is None
 
     def test_delete_cached_idol_details_clears_every_id(self):
         from app.cache.cache_service import CacheService
@@ -338,7 +338,7 @@ class TestLookupTableCaches:
         db = MagicMock()
         with patch.object(VenueService, "get_venues", return_value=False):
             result = CacheService.get_cached_venues(db)
-        assert result is False
+        assert result is None
 
     def test_delete_cached_venues(self):
         from app.cache.cache_service import CacheService

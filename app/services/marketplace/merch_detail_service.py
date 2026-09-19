@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -8,6 +7,7 @@ from app.db.models.marketplace import MerchDetail, Product
 from app.db.models.talent import Group, Idol, IdolColor
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
+from app.schema.identity import UserRole
 from app.schema.marketplace import MerchDetailCreate, MerchDetailUpdate
 
 
@@ -17,7 +17,7 @@ class MerchDetailService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def _resolve_company_id(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> uuid.UUID | None:
@@ -66,10 +66,10 @@ class MerchDetailService:
         return db.get(MerchDetail, product_id)
 
     @staticmethod
-    def get_merch_details(db: Session) -> list[MerchDetail] | Literal[False]:
+    def get_merch_details(db: Session) -> list[MerchDetail] | None:
         result = db.query(MerchDetail).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod

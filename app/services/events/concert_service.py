@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -22,12 +22,16 @@ from app.schema.events import (
     ConcertCreate,
     ConcertDetailRead,
     ConcertPerformerAssign,
+    ConcertStatus,
     ConcertUpdate,
     EventsPageRead,
     LineupIdol,
     ManagerEventsPageRead,
     PerformingGroupMini,
 )
+from app.schema.events.ticket import TicketStatus
+from app.schema.events.lottery_entry import LotteryEntryStatus
+from app.schema.identity import UserRole
 
 # Once a concert has gone on sale (or further), fans may already hold
 # tickets or lottery entries against its date/capacity — a manager silently
@@ -37,7 +41,7 @@ from app.schema.events import (
 # live event" rule as delete_concert's soft-delete below. Also reused as-is
 # by ticket_type_service for the same reason on a ticket type's own
 # capacity (total_quantity).
-_EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
+_EVENT_OPEN_STATUSES = {ConcertStatus.on_sale, ConcertStatus.sold_out, ConcertStatus.completed}
 
 class ConcertService:
 
@@ -47,7 +51,7 @@ class ConcertService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def add_concert(db: Session, concert: ConcertCreate, current_user: Users) -> Concert:
@@ -64,10 +68,10 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def get_concerts(db: Session) -> list[Concert] | Literal[False]:
+    def get_concerts(db: Session) -> list[Concert] | None:
         result = db.query(Concert).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -82,7 +86,7 @@ class ConcertService:
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
             raise ForbiddenError("Managers can only manage concerts for their own company")
         if (
-            current_user.role == "manager"
+            current_user.role == UserRole.manager
             and db_concert.status in _EVENT_OPEN_STATUSES
             and (
                 data.event_datetime != db_concert.event_datetime
@@ -118,7 +122,7 @@ class ConcertService:
             raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
             raise ForbiddenError("Managers can only manage concerts for their own company")
-        db_concert.status = "cancelled"
+        db_concert.status = ConcertStatus.cancelled
         db.commit()
         db.refresh(db_concert)
         return db_concert
@@ -145,17 +149,17 @@ class ConcertService:
         return db_link
 
     @staticmethod
-    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer] | Literal[False]:
+    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer] | None:
         result = db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
-    def get_all_performers(db: Session) -> list[ConcertPerformer] | Literal[False]:
+    def get_all_performers(db: Session) -> list[ConcertPerformer] | None:
         result = db.query(ConcertPerformer).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -173,10 +177,10 @@ class ConcertService:
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
     @staticmethod
-    def get_events_page(db: Session) -> EventsPageRead | Literal[False]:
+    def get_events_page(db: Session) -> EventsPageRead | None:
         concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
         if not concerts:
-            return False
+            return None
         return EventsPageRead(concerts=concerts)
 
     @staticmethod
@@ -196,10 +200,10 @@ class ConcertService:
     # onto this result uncached, so a cached response never leaks one fan's ticket/lottery
     # state to another.
     @staticmethod
-    def get_concert_detail_public(db: Session, id: uuid.UUID) -> ConcertDetailRead | Literal[False]:
+    def get_concert_detail_public(db: Session, id: uuid.UUID) -> ConcertDetailRead | None:
         concert = db.query(Concert).options(joinedload(Concert.venue)).filter(Concert.id == id).first()
         if not concert:
-            return False
+            return None
         ticket_types = db.query(TicketType).filter(TicketType.concert_id == id).all()
         performers = (
             db.query(ConcertPerformer)
@@ -296,7 +300,7 @@ class ConcertService:
             .filter(
                 TicketType.concert_id == id,
                 Ticket.user_id == current_user.id,
-                Ticket.status.in_(["paid", "used"]),
+                Ticket.status.in_([TicketStatus.paid, TicketStatus.used]),
             )
             .first()
             is not None
@@ -308,7 +312,7 @@ class ConcertService:
             .filter(
                 TicketType.concert_id == id,
                 LotteryEntry.user_id == current_user.id,
-                LotteryEntry.status == "won",
+                LotteryEntry.status == LotteryEntryStatus.won,
             )
             .first()
             is not None

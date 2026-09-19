@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -7,6 +6,7 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import AlbumDetail, AlbumGenre, Genre
 from app.db.models.talent import Group, Idol
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
+from app.schema.identity import UserRole
 from app.schema.marketplace import AlbumGenreAssign, GenreCreate
 
 
@@ -26,10 +26,10 @@ class GenreService:
         return db_genre
 
     @staticmethod
-    def get_genres(db: Session) -> list[Genre] | Literal[False]:
+    def get_genres(db: Session) -> list[Genre] | None:
         result = db.query(Genre).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -46,7 +46,7 @@ class GenreService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def _company_id_for_album(db: Session, product_id: uuid.UUID) -> tuple[AlbumDetail | None, uuid.UUID | None]:
@@ -77,17 +77,17 @@ class GenreService:
         return db_link
 
     @staticmethod
-    def get_album_genres(db: Session, product_id: uuid.UUID) -> list[AlbumGenre] | Literal[False]:
+    def get_album_genres(db: Session, product_id: uuid.UUID) -> list[AlbumGenre] | None:
         result = db.query(AlbumGenre).filter(AlbumGenre.product_id == product_id).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
-    def get_all_album_genres(db: Session) -> list[AlbumGenre] | Literal[False]:
+    def get_all_album_genres(db: Session) -> list[AlbumGenre] | None:
         result = db.query(AlbumGenre).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod

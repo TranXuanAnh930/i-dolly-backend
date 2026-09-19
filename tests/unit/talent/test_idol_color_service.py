@@ -26,7 +26,7 @@ class TestIdolColorService:
         result = IdolColorService.add_idol_color(db, data)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
 
     def test_get_idol_colors_found(self):
         from app.services.talent.idol_color_service import IdolColorService
@@ -44,7 +44,7 @@ class TestIdolColorService:
         db.query().all.return_value = []
 
         result = IdolColorService.get_idol_colors(db)
-        assert result is False
+        assert result is None
 
     def test_update_idol_color_success(self):
         from app.schema.talent import IdolColorBase
@@ -56,7 +56,7 @@ class TestIdolColorService:
 
         result = IdolColorService.update_idol_color(db, DEFAULT_ID, data)
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
 
     def test_update_idol_color_not_found(self):
         from app.schema.talent import IdolColorBase
@@ -67,7 +67,7 @@ class TestIdolColorService:
         data = IdolColorBase(name="Midnight Blue", hex_code="#191970")
 
         result = IdolColorService.update_idol_color(db, MISSING_ID, data)
-        assert result is False
+        assert result is None
 
     def test_delete_idol_color_success(self):
         from app.services.talent.idol_color_service import IdolColorService

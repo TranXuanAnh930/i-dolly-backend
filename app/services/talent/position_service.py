@@ -1,11 +1,11 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.db.models.identity import Users
 from app.db.models.talent import Idol, IdolPosition, Position
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
+from app.schema.identity import UserRole
 from app.schema.talent import IdolPositionAssign, PositionBase, PositionCreate
 
 
@@ -13,30 +13,30 @@ class PositionService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
-    def add_position(db: Session, position: PositionCreate) -> Position | Literal[False]:
+    def add_position(db: Session, position: PositionCreate) -> Position | None:
         db_position = Position(**position.model_dump())
         if not db_position:
-            return False
+            return None
         db.add(db_position)
         db.commit()
         db.refresh(db_position)
         return db_position
 
     @staticmethod
-    def get_positions(db: Session) -> list[Position] | Literal[False]:
+    def get_positions(db: Session) -> list[Position] | None:
         result = db.query(Position).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
-    def update_position(db: Session, id: uuid.UUID, data: PositionBase) -> Position | Literal[False]:
+    def update_position(db: Session, id: uuid.UUID, data: PositionBase) -> Position | None:
         db_position = db.get(Position, id)
         if not db_position:
-            return False
+            return None
         db_position.name = data.name
         db.commit()
         db.refresh(db_position)
@@ -79,17 +79,17 @@ class PositionService:
         return db_link
 
     @staticmethod
-    def get_idol_positions(db: Session, idol_id: uuid.UUID) -> list[IdolPosition] | Literal[False]:
+    def get_idol_positions(db: Session, idol_id: uuid.UUID) -> list[IdolPosition] | None:
         result = db.query(IdolPosition).filter(IdolPosition.idol_id == idol_id).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
-    def get_all_idol_positions(db: Session) -> list[IdolPosition] | Literal[False]:
+    def get_all_idol_positions(db: Session) -> list[IdolPosition] | None:
         result = db.query(IdolPosition).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod

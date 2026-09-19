@@ -1,14 +1,24 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
+class TicketTier(str, Enum):
+    vip = "vip"
+    premium = "premium"
+    regular = "regular"
+
+class SaleMethod(str, Enum):
+    lottery = "lottery"
+    direct = "direct"
+
 class TicketTypeBase(BaseModel):
-    tier: str  # 'vip' | 'premium' | 'regular'
+    tier: TicketTier
     price: float = Field(..., ge=0)
     total_quantity: int = Field(..., ge=0)
-    sale_method: str = "lottery"  # 'lottery' | 'direct'
+    sale_method: SaleMethod = SaleMethod.lottery
 
 class TicketTypeCreate(TicketTypeBase):
     concert_id: uuid.UUID

@@ -176,7 +176,7 @@ class TestConcertCrud:
         db.query().all.return_value = [make_mock_concert()]
 
         result = ConcertService.get_concerts(db)
-        assert result is not False
+        assert result is not None
 
     def test_get_concerts_empty(self):
         from app.services.events.concert_service import ConcertService
@@ -185,7 +185,7 @@ class TestConcertCrud:
         db.query().all.return_value = []
 
         result = ConcertService.get_concerts(db)
-        assert result is False
+        assert result is None
 
     def test_update_concert_not_found(self):
         from app.schema.events import ConcertUpdate
@@ -369,7 +369,7 @@ class TestConcertPerformers:
         db.query().filter().all.return_value = [make_mock_performer()]
 
         result = ConcertService.get_performers(db, DEFAULT_ID)
-        assert result is not False
+        assert result is not None
 
     def test_get_performers_empty(self):
         from app.services.events.concert_service import ConcertService
@@ -378,7 +378,7 @@ class TestConcertPerformers:
         db.query().filter().all.return_value = []
 
         result = ConcertService.get_performers(db, MISSING_ID)
-        assert result is False
+        assert result is None
 
     def test_get_all_performers_empty(self):
         from app.services.events.concert_service import ConcertService
@@ -387,7 +387,7 @@ class TestConcertPerformers:
         db.query().all.return_value = []
 
         result = ConcertService.get_all_performers(db)
-        assert result is False
+        assert result is None
 
     def test_remove_performer_not_found(self):
         from app.services.events.concert_service import ConcertService
@@ -435,7 +435,7 @@ class TestEventsPages:
         db.query().options().all.return_value = [make_mock_concert()]
 
         result = ConcertService.get_events_page(db)
-        assert result is not False
+        assert result is not None
 
     def test_get_events_page_empty(self):
         from app.services.events.concert_service import ConcertService
@@ -444,7 +444,7 @@ class TestEventsPages:
         db.query().options().all.return_value = []
 
         result = ConcertService.get_events_page(db)
-        assert result is False
+        assert result is None
 
     def test_get_manager_events_page(self):
         from app.services.events.concert_service import ConcertService
@@ -477,7 +477,7 @@ class TestGetConcertDetailPublic:
         db.query.side_effect = query_side_effect
 
         result = ConcertService.get_concert_detail_public(db, MISSING_ID)
-        assert result is False
+        assert result is None
 
     def test_lineup_dedups_group_and_solo_credits(self):
         """A group credit expands to its current members, a solo credit is

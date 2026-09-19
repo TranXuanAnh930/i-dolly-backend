@@ -202,7 +202,7 @@ class TestGetEntries:
         db.query().options().filter().all.return_value = [MagicMock()]
 
         result = LotteryEntryService.get_my_entries(db, make_mock_fan())
-        assert result is not False
+        assert result is not None
 
     def test_get_my_entries_empty(self):
         from app.services.events.lottery_entry_service import LotteryEntryService
@@ -211,7 +211,7 @@ class TestGetEntries:
         db.query().options().filter().all.return_value = []
 
         result = LotteryEntryService.get_my_entries(db, make_mock_fan())
-        assert result is False
+        assert result is None
 
     def test_get_entries_for_campaign_not_found(self):
         from app.db.models.events import LotteryCampaign
@@ -251,7 +251,7 @@ class TestGetEntries:
         db.query().filter().all.return_value = [MagicMock()]
 
         result = LotteryEntryService.get_entries_for_campaign(db, DEFAULT_ID, make_mock_admin())
-        assert result is not False
+        assert result is not None
 
     def test_get_entries_for_campaign_empty(self):
         from app.db.models.events import Concert, LotteryCampaign, TicketType
@@ -266,4 +266,4 @@ class TestGetEntries:
         db.query().filter().all.return_value = []
 
         result = LotteryEntryService.get_entries_for_campaign(db, DEFAULT_ID, make_mock_admin())
-        assert result is False
+        assert result is None

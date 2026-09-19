@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -8,8 +7,10 @@ from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
 from app.schema.events import LotteryEntryApply
+from app.schema.events.ticket import TicketStatus
+from app.schema.identity import UserRole
 
-_LIVE_TICKET_STATUSES = ("reserved", "pending_payment", "paid", "used")
+_LIVE_TICKET_STATUSES = (TicketStatus.reserved, TicketStatus.pending_payment, TicketStatus.paid, TicketStatus.used)
 
 class LotteryEntryService:
 
@@ -21,11 +22,11 @@ class LotteryEntryService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry:
-        if current_user.role != "fan":
+        if current_user.role != UserRole.fan:
             raise ForbiddenError("Only fan accounts can apply to a lottery")  # primary check for trg_lottery_entries_fan_only
         campaign = db.get(LotteryCampaign, data.campaign_id)
         if not campaign:
@@ -83,7 +84,7 @@ class LotteryEntryService:
         return db_entry
 
     @staticmethod
-    def get_my_entries(db: Session, current_user: Users) -> list[LotteryEntry] | Literal[False]:
+    def get_my_entries(db: Session, current_user: Users) -> list[LotteryEntry] | None:
         # joinedload both hops — LotteryEntryRead embeds campaign (which embeds
         # ticket_type), and this list can span many different campaigns across
         # a fan's whole history, so lazy-loading each would be its own N+1 at
@@ -96,11 +97,11 @@ class LotteryEntryService:
             .all()
         )
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
-    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry] | Literal[False]:
+    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry] | None:
         """Manager/admin view of who has entered a campaign under their own
         company (company_id resolved the same way as lottery_campaign_service:
         campaign -> ticket_type -> concert.company_id)."""
@@ -115,5 +116,5 @@ class LotteryEntryService:
             raise ForbiddenError("Managers can only view entries for their own company's campaigns")
         result = db.query(LotteryEntry).filter(LotteryEntry.campaign_id == campaign_id).all()
         if not result:
-            return False
+            return None
         return result

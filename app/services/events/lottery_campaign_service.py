@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -7,6 +6,8 @@ from app.db.models.events import Concert, LotteryCampaign, TicketType
 from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.schema.events import LotteryCampaignCreate, LotteryCampaignUpdate
+from app.schema.events.ticket_type import SaleMethod
+from app.schema.identity import UserRole
 
 
 class LotteryCampaignService:
@@ -16,7 +17,7 @@ class LotteryCampaignService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def _company_id_for_ticket_type(db: Session, ticket_type_id: uuid.UUID) -> uuid.UUID | None:
@@ -31,7 +32,7 @@ class LotteryCampaignService:
         ticket_type = db.get(TicketType, data.ticket_type_id)
         if not ticket_type:
             raise NotFoundError("Ticket type not found")
-        if ticket_type.sale_method != "lottery":
+        if ticket_type.sale_method != SaleMethod.lottery:
             raise BadRequestError("Lottery campaigns can only be attached to a lottery-sale ticket type")
         concert = db.get(Concert, ticket_type.concert_id)
         if not concert:
@@ -45,7 +46,7 @@ class LotteryCampaignService:
         return db_campaign
 
     @staticmethod
-    def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[LotteryCampaign] | Literal[False]:
+    def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[LotteryCampaign] | None:
         # joinedload since LotteryCampaignRead now embeds ticket_type — without
         # it, serializing a multi-row result would lazy-load it once per row.
         result = (
@@ -55,7 +56,7 @@ class LotteryCampaignService:
             .all()
         )
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod

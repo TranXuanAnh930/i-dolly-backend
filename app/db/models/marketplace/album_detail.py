@@ -3,8 +3,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
-
-release_format_enum = Enum("physical", "digital", name="release_format_enum")
+from app.schema.marketplace.album_detail import ReleaseFormat
 
 
 class AlbumDetail(Base):
@@ -16,7 +15,7 @@ class AlbumDetail(Base):
     group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True, index=True)
     release_date = Column(Date, nullable=True)
     track_count = Column(Integer, nullable=True)
-    format = Column(release_format_enum, nullable=False, server_default="physical")
+    format = Column(Enum(ReleaseFormat, name="release_format_enum"), nullable=False, server_default="physical")
     cover_image_url = Column(String, nullable=True)
 
     __table_args__ = (

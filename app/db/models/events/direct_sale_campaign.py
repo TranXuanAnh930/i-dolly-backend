@@ -5,8 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
-
-direct_sale_campaign_status_enum = Enum("open", "cancelled", name="direct_sale_campaign_status_enum")
+from app.schema.events.direct_sale_campaign import DirectSaleCampaignStatus
 
 
 class DirectSaleCampaign(Base):
@@ -22,7 +21,7 @@ class DirectSaleCampaign(Base):
     ticket_type_id = Column(UUID(as_uuid=True), ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, index=True)
     sale_start_at = Column(DateTime(timezone=True), nullable=False)
     sale_end_at = Column(DateTime(timezone=True), nullable=False)
-    status = Column(direct_sale_campaign_status_enum, nullable=False, server_default="open")
+    status = Column(Enum(DirectSaleCampaignStatus, name="direct_sale_campaign_status_enum"), nullable=False, server_default="open")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (

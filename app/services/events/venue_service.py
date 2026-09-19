@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -22,10 +21,10 @@ class VenueService:
         return db_venue
 
     @staticmethod
-    def get_venues(db: Session) -> list[Venue] | Literal[False]:
+    def get_venues(db: Session) -> list[Venue] | None:
         result = db.query(Venue).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -33,10 +32,10 @@ class VenueService:
         return db.get(Venue, id)
 
     @staticmethod
-    def update_venue(db: Session, id: uuid.UUID, data: VenueUpdate) -> Venue | Literal[False]:
+    def update_venue(db: Session, id: uuid.UUID, data: VenueUpdate) -> Venue | None:
         db_venue = db.get(Venue, id)
         if not db_venue:
-            return False
+            return None
         db_venue.name = data.name
         db_venue.address = data.address
         db_venue.city = data.city

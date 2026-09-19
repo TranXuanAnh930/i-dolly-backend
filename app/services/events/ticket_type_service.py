@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -8,13 +7,15 @@ from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
 from app.schema.events import TicketTypeCreate, TicketTypeUpdate
+from app.schema.events.concert import ConcertStatus
+from app.schema.identity import UserRole
 
 # Mirrors concert_service._EVENT_OPEN_STATUSES/reasoning: once the parent
 # concert is on sale (or further), a ticket type's capacity is frozen for
 # managers too — resizing how many tickets are on offer out from under fans
 # who already hold entries/tickets is exactly what this blocks. Cancelling
 # the concert unlocks it again, same as the concert's own date/capacity.
-_EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
+_EVENT_OPEN_STATUSES = {ConcertStatus.on_sale, ConcertStatus.sold_out, ConcertStatus.completed}
 
 class TicketTypeService:
 
@@ -23,7 +24,7 @@ class TicketTypeService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def add_ticket_type(db: Session, data: TicketTypeCreate, current_user: Users) -> TicketType:
@@ -39,10 +40,10 @@ class TicketTypeService:
         return db_tt
 
     @staticmethod
-    def get_ticket_types(db: Session, concert_id: uuid.UUID) -> list[TicketType] | Literal[False]:
+    def get_ticket_types(db: Session, concert_id: uuid.UUID) -> list[TicketType] | None:
         result = db.query(TicketType).filter(TicketType.concert_id == concert_id).all()
         if not result:
-            return False
+            return None
         return result
 
     @staticmethod
@@ -59,7 +60,7 @@ class TicketTypeService:
             raise ForbiddenError("Managers can only manage ticket types for their own company's concerts")
         if data.total_quantity is not None:
             if (
-                current_user.role == "manager"
+                current_user.role == UserRole.manager
                 and concert.status in _EVENT_OPEN_STATUSES
                 and data.total_quantity != db_tt.total_quantity
             ):
@@ -73,7 +74,7 @@ class TicketTypeService:
             # correct it. Rounded before comparing: price is Numeric(10,2)
             # (Decimal) in the DB but arrives here as a float, and the two
             # don't compare equal bit-for-bit even for the "same" price.
-            if current_user.role == "manager" and round(float(db_tt.price), 2) != round(data.price, 2):
+            if current_user.role == UserRole.manager and round(float(db_tt.price), 2) != round(data.price, 2):
                 raise ForbiddenError("Managers cannot change ticket price after creation — ask an admin")
             db_tt.price = data.price
         commit_or_raise(db)  # trg_ticket_types_capacity (fires on UPDATE OF total_quantity)

@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -16,10 +15,10 @@ from app.utils.jwt_manager import create_access_token, create_email_verification
 class AuthService:
 
     @staticmethod
-    def create_user(db:Session, user: UserCreate) -> Users | Literal[False]:
+    def create_user(db:Session, user: UserCreate) -> Users | None:
         check_existing_user = db.query(Users).filter(Users.email == user.email).first()
         if check_existing_user:
-            return False
+            return None
         new_user = Users(
             name = user.name,
             email = user.email,

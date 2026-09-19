@@ -168,7 +168,7 @@ class TestGroupService:
         db.query().filter().all.return_value = []
 
         result = GroupService.get_groups(db)
-        assert result is False
+        assert result is None
 
     def test_get_group(self):
         from app.services.talent.group_service import GroupService
@@ -304,7 +304,7 @@ class TestGroupService:
         db.query().filter().all.return_value = []
 
         result = GroupService.get_groups_page(db)
-        assert result is False
+        assert result is None
 
     def test_get_group_detail_found(self):
         from app.schema.marketplace import ArtistRef, ProductCard
@@ -344,7 +344,7 @@ class TestGroupService:
         db.get.return_value = None
 
         result = GroupService.get_group_detail(db, MISSING_ID)
-        assert result is False
+        assert result is None
 
     def test_get_group_detail_inactive(self):
         from app.services.talent.group_service import GroupService
@@ -353,7 +353,7 @@ class TestGroupService:
         db.get.return_value = make_mock_group(is_active=False)
 
         result = GroupService.get_group_detail(db, DEFAULT_ID)
-        assert result is False
+        assert result is None
 
     def test_get_manager_groups_page(self):
         from app.services.talent.group_service import GroupService

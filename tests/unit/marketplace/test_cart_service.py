@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -103,6 +105,7 @@ class TestCartService:
         assert result is None
 
     def test_add_to_cart_user_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.marketplace import CartItem
         from app.services.marketplace.cart_service import CartService
 
@@ -110,8 +113,8 @@ class TestCartService:
         db.get.return_value = None
 
         cart_data = CartItem(quantity=1, product_id=DEFAULT_ID)
-        result = CartService.add_to_cart(db, cart_data, MISSING_ID)
-        assert result is False
+        with pytest.raises(NotFoundError):
+            CartService.add_to_cart(db, cart_data, MISSING_ID)
 
     def test_see_cart_with_items(self):
         from app.services.marketplace.cart_service import CartService
