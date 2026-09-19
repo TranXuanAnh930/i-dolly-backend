@@ -10,6 +10,7 @@ from app.db.models.identity import Users
 from app.db.models.talent import IdolColor
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
 from app.schema.talent import IdolColorBase, IdolColorCreate, IdolColorRead
 from app.services.talent.idol_color_service import IdolColorService
@@ -24,8 +25,6 @@ router = APIRouter(prefix="/idol_colors", tags=["Idol Colors"])
 @router.post("/add", response_model=IdolColorRead)
 async def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
     db_color = IdolColorService.add_idol_color(db, color)
-    if not db_color:
-        raise HTTPException(status_code=400, detail="Invalid input")
     CacheService.delete_cached_idol_colors()
     CacheService.delete_cached_manager_idol_form_page()
     CacheService.delete_cached_manager_products_pages()  # ManagerProductFormPage's colors dropdown is embedded there too
@@ -40,9 +39,10 @@ async def list_idol_colors(_: None = Depends(rate_limit(10, 60, ip_key)), db: Se
 
 @router.put("/update/{id}", response_model=IdolColorRead)
 async def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
-    db_color = IdolColorService.update_idol_color(db, id, data)
-    if not db_color:
-        raise HTTPException(status_code=404, detail="Idol color not found")
+    try:
+        db_color = IdolColorService.update_idol_color(db, id, data)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_idol_colors()
     CacheService.delete_cached_manager_idol_form_page()
     CacheService.delete_cached_manager_products_pages()

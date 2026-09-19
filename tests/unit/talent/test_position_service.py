@@ -85,7 +85,7 @@ class TestPositionService:
         result = PositionService.add_position(db, data)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
 
     def test_get_positions_found(self):
         from app.services.talent.position_service import PositionService
@@ -103,7 +103,7 @@ class TestPositionService:
         db.query().all.return_value = []
 
         result = PositionService.get_positions(db)
-        assert result is False
+        assert result == []
 
     def test_update_position_success(self):
         from app.schema.talent import PositionBase
@@ -115,9 +115,10 @@ class TestPositionService:
 
         result = PositionService.update_position(db, DEFAULT_ID, data)
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
 
     def test_update_position_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.talent import PositionBase
         from app.services.talent.position_service import PositionService
 
@@ -125,8 +126,8 @@ class TestPositionService:
         db.get.return_value = None
         data = PositionBase(name="Leader")
 
-        result = PositionService.update_position(db, MISSING_ID, data)
-        assert result is False
+        with pytest.raises(NotFoundError):
+            PositionService.update_position(db, MISSING_ID, data)
 
     def test_delete_position_success(self):
         from app.services.talent.position_service import PositionService
@@ -226,7 +227,7 @@ class TestPositionService:
         db.query().filter().all.return_value = []
 
         result = PositionService.get_idol_positions(db, DEFAULT_ID)
-        assert result is False
+        assert result == []
 
     def test_get_all_idol_positions_found(self):
         from app.services.talent.position_service import PositionService
@@ -244,7 +245,7 @@ class TestPositionService:
         db.query().all.return_value = []
 
         result = PositionService.get_all_idol_positions(db)
-        assert result is False
+        assert result == []
 
     def test_update_idol_position_primary_success(self):
         from app.services.talent.position_service import PositionService

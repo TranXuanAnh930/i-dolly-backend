@@ -18,7 +18,7 @@ router = APIRouter(prefix="/payment", tags=["Payment"])
 @router.patch("/status/all", response_model=list[PaymentResponse])
 async def check_payment_status_all(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> list[Payment]:
     payment = PaymentService.fetch_all_payments(db, user.id)
-    if payment is None:
+    if not payment:
         raise HTTPException(status_code=404, detail="Payment not found!")
     return payment
 

@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.celery_app import celery_app
 from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
+from app.exception.common import BadRequestError
 from app.schema.identity import UserCreate
 from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
@@ -16,10 +16,10 @@ from app.utils.jwt_manager import create_access_token, create_email_verification
 class AuthService:
 
     @staticmethod
-    def create_user(db:Session, user: UserCreate) -> Users | Literal[False]:
+    def create_user(db:Session, user: UserCreate) -> Users:
         check_existing_user = db.query(Users).filter(Users.email == user.email).first()
         if check_existing_user:
-            return False
+            raise BadRequestError("Email already registered")
         new_user = Users(
             name = user.name,
             email = user.email,

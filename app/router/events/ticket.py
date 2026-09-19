@@ -29,6 +29,7 @@ from app.schema.events import (
     TicketUpdate,
     WonTicketCheckoutCreate,
 )
+from app.schema.identity import UserRole
 from app.services.events.ticket_service import TicketService
 
 # add/update/delete below stay the ADMIN-ONLY stopgap until the lottery
@@ -108,7 +109,7 @@ async def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_curr
     ticket = TicketService.get_ticket(db, id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    if current_user.role not in ("admin", "manager") and ticket.user_id != current_user.id:
+    if current_user.role not in (UserRole.admin, UserRole.manager) and ticket.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You can only view your own tickets")
     return ticket
 

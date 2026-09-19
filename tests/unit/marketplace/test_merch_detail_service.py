@@ -209,7 +209,7 @@ class TestMerchDetailService:
         db.query().all.return_value = []
 
         result = MerchDetailService.get_merch_details(db)
-        assert result is False
+        assert result == []
 
     def test_update_merch_detail_success(self):
         from app.db.models.marketplace import MerchDetail

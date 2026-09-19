@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -99,11 +101,12 @@ class TestUserService:
         data = ManagerCreate(name="Manager", email="manager@example.com", password="pass123", company_id=DEFAULT_ID)
 
         result = UserService.create_manager_user(db, data)
-        assert result not in ("email_taken", "company_not_found")
+        assert result.role == "manager"
         db.add.assert_called_once()
         db.commit.assert_called_once()
 
     def test_create_manager_email_taken(self):
+        from app.exception.common import BadRequestError
         from app.schema.identity import ManagerCreate
         from app.services.identity.user_service import UserService
 
@@ -111,10 +114,11 @@ class TestUserService:
         db.query().filter().first.return_value = make_mock_user()
         data = ManagerCreate(name="Manager", email="manager@example.com", password="pass123", company_id=DEFAULT_ID)
 
-        result = UserService.create_manager_user(db, data)
-        assert result == "email_taken"
+        with pytest.raises(BadRequestError):
+            UserService.create_manager_user(db, data)
 
     def test_create_manager_company_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.identity import ManagerCreate
         from app.services.identity.user_service import UserService
 
@@ -123,8 +127,8 @@ class TestUserService:
         db.get.return_value = None
         data = ManagerCreate(name="Manager", email="manager@example.com", password="pass123", company_id=MISSING_ID)
 
-        result = UserService.create_manager_user(db, data)
-        assert result == "company_not_found"
+        with pytest.raises(NotFoundError):
+            UserService.create_manager_user(db, data)
 
     def test_revoke_token_success(self):
         from app.services.identity.user_service import UserService

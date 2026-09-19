@@ -104,6 +104,18 @@ except ServiceError as e:
   error (e.g. `idol_service._validate_refs`) stays sentinel-returning rather than raising directly.
 - Plain reads returning `False`/`None` on "not found," handled inline in the router
   (`if not result: raise HTTPException(404, ...)`), are unaffected by this convention.
+  - A bare list-returning read (`db.query(X).all()`, no further transformation) never checks its
+    own result for emptiness — `return db.query(X).all()` directly, typed `-> list[X]:`, not
+    `list[X] | None`. `.all()` already returns `[]`, never `None`, and `[]` is exactly as falsy as
+    `None` to the router's `if not result:`, so re-wrapping it adds a branch that can never do
+    anything different from just returning the list. The same collapse applies to a single-object
+    read that's *only* `db.get(...)`/`.first()` immediately returned — `return db.get(X, id)`
+    directly, still typed `X | None` since that call itself can genuinely return `None`. It does
+    **not** apply once the query result gets wrapped into a bigger Pydantic object before
+    returning (`EventsPageRead(concerts=...)`, `IdolDetailRead(idol=..., ...)`, `CartDetailRead(...)`)
+    — a Pydantic model instance has no `__bool__`/`__len__`, so it's always truthy, and the
+    `if not entity: return None` guard in front of it is the only way the router can still tell
+    "nothing here" from "found." That guard stays.
 - **Checkout/payment exceptions** (`app/exception/checkout.py`): `CartItemError` and subclasses
   (`InsufficientStockError`, `PaymentAmountMismatch`, `UnsupportedGatewayError`, etc.), raised in
   the service, caught in the router, mapped to a status code. Use this shape for new multi-step
@@ -200,9 +212,33 @@ to Render on `main`.
   rules. `tests/*` and `scripts/*` are exempt.
   - The old sentinel-return convention (`Literal["forbidden", "not_found"]`) is superseded by the
     exception hierarchy in §2 wherever a router used `_raise_for`/`_raise_for_link` — those
-    functions now return just the success type. `Literal` is still right for a plain read's
-    `Literal[False]` empty-result sentinel, or a private multi-value helper like
-    `idol_service._validate_refs`.
+    functions now return just the success type. A plain read's empty-result sentinel is `None`
+    (`Object | None`), not `Literal[False]` — `None` is Python's actual "nothing here" value, and
+    it's what `db.get(...)`/`.first()` already return on a miss, so a read that wraps one of those
+    doesn't need to invent a second falsy value meaning the same thing. A private multi-value
+    sentinel helper like `idol_service._validate_refs` still returns a sentinel rather than raising
+    (see the bullet below this one) — but the sentinel itself is a local `class _RefIssue(str,
+    Enum)` next to the helper, not a bare `Literal["a", "b", ...]`, for the same reason the next
+    bullet gives for model columns: a typo in a member name is a `NameError`/`AttributeError` at
+    the call site instead of a string that silently never matches any `if error == "...":` branch.
+    `Literal` is still right for a genuinely one-off inline type hint, just not for a value set
+    that gets compared against in more than one place.
+  - **A fixed set of string values (role, status, sale method, tier, notification type, ...) is a
+    `class X(str, Enum)` in the schema file that already owns the field's Read/Update model, never
+    a bare `str` with the allowed values just noted in a comment.** The model's `Column` wires the
+    same class in — `Column(Enum(OrderStatus, name="order_status_enum"))` — instead of a
+    module-level `Enum("a", "b", "c", name=...)` with no Python-side type at all; `server_default=`
+    stays the plain string label, since that's DDL text, not a Python default. This makes an
+    invalid value a Pydantic validation error at the API boundary instead of a `CHECK`/enum
+    violation surfacing as a raw `IntegrityError` deep in a commit. `role`/`TicketType.tier`/
+    `TicketType.sale_method`/`Concert.status`/`LotteryCampaign.status`/`DirectSaleCampaign.status`/
+    `LotteryEntry.status`/`Ticket.status`/`Notification.type`/`Notification.status`/
+    `AlbumDetail.format` all follow this now. Doesn't apply to the exception-hierarchy sentinel
+    strings from two bullets up (`Literal["forbidden", "not_found"]` and friends, now raised
+    exceptions, not returned values) — those were never a model column's value set. A private
+    multi-way sentinel *helper* like `_validate_refs` is a middle case: not a model column either,
+    but compared against in more than one place, so it gets the enum treatment too (`_RefIssue`)
+    rather than `Literal`, per the bullet just above.
   - **FastAPI gotcha**: a route's own return-type annotation becomes an implicit response schema
     when the decorator has no `response_model=`. A bare SQLAlchemy ORM class there crashes the app
     at import time. If a route has no `response_model=` and its real return type isn't

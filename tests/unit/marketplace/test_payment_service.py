@@ -97,7 +97,7 @@ class TestPaymentService:
         db.query().filter().all.return_value = []
 
         result = PaymentService.fetch_all_payments(db, DEFAULT_ID)
-        assert result is None
+        assert result == []
 
     def test_create_payment_paypal_gateway(self):
         from app.schema.marketplace import PaymentCreate, PaymentGateway

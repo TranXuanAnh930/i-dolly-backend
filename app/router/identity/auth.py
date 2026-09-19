@@ -7,6 +7,7 @@ from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
 from app.schema.identity import UserCreate, UserOut
 from app.services.identity.auth_service import AuthService
@@ -15,10 +16,10 @@ router = APIRouter(prefix="/account", tags=["Account"])
 
 @router.post("/register", response_model=UserOut)
 async def register(user:UserCreate, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> Users:
-    db_user = AuthService.create_user(db, user)
-    if not db_user:
-        raise HTTPException(status_code=400, detail="E-mail already registered")
-    return db_user
+    try:
+        return AuthService.create_user(db, user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/login")
 async def login(form_data:OAuth2PasswordRequestForm=Depends(), _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> JSONResponse:

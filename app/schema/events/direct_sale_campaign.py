@@ -1,9 +1,14 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Self
 
 from pydantic import BaseModel, model_validator
 
+
+class DirectSaleCampaignStatus(str, Enum):
+    open = "open"
+    cancelled = "cancelled"
 
 class DirectSaleCampaignBase(BaseModel):
     sale_start_at: datetime
@@ -19,12 +24,12 @@ class DirectSaleCampaignCreate(DirectSaleCampaignBase):
     ticket_type_id: uuid.UUID
 
 class DirectSaleCampaignUpdate(DirectSaleCampaignBase):
-    status: str | None = None  # 'open' | 'cancelled'
+    status: DirectSaleCampaignStatus | None = None
 
 class DirectSaleCampaignRead(DirectSaleCampaignBase):
     id: uuid.UUID
     ticket_type_id: uuid.UUID
-    status: str
+    status: DirectSaleCampaignStatus
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -389,7 +389,7 @@ newly introduced.
     /products/manager-products-page`, `GET /products/manager-product-form-page`, `GET
     /management_companies/all`. Same TTL+invalidate-on-write shape as item 28; these never 404 on
     an empty result (a brand-new company's empty product list is a normal state), so there's no
-    `Literal[False]` branch to cache around, unlike the store-facing pages. The two products pages
+    `None` branch to cache around, unlike the store-facing pages. The two products pages
     are the only ones keyed by `company_id` (`products:manager_products_page:<company_id|"all">`)
     since they're the only ones scoped — a manager's cached page must never leak into another
     company's, or into the admin's unfiltered view. Their `company_id` isn't a column on `Product`
@@ -513,6 +513,168 @@ newly introduced.
     boundary, never a real 200). `/payment/status/order/{id}`'s found-case (needs a full
     product/cart/shipping-address chain behind a real `/order/checkout`, not built here — only its
     401/404 paths are covered). See §5 for both.
+35. **`Object | Literal[False]` → `Object | None` across every plain-read service method**
+    (~60 methods, 23 service files plus `cache_service.py`). `None` is Python's actual "nothing
+    here" value and what `db.get(...)`/`.first()` already return on a miss, so a read wrapping one
+    of those no longer needs a second falsy value meaning the same thing — see the updated
+    convention note in `architecture.md` §2. Multi-value sentinels that happen to include `False`
+    alongside other string outcomes (`product_service.update_product`'s
+    `Literal[False, "forbidden", "price_locked", "category_not_found"]` and similar) were left
+    alone on purpose — that's a different, still-valid pattern (`architecture.md` §2's "private
+    multi-value helper" case), not the one this item touched. Every caller checking `if not
+    result:` needed no change (`None` and `False` are both falsy); routers/tests using `is False`
+    explicitly were updated to `is None`.
+
+    **Found two real collisions along the way** — cases where `False` and `None` had already been
+    doing two *different* jobs in the same function, which the rename would have silently merged
+    into one, losing information callers relied on:
+    - `OrderService.cancel_placed_order` returned `None` for "order not found" and `False` for
+      "found, but already shipped" — `order.py`'s router turned these into 404 vs 400
+      respectively. Fixed by raising `BadRequestError` for the "already shipped" case instead of
+      returning a second falsy value, matching the exception-hierarchy convention item 199 of
+      `architecture.md` already documents for this; the router now catches `ServiceError` for that
+      endpoint.
+    - `CartService.add_to_cart` returned `None` for "insufficient stock / product not found" and
+      `False` for "user not found" (not reachable in practice — `user_id` always comes from an
+      already-validated `get_current_user`, but the router still branched on it). Same fix:
+      `NotFoundError` instead of a second falsy value.
+
+    Neither collision was caught by a test — nothing exercised the "already shipped" 400 path or
+    the (practically unreachable) "user not found" path, so a mechanical rename would have quietly
+    turned both `HTTPException` branches into dead code without a single red test. Found instead by
+    reading each router's own `is False`/`is None` branches during review, before running anything.
+    Confirmed clean afterward: 393/393 unit, 232/232 integration (the latter against the real
+    Postgres/Redis stack per item 34).
+
+36. **Hardcoded value-set strings → `class X(str, Enum)` across identity/events/shared, matching
+    the pattern `OrderStatus`/`PaymentStatus`/`ShippingStatus` already used in marketplace.** Before
+    this, only marketplace had real Python enum classes backing its status columns; every other
+    domain used a bare SQLAlchemy `Enum("a", "b", "c", name=...)` with no Python-side type, and
+    service code compared against raw string literals scattered across call sites (`current_user.
+    role == "manager"`, `ticket.status = "paid"`, `NotificationService.create_notification(db,
+    user_id, "order_confirmation", ...)`, etc.) — a typo in any of them would have been a silent
+    no-op or an `IntegrityError` at commit, not a caught-at-the-boundary validation error. New
+    classes, one per model column, each living in the schema file that already owns that field's
+    Read/Update model (see `architecture.md` §2): `UserRole` (`schema/identity/user.py`),
+    `TicketTier`/`SaleMethod` (`schema/events/ticket_type.py`), `ConcertStatus`
+    (`schema/events/concert.py`), `CampaignStatus` (`schema/events/lottery_campaign.py`),
+    `DirectSaleCampaignStatus` (`schema/events/direct_sale_campaign.py`), `LotteryEntryStatus`
+    (`schema/events/lottery_entry.py`), `TicketStatus` (`schema/events/ticket.py`),
+    `NotificationStatus`/`NotificationType` (`schema/shared/notification.py`), and `ReleaseFormat`
+    (`schema/marketplace/album_detail.py`). Every model `Column` now wires the matching class in
+    (`Column(Enum(TicketStatus, name="ticket_status_enum"))`) instead of a bare inline value list;
+    `server_default=` stays the plain string label since that's DDL text, not a Python default —
+    no migration needed, the underlying Postgres enum types and labels are unchanged. Every
+    comparison and assignment across the touched service/router files (~30 files: every
+    `_manager_scope_violation` helper, `require_admin`/`require_manager_or_admin`, checkout/payment/
+    lottery-draw status transitions, every `NotificationService.create_notification(...,
+    notification_type=...)` call site) now uses the enum member instead of a raw string. Deliberately
+    left alone: the sentinel-return strings the previous item's note already carves out (`Literal[
+    "forbidden", "not_found"]` and similar multi-way function results — not a model column's value
+    set) and every test file, since `str, Enum` members compare equal to plain strings and existing
+    tests already mix literal strings with enum members for the fields that already had them
+    (`OrderStatus`/`PaymentStatus`) — extending this to ~280 test-file occurrences across 22 files
+    would have been pure churn with no behavior change. Confirmed clean: 393/393 unit, 232/232
+    integration (real Postgres/Redis stack per item 34).
+
+37. **Closed the remaining gap item 23 left open: six service methods that still returned a
+    `Literal["forbidden", "not_found", ...]` sentinel instead of raising, because they didn't go
+    through the old `_raise_for`/`_raise_for_link` router helper item 23's sweep was scoped to.**
+    Converted to the same `NotFoundError`/`ForbiddenError`/`BadRequestError` hierarchy as everywhere
+    else: `UserService.create_manager_user`, `ProductService.add_product_with_detail`/
+    `update_product`/`set_product_image`/`delete_product`/`get_product_sales_page`, and
+    `LotteryDrawService.draw_lottery` (called from `app/tasks/lottery.py`'s Celery task, not a
+    router — an uncaught `ServiceError` there just fails the task, which is strictly more
+    informative than the string sentinel nothing was reading before, since `PUT
+    /concerts/lottery-draw/{id}` is fire-and-forget and never inspected the task's return value).
+    `draw_lottery`'s return type was `-> dict` even though every early-return was a bare string
+    that didn't match `dict` either — now `-> LotteryResult`, built as a real
+    `LotteryResult(...)` instance on success instead of an untyped dict literal. Every router
+    caller now does the one-line `except ServiceError as e: raise HTTPException(status_code=e.
+    status_code, detail=str(e)) from e` instead of a chain of `if result == "...":` checks.
+    One deliberate status-code change: `add_product_with_detail`'s `category_not_found`/
+    `owner_not_found` (a bad FK reference in the POST body) moved from 400 to 404, matching how
+    every other "referenced row doesn't exist" case in this codebase is already handled
+    (`concert_service.add_concert`, `lottery_campaign_service.add_campaign`, etc. all raise
+    `NotFoundError` for exactly this shape) — nothing tested the old 400, so this was a real
+    inconsistency being fixed, not a documented contract being broken; `artist_inactive` stayed
+    `BadRequestError`/400 (a state issue, not a missing reference) and `forbidden`/`price_locked`
+    stayed `ForbiddenError`/403, both unchanged from before.
+
+    Deliberately NOT touched: `idol_service._validate_refs` — still sentinel-returning, and still
+    should be. It's a private helper whose callers (`add_idol`/`update_idol`) need to inspect and
+    sometimes override its result (`update_idol` treats `"group_inactive"` as a non-error when the
+    idol was already in that group before it got deactivated) before deciding it's an error, which
+    an immediately-`raise`d exception can't express — `docs/architecture.md` §2 already documents
+    this as the one legitimate exception to the "raise, don't return a sentinel" rule, not an
+    oversight. Its sentinel values themselves were still a bare `Literal["company_not_found", ...]`
+    though, so as a follow-up they're now a local `class _RefIssue(str, Enum)` next to the helper
+    in `idol_service.py` — not `app/schema/`, since this isn't a model column's value set, just a
+    private helper's own multi-way result compared against in two places (`add_idol`/`update_idol`).
+    Same motivation as item 36's enum sweep (a typo in a member name is a caught `AttributeError`,
+    not a string that silently never matches an `if error == "...":` branch) applied to the one
+    sentinel-returning case item 36 didn't reach because it wasn't a `Column`. No behavior change —
+    confirmed via the existing `add_idol`/`update_idol` tests, which already asserted on the public
+    `NotFoundError`/`BadRequestError` raised around this helper, not on its internal return value:
+    393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
+
+38. **Simplified ~33 genuine read methods that re-checked a result already known to be falsy or
+    non-`None`, adding a branch that could never behave differently from just returning the query.**
+    Two shapes:
+    - A bare `list[X]`-returning read (`result = db.query(X)...all(); if not result: return None;
+      return result`) collapsed to `return db.query(X)...all()`, typed `-> list[X]:` instead of
+      `list[X] | None`. `.all()` already returns `[]`, never `None`, and `[]` is exactly as falsy as
+      `None` was to the router's existing `if not result: raise HTTPException(404, ...)` — so this
+      is a pure simplification, not a behavior change, for every router except one (below).
+    - A single-object read that was only `db_x = db.get(X, id); if not db_x: return None; return
+      db_x` (no other logic in between) collapsed to `return db.get(X, id)` directly. Stays typed
+      `X | None` — unlike the list case, `.get()`/`.first()` genuinely can return `None`.
+    26 files: `concert_service` (`get_concerts`/`get_performers`/`get_all_performers`),
+    `idol_service.get_idols`, `group_service.get_groups`, `venue_service.get_venues`,
+    `ticket_type_service.get_ticket_types`, `lottery_campaign_service.get_campaigns`,
+    `direct_sale_campaign_service.get_campaigns`, `lottery_entry_service`
+    (`get_my_entries`/`get_entries_for_campaign` — kept their existing `NotFoundError`/
+    `ForbiddenError` pre-checks, only the final list return was simplified),
+    `lottery_preference_service.get_my_preferences`, `management_company_service.get_companies`,
+    `position_service` (`get_positions`/`get_idol_positions`/`get_all_idol_positions`),
+    `idol_color_service.get_idol_colors`, `merch_detail_service.get_merch_details`,
+    `album_detail_service.get_album_details`, `genre_service`
+    (`get_genres`/`get_album_genres`/`get_all_album_genres`), `category_service.get_categories`,
+    `product_service.list_of_products`, `payment_service`
+    (`fetch_payment_status`/`fetch_ticket_payment_status`/`fetch_all_payments`),
+    `order_service.fetch_single_placed_order` (and `get_user_shipping_status`, rewritten as a
+    one-line ternary since it projects `.shippingstatus` off the queried row rather than returning
+    the row itself), `shipping_service` (`fetch_address`/`get_address_by_id`),
+    `notification_service.get_my_notifications`, `ticket_service.get_my_tickets`.
+
+    **Deliberately NOT touched**: any read that wraps its query result in a bigger Pydantic object
+    before returning (`get_events_page`, `get_members_page`, `get_group_detail`, `get_idol_detail`,
+    `get_groups_page`, `get_concert_detail_public`, `get_store_page`, `get_product_detail`,
+    `cart_service.see_cart`, `product_service.search_product`). A Pydantic model instance has no
+    `__bool__`/`__len__` and is always truthy, so `if not entity: return None` in front of building
+    one is the *only* way the router can tell "nothing here" from "found" — collapsing that check
+    away would silently turn every empty result into a 200 with a half-built page instead of a 404.
+    Same reasoning for `authenticate_user`/`verify_refresh_token` (real validation logic between the
+    query and the return, not a redundant re-check) and the private helpers `idol_service.
+    _validate_refs`/`ticket_service._existing_live_ticket`/`_unresolved_lottery_entry`.
+
+    **Found one real bug while auditing router callers for the list-shape change**:
+    `router/marketplace/payment.py::check_payment_status_all` checked `if payment is None:` against
+    `fetch_all_payments`'s result — correct against the old `list[Payment] | None`, but silently
+    wrong against the new `list[Payment]` (an empty list is never `None`, so a user with zero
+    payments would have gotten a 200 with `[]` instead of the intended 404). Fixed to `if not
+    payment:`, matching every sibling router's own check. Every other caller (routers and
+    `CacheService`'s own wrappers around `list_of_products`/`get_venues`/`get_idol_colors`/
+    `get_companies`) already used a falsy check, not an `is None` check, so needed no change.
+
+    Test fallout: every `test_*_empty` unit test for a converted list-returning method asserted
+    `result is None`; all ~27 switched to `result == []` (behavior at the HTTP boundary is
+    identical — `[]` and `None` are both still falsy to the router's `if not result:`). Confirmed
+    clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
+
+    Every test asserting the old sentinel value (`test_lottery_draw_service.py` ×6,
+    `test_product_service.py` ×4, `test_user_service.py` ×3) switched to `pytest.raises(...)`.
+    Confirmed clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

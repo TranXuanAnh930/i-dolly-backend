@@ -5,10 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
-
-concert_status_enum = Enum(
-    "scheduled", "on_sale", "sold_out", "completed", "cancelled", name="concert_status_enum"
-)
+from app.schema.events.concert import ConcertStatus
 
 
 class Concert(Base):
@@ -23,7 +20,7 @@ class Concert(Base):
     capacity = Column(Integer, nullable=False)  # may be <= venue.total_capacity; not DB-enforced (database-design.md §3.7)
     event_datetime = Column(DateTime(timezone=True), nullable=False)
     doors_open_at = Column(DateTime(timezone=True), nullable=True)
-    status = Column(concert_status_enum, nullable=False, server_default="scheduled")
+    status = Column(Enum(ConcertStatus, name="concert_status_enum"), nullable=False, server_default="scheduled")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now(), nullable=False)
 

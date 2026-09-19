@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -8,6 +7,7 @@ from app.db.models.marketplace import AlbumDetail, Product
 from app.db.models.talent import Group, Idol
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
+from app.schema.identity import UserRole
 from app.schema.marketplace import AlbumDetailCreate, AlbumDetailUpdate
 
 
@@ -20,7 +20,7 @@ class AlbumDetailService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def _resolve_company_id(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> uuid.UUID | None:
@@ -70,11 +70,8 @@ class AlbumDetailService:
         return db.get(AlbumDetail, product_id)
 
     @staticmethod
-    def get_album_details(db: Session) -> list[AlbumDetail] | Literal[False]:
-        result = db.query(AlbumDetail).all()
-        if not result:
-            return False
-        return result
+    def get_album_details(db: Session) -> list[AlbumDetail]:
+        return db.query(AlbumDetail).all()
 
     @staticmethod
     def update_album_detail(db: Session, product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users) -> AlbumDetail:

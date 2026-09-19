@@ -10,6 +10,7 @@ from .user import (
     User,
     UserCreate,
     UserOut,
+    UserRole,
 )
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "User",
     "UserCreate",
     "UserOut",
+    "UserRole",
     "ChangePasswordRequest",
     "ForgotPasswordRequest",
     "SetPasswordRequest",

@@ -1,11 +1,13 @@
 import uuid
-from typing import Any, Literal
+from enum import Enum
+from typing import Any
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, IdolColor, IdolPosition, ManagementCompany
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
+from app.schema.identity import UserRole
 from app.schema.talent import (
     IdolCreate,
     IdolDetailRead,
@@ -15,6 +17,16 @@ from app.schema.talent import (
     MembersPageRead,
 )
 
+
+class _RefIssue(str, Enum):
+    """Private outcome type for `IdolService._validate_refs` — not a model column's value set, so
+    it stays local to this module rather than in `app/schema/`, same reasoning as any other
+    private-helper sentinel (`docs/architecture.md` §2)."""
+    company_not_found = "company_not_found"
+    group_not_found = "group_not_found"
+    company_mismatch = "company_mismatch"
+    group_inactive = "group_inactive"
+    color_not_found = "color_not_found"
 
 class IdolService:
 
@@ -38,32 +50,32 @@ class IdolService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
-    def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None) -> Literal["company_not_found", "group_not_found", "company_mismatch", "group_inactive", "color_not_found"] | None:
+    def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None) -> _RefIssue | None:
         company = db.get(ManagementCompany, company_id)
         if not company:
-            return "company_not_found"
+            return _RefIssue.company_not_found
         if group_id is not None:
             group = db.get(Group, group_id)
             if not group:
-                return "group_not_found"
+                return _RefIssue.group_not_found
             # App-level invariant (database-design.md §3.4, not a DB constraint,
             # matching this codebase's existing service-layer cross-field checks):
             # if group_id is set, the idol's company_id must equal that group's
             # company_id.
             if group.company_id != company_id:
-                return "company_mismatch"
+                return _RefIssue.company_mismatch
             # A deactivated group is closed to new/changed membership — it can
             # still be READ (existing members, past products/events), but an
             # idol can't be newly assigned into it via add/update.
             if not group.is_active:
-                return "group_inactive"
+                return _RefIssue.group_inactive
         if color_id is not None:
             color = db.get(IdolColor, color_id)
             if not color:
-                return "color_not_found"
+                return _RefIssue.color_not_found
         return None
 
     @staticmethod
@@ -71,9 +83,9 @@ class IdolService:
         if IdolService._manager_scope_violation(current_user, idol.company_id):
             raise ForbiddenError("Managers can only manage idols for their own company")
         error = IdolService._validate_refs(db, idol.company_id, idol.group_id, idol.color_id)
-        if error == "company_mismatch":
+        if error == _RefIssue.company_mismatch:
             raise BadRequestError("group_id belongs to a different company than company_id")
-        if error == "group_inactive":
+        if error == _RefIssue.group_inactive:
             raise BadRequestError("Cannot assign an idol into a deactivated group")
         if error is not None:
             raise NotFoundError("Management company, group, or idol color not found")
@@ -84,13 +96,10 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def get_idols(db: Session) -> list[Idol] | Literal[False]:
+    def get_idols(db: Session) -> list[Idol]:
         # Public "browse all idols" list — deactivated idols don't belong on a
         # store-facing listing (database-design.md §3.4).
-        result = db.query(Idol).filter(Idol.is_active.is_(True)).all()
-        if not result:
-            return False
-        return result
+        return db.query(Idol).filter(Idol.is_active.is_(True)).all()
 
     @staticmethod
     def get_idol(db: Session, id: uuid.UUID) -> Idol | None:
@@ -102,17 +111,17 @@ class IdolService:
     # --- page-shaped reads (see idol.py schema's equivalent comment) ---
 
     @staticmethod
-    def get_members_page(db: Session) -> MembersPageRead | Literal[False]:
+    def get_members_page(db: Session) -> MembersPageRead | None:
         # Store-facing browse page — same is_active filter as get_idols, plus
         # the group-unit dropdown only offers active groups.
         idols = db.query(Idol).options(*IdolService._with_positions_and_color()).filter(Idol.is_active.is_(True)).all()
         if not idols:
-            return False
+            return None
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
         return MembersPageRead(idols=idols, groups=groups)
 
     @staticmethod
-    def get_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | Literal[False]:
+    def get_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | None:
         # Public idol profile page — a deactivated idol reads as "not found"
         # here, same as get_idols/get_members_page; only the manager/admin
         # settings surfaces (get_manager_idols_page, plain get_idol) still see it.
@@ -123,7 +132,7 @@ class IdolService:
             .first()
         )
         if not idol:
-            return False
+            return None
         group = db.get(Group, idol.group_id) if idol.group_id else None
         siblings_query = db.query(Idol).filter(Idol.id != id, Idol.is_active.is_(True))
         siblings_query = siblings_query.filter(Idol.group_id == idol.group_id) if idol.group_id else siblings_query.filter(Idol.group_id.is_(None))
@@ -161,11 +170,11 @@ class IdolService:
         # group got deactivated, that's not a new assignment and shouldn't block
         # the rest of the edit. Only a genuine move INTO a deactivated group
         # (data.group_id != the idol's current group_id) is rejected.
-        if error == "group_inactive" and data.group_id == db_idol.group_id:
+        if error == _RefIssue.group_inactive and data.group_id == db_idol.group_id:
             error = None
-        if error == "company_mismatch":
+        if error == _RefIssue.company_mismatch:
             raise BadRequestError("group_id belongs to a different company than company_id")
-        if error == "group_inactive":
+        if error == _RefIssue.group_inactive:
             raise BadRequestError("Cannot assign an idol into a deactivated group")
         if error is not None:
             raise NotFoundError("Idol, group, or idol color not found")

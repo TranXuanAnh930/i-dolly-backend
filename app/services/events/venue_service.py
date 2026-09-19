@@ -1,9 +1,9 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.db.models.events import Venue
+from app.exception.common import NotFoundError
 from app.schema.events import VenueCreate, VenueUpdate
 
 
@@ -22,21 +22,18 @@ class VenueService:
         return db_venue
 
     @staticmethod
-    def get_venues(db: Session) -> list[Venue] | Literal[False]:
-        result = db.query(Venue).all()
-        if not result:
-            return False
-        return result
+    def get_venues(db: Session) -> list[Venue]:
+        return db.query(Venue).all()
 
     @staticmethod
     def get_venue(db: Session, id: uuid.UUID) -> Venue | None:
         return db.get(Venue, id)
 
     @staticmethod
-    def update_venue(db: Session, id: uuid.UUID, data: VenueUpdate) -> Venue | Literal[False]:
+    def update_venue(db: Session, id: uuid.UUID, data: VenueUpdate) -> Venue:
         db_venue = db.get(Venue, id)
         if not db_venue:
-            return False
+            raise NotFoundError("Venue not found")
         db_venue.name = data.name
         db_venue.address = data.address
         db_venue.city = data.city

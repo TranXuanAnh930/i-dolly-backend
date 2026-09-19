@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -46,7 +48,7 @@ class TestShippingService:
         db.query().filter().all.return_value = []
 
         result = ShippingService.fetch_address(db, DEFAULT_ID)
-        assert result is None
+        assert result == []
 
     def test_delete_address_success(self):
         from app.services.marketplace.shipping_service import ShippingService
@@ -106,6 +108,7 @@ class TestShippingService:
         db.commit.assert_called_once()
 
     def test_update_address_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.marketplace import ShippingBase
         from app.services.marketplace.shipping_service import ShippingService
 
@@ -116,5 +119,5 @@ class TestShippingService:
             postal_code="110001", state="DL", country="India",
         )
 
-        result = ShippingService.update_address(db, DEFAULT_ID, data, MISSING_ID)
-        assert result is None
+        with pytest.raises(NotFoundError):
+            ShippingService.update_address(db, DEFAULT_ID, data, MISSING_ID)

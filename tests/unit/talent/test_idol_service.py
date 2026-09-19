@@ -208,7 +208,7 @@ class TestIdolService:
         db.query().filter().all.return_value = []
 
         result = IdolService.get_idols(db)
-        assert result is False
+        assert result == []
 
     def test_get_idol(self):
         from app.services.talent.idol_service import IdolService
@@ -432,7 +432,7 @@ class TestIdolService:
         db.query().options().filter().all.return_value = []
 
         result = IdolService.get_members_page(db)
-        assert result is False
+        assert result is None
 
     def test_get_idol_detail_found(self):
         from app.services.talent.idol_service import IdolService
@@ -458,7 +458,7 @@ class TestIdolService:
         db.query().options().filter().first.return_value = None
 
         result = IdolService.get_idol_detail(db, MISSING_ID)
-        assert result is False
+        assert result is None
 
     def test_get_idol_detail_no_group_solo_idol(self):
         from app.services.talent.idol_service import IdolService

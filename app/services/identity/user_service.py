@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.db.models.identity import RefreshToken, Users
 from app.db.models.talent import ManagementCompany
-from app.schema.identity import ManagerCreate
+from app.exception.common import BadRequestError, NotFoundError
+from app.schema.identity import ManagerCreate, UserRole
+from app.schema.shared import NotificationType
 from app.services.shared.notification_service import NotificationService
 from app.utils.email_sender import send_email
 from app.utils.hashing import hash_password, verify_password
@@ -67,7 +69,7 @@ class UserService:
         # A security notice, not the reset-request email above (that one only
         # queues a token, before we know a reset ever actually completes) —
         # carries no order/ticket/lottery_entry/concert FK, just user_id.
-        NotificationService.create_notification(db, user.id, "password_reset")
+        NotificationService.create_notification(db, user.id, NotificationType.password_reset)
         db.commit()
         db.refresh(user)
         return True
@@ -81,31 +83,30 @@ class UserService:
         # setting only the deprecated is_admin column here left this endpoint unable to actually
         # grant admin access. is_admin is still set alongside role, not removed, since it isn't
         # dropped yet (database-design.md §4's two-step migration plan) and UserOut still reads it.
-        if user.role == "admin":
+        if user.role == UserRole.admin:
             return False
-        user.role = "admin"
+        user.role = UserRole.admin
         user.is_admin = True
         db.commit()
         db.refresh(user)
         return True
 
     @staticmethod
-    def create_manager_user(db: Session, data: ManagerCreate) -> Users | Literal["email_taken", "company_not_found"]:
+    def create_manager_user(db: Session, data: ManagerCreate) -> Users:
         """Admin-only counterpart to self-register — creates a brand new
         role='manager' account tied to a company in one call, rather than
         promoting an already-registered fan (which /make-admin does for admins,
-        but with no company concept). Returns a short string sentinel for the
-        two distinct failure modes, matching this file's other multi-way-failure
-        functions (architecture.md SS2)."""
+        but with no company concept). Raises BadRequestError for a taken email,
+        NotFoundError for a missing company — see app/exception/common.py."""
         if db.query(Users).filter(Users.email == data.email).first():
-            return "email_taken"
+            raise BadRequestError("Email already registered")
         if not db.get(ManagementCompany, data.company_id):
-            return "company_not_found"
+            raise NotFoundError("Management company not found")
         new_user = Users(
             name=data.name,
             email=data.email,
             hashed_password=hash_password(data.password),
-            role="manager",
+            role=UserRole.manager,
             company_id=data.company_id,
             is_verified=False,
         )

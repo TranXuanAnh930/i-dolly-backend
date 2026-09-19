@@ -2,6 +2,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -48,9 +50,10 @@ class TestAuthService:
 
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
 
     def test_create_user_duplicate_email(self):
+        from app.exception.common import BadRequestError
         from app.schema.identity import UserCreate
         from app.services.identity.auth_service import AuthService
 
@@ -58,8 +61,8 @@ class TestAuthService:
         db.query().filter().first.return_value = make_mock_user()
         user_data = UserCreate(name="John", email="test@example.com", password="pass123")
 
-        result = AuthService.create_user(db, user_data)
-        assert result is False
+        with pytest.raises(BadRequestError):
+            AuthService.create_user(db, user_data)
 
     def test_authenticate_user_success(self):
         from app.services.identity.auth_service import AuthService

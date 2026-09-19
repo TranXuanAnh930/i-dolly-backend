@@ -19,7 +19,9 @@ from app.exception.checkout import (
     PaymentFailedError,
     UnsupportedGatewayError,
 )
+from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.identity import UserRole
 from app.schema.marketplace.order import ManagerOrdersPageRead, Order, OrderStatus
 from app.schema.marketplace.payment import PaymentCreate
 from app.schema.marketplace.shipping import ShippingStatus as SchemaShippingStatus
@@ -67,7 +69,7 @@ async def get_manager_orders_page_data(
     # company_id passed — only an admin (no single company of their own)
     # may pick a different one, same trust boundary as every other manager
     # settings page's write endpoints.
-    scoped_company_id = current_user.company_id if current_user.role == "manager" else company_id
+    scoped_company_id = current_user.company_id if current_user.role == UserRole.manager else company_id
     return OrderService.get_manager_orders_page(db, scoped_company_id, page, limit)
 
 @router.get("/fetch_placed_order", response_model=List[Order])
@@ -86,12 +88,10 @@ async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current
 
 @router.patch("/cancel/{order_id}", response_model=Order)
 async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> OrderModel:
-    order = OrderService.cancel_placed_order(db, user.id, order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found!")
-    if order is False:
-        raise HTTPException(status_code=400, detail="Order is already shipped and cannot be cancelled")
-    return order
+    try:
+        return OrderService.cancel_placed_order(db, user.id, order_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/shipping_status/{order_id}", response_model=None)
 async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> ModelShippingStatus:
@@ -102,7 +102,7 @@ async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_use
 
 @router.patch("/update_shipping_status/{order_id}", response_model=None)
 async def update_status(new_status:SchemaShippingStatus, order_id:uuid.UUID, user:Users=Depends(require_admin), db:Session=Depends(get_db)) -> ModelShippingStatus:
-    order = OrderService.update_shipping_status(db, new_status, order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found/is cancelled")
-    return order
+    try:
+        return OrderService.update_shipping_status(db, new_status, order_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e

@@ -10,6 +10,7 @@ from app.db.models.events import Venue
 from app.db.models.identity import Users
 from app.deps.auth import require_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
 from app.schema.events import VenueCreate, VenueRead, VenueUpdate
 from app.services.events.venue_service import VenueService
@@ -40,9 +41,10 @@ async def get_venue_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Venue
 
 @router.put("/update/{id}", response_model=VenueRead)
 async def update_existing_venue(id: uuid.UUID, data: VenueUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Venue:
-    db_venue = VenueService.update_venue(db, id, data)
-    if not db_venue:
-        raise HTTPException(status_code=404, detail="Venue not found")
+    try:
+        db_venue = VenueService.update_venue(db, id, data)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_venues()
     return db_venue
 

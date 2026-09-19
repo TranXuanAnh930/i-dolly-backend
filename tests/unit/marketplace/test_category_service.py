@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -43,7 +45,7 @@ class TestCategoryService:
         db.query().all.return_value = []
 
         result = CategoryService.get_categories(db)
-        assert result is False
+        assert result == []
 
     def test_update_category_success(self):
         from app.schema.marketplace import CategoryUpdate
@@ -54,18 +56,19 @@ class TestCategoryService:
         db.get.return_value = mock_cat
 
         result = CategoryService.update_category(db, DEFAULT_ID, CategoryUpdate(name="Updated"))
-        assert result is not False
+        assert result is not None
         db.commit.assert_called_once()
 
     def test_update_category_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.marketplace import CategoryUpdate
         from app.services.marketplace.category_service import CategoryService
 
         db = MagicMock()
         db.get.return_value = None
 
-        result = CategoryService.update_category(db, MISSING_ID, CategoryUpdate(name="Nope"))
-        assert result is False
+        with pytest.raises(NotFoundError):
+            CategoryService.update_category(db, MISSING_ID, CategoryUpdate(name="Nope"))
 
     def test_delete_category_success(self):
         from app.services.marketplace.category_service import CategoryService

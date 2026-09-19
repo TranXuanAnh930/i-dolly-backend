@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
 
 from sqlalchemy.orm import Session, selectinload
 
@@ -35,7 +34,13 @@ from app.schema.events import (
     TicketUpdate,
     WonTicketCheckoutCreate,
 )
+from app.schema.events.direct_sale_campaign import DirectSaleCampaignStatus
+from app.schema.events.lottery_entry import LotteryEntryStatus
+from app.schema.events.ticket import TicketStatus
+from app.schema.events.ticket_type import SaleMethod
+from app.schema.identity import UserRole
 from app.schema.marketplace import PaymentStatus
+from app.schema.shared import NotificationType
 from app.services.marketplace.payment_service import PaymentService
 from app.services.shared.notification_service import NotificationService
 from app.utils.email_templates import EmailTemplate
@@ -45,8 +50,8 @@ from app.utils.tax import with_tax
 # Fans only ever read their own tickets here. Mirrors
 # trg_tickets_one_per_concert (schema.sql) at the service layer.
 
-_LIVE_STATUSES = ("reserved", "pending_payment", "paid", "used")
-_UNRESOLVED_LOTTERY_STATUSES = ("pending", "won")
+_LIVE_STATUSES = (TicketStatus.reserved, TicketStatus.pending_payment, TicketStatus.paid, TicketStatus.used)
+_UNRESOLVED_LOTTERY_STATUSES = (LotteryEntryStatus.pending, LotteryEntryStatus.won)
 
 class TicketService:
 
@@ -92,7 +97,7 @@ class TicketService:
     @staticmethod
     def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate) -> Ticket:
         user = db.get(Users, user_id)
-        if not user or user.role != "fan":
+        if not user or user.role != UserRole.fan:
             # Primary check for trg_tickets_fan_only — the trigger is the
             # backstop (see flush_or_raise below), same split as
             # order_service.checkout's own FanOnlyPurchaseError check.
@@ -104,7 +109,7 @@ class TicketService:
         ticket_type = db.query(TicketType).filter(TicketType.id == data.ticket_type_id).with_for_update().first()
         if not ticket_type:
             raise TicketTypeNotFoundError("Ticket type not found")
-        if ticket_type.sale_method != "direct":
+        if ticket_type.sale_method != SaleMethod.direct:
             raise WrongSaleMethodError("This ticket type is not sold directly — apply through the lottery instead")
 
         now = datetime.now(timezone.utc)
@@ -112,7 +117,7 @@ class TicketService:
             db.query(DirectSaleCampaign)
             .filter(
                 DirectSaleCampaign.ticket_type_id == ticket_type.id,
-                DirectSaleCampaign.status == "open",
+                DirectSaleCampaign.status == DirectSaleCampaignStatus.open,
                 DirectSaleCampaign.sale_start_at <= now,
                 DirectSaleCampaign.sale_end_at >= now,
             )
@@ -138,7 +143,7 @@ class TicketService:
         if data.amount != total_amount:
             raise PaymentAmountMismatch("Payment amount does not match ticket price!")
 
-        ticket = Ticket(ticket_type_id=ticket_type.id, user_id=user_id, status="pending_payment")
+        ticket = Ticket(ticket_type_id=ticket_type.id, user_id=user_id, status=TicketStatus.pending_payment)
         db.add(ticket)
         flush_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert backstop — also populates ticket.id for create_ticket_payment below
 
@@ -146,9 +151,9 @@ class TicketService:
         if not payment:
             raise UnsupportedGatewayError("Unsupported payment gateway!")
         if payment.status == PaymentStatus.success:
-            if ticket.status == "paid":
+            if ticket.status == TicketStatus.paid:
                 ticket_type.sold_quantity += 1
-                NotificationService.create_notification(db, user_id, "ticket_confirmation", ticket_id=ticket.id)
+                NotificationService.create_notification(db, user_id, NotificationType.ticket_confirmation, ticket_id=ticket.id)
                 email_body = EmailTemplate.TICKET_CONFIRMED.render(
                     email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
                 )
@@ -174,7 +179,7 @@ class TicketService:
         if not ticket_type:
             raise TicketNotPayableError("This ticket isn't a payable lottery win")
 
-        if ticket_type.sale_method == "direct" or ticket.status != "pending_payment":
+        if ticket_type.sale_method == SaleMethod.direct or ticket.status != TicketStatus.pending_payment:
             raise TicketNotPayableError("This ticket isn't a payable lottery win")
 
         if ticket.payment_deadline_at and ticket.payment_deadline_at < datetime.now(timezone.utc):
@@ -182,7 +187,7 @@ class TicketService:
             # (database-design.md §5.2's "deliberately not built this phase")
             # to release this slot otherwise, so this is the one place that
             # does it: expire the ticket and free the seat it was holding.
-            ticket.status = "expired"
+            ticket.status = TicketStatus.expired
             ticket_type.sold_quantity -= 1
             commit_or_raise(db)
             raise TicketNotPayableError("The payment deadline for this ticket has passed")
@@ -195,7 +200,7 @@ class TicketService:
         if not payment:
             raise UnsupportedGatewayError("Unsupported payment gateway!")
         if payment.status == PaymentStatus.success:
-            NotificationService.create_notification(db, user_id, "lottery_payment_confirmation", ticket_id=ticket.id)
+            NotificationService.create_notification(db, user_id, NotificationType.lottery_payment_confirmation, ticket_id=ticket.id)
             user = db.get(Users, user_id)
             if user:
                 email_body = EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.render(
@@ -217,7 +222,7 @@ class TicketService:
         target_user = db.get(Users, data.user_id)
         if not target_user:
             raise NotFoundError("User not found")
-        if target_user.role != "fan":
+        if target_user.role != UserRole.fan:
             # Primary check for trg_tickets_fan_only — checks the ticket's
             # intended owner (data.user_id), not the caller, since this
             # endpoint is admin-only (an admin issuing a ticket to a fan).
@@ -237,16 +242,13 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def get_my_tickets(db: Session, current_user: Users) -> list[Ticket] | Literal[False]:
-        result = (
+    def get_my_tickets(db: Session, current_user: Users) -> list[Ticket]:
+        return (
             db.query(Ticket)
             .filter(Ticket.user_id == current_user.id)
             .options(selectinload(Ticket.ticket_type))
             .all()
         )
-        if not result:
-            return False
-        return result
 
     @staticmethod
     def get_ticket(db: Session, id: uuid.UUID) -> Ticket | None:
@@ -266,7 +268,7 @@ class TicketService:
         concert = db.get(Concert, concert_id)
         if not concert:
             raise NotFoundError("Concert not found")
-        if current_user.role == "manager" and current_user.company_id != concert.company_id:
+        if current_user.role == UserRole.manager and current_user.company_id != concert.company_id:
             raise ForbiddenError("Managers can only view ticket sales for their own company's concerts")
 
         query = (
@@ -285,7 +287,7 @@ class TicketService:
                 tier=ticket.ticket_type.tier,
                 status=ticket.status,
                 price=ticket.ticket_type.price,
-                source="lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
+                source=SaleMethod.lottery if ticket.ticket_type.sale_method == SaleMethod.lottery else SaleMethod.direct,
                 created_at=ticket.created_at,
             )
             for ticket in rows

@@ -210,7 +210,7 @@ class TestAlbumDetailService:
         db.query().all.return_value = []
 
         result = AlbumDetailService.get_album_details(db)
-        assert result is False
+        assert result == []
 
     def test_update_album_detail_success(self):
         from app.db.models.marketplace import AlbumDetail

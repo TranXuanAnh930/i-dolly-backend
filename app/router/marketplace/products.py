@@ -11,6 +11,7 @@ from app.cache.rate_limit import ip_key, rate_limit
 from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
 from app.schema.marketplace import (
     ManagerProductFormPageRead,
@@ -66,12 +67,10 @@ async def get_product_sales(
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
 ) -> ProductSalesPageRead:
-    result = ProductService.get_product_sales_page(db, id, current_user, page, limit)
-    if result == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only view sales for products belonging to their own company's idols/groups")
-    if result == "not_found":
-        raise HTTPException(status_code=404, detail="Product not found")
-    return result
+    try:
+        return ProductService.get_product_sales_page(db, id, current_user, page, limit)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/search/{id:uuid}", response_model=ProductWithCategoryRead)
 async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> ProductWithCategoryRead:
@@ -107,9 +106,10 @@ async def add_new_product(
         name=name, price=price, description=description, quantity=quantity,
         category_id=category_id, image_url=image_url,
     )
-    db_product = ProductService.add_product(db, product)
-    if not db_product:
-        raise HTTPException(status_code=400, detail="Unable to add product")
+    try:
+        ProductService.add_product(db, product)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()
@@ -156,15 +156,10 @@ async def add_new_product_with_detail(
         except StorageError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    result = ProductService.add_product_with_detail(db, data, image_url, current_user)
-    if result == "category_not_found":
-        raise HTTPException(status_code=400, detail="category_id does not reference an existing category")
-    if result == "owner_not_found":
-        raise HTTPException(status_code=400, detail="idol_id, group_id, or color_id does not reference an existing record")
-    if result == "artist_inactive":
-        raise HTTPException(status_code=400, detail="Cannot attach a new product to a deactivated idol/group")
-    if result == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only create products for their own company's idols/groups")
+    try:
+        ProductService.add_product_with_detail(db, data, image_url, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()
@@ -172,15 +167,10 @@ async def add_new_product_with_detail(
 
 @router.put("/update/{id}", response_model=MessageResponse)
 async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
-    db_product = ProductService.update_product(db, id, product, current_user)
-    if db_product == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
-    if db_product == "category_not_found":
-        raise HTTPException(status_code=400, detail="category_id does not reference an existing category")
-    if db_product == "price_locked":
-        raise HTTPException(status_code=403, detail="Managers cannot change product price after creation — ask an admin")
-    if not db_product:
-        raise HTTPException(status_code=404, detail="Product not found")
+    try:
+        ProductService.update_product(db, id, product, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()
@@ -194,11 +184,10 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
         image_url = await get_storage().save(image, subfolder="products")
     except StorageError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    db_product = ProductService.set_product_image(db, id, image_url, current_user)
-    if db_product == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
-    if not db_product:
-        raise HTTPException(status_code=404, detail="Product not found")
+    try:
+        ProductService.set_product_image(db, id, image_url, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()
@@ -206,11 +195,10 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
-    db_product = ProductService.delete_product(db, id, current_user)
-    if db_product == "forbidden":
-        raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
-    if not db_product:
-        raise HTTPException(status_code=404, detail="Product not found")
+    try:
+        ProductService.delete_product(db, id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()
@@ -218,9 +206,10 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
 
 @router.post("/bulk_products", response_model=MessageResponse)
 async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
-    db_product = ProductService.add_bulk_products(db, product)
-    if not db_product:
-        raise HTTPException(status_code=400, detail="Unable to add products")
+    try:
+        db_product = ProductService.add_bulk_products(db, product)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()

@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -37,7 +39,7 @@ class TestManagementCompanyService:
         result = ManagementCompanyService.add_company(db, data)
         db.add.assert_called_once()
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
 
     def test_get_companies_found(self):
         from app.services.talent.management_company_service import ManagementCompanyService
@@ -55,7 +57,7 @@ class TestManagementCompanyService:
         db.query().all.return_value = []
 
         result = ManagementCompanyService.get_companies(db)
-        assert result is False
+        assert result == []
 
     def test_get_company_found(self):
         from app.services.talent.management_company_service import ManagementCompanyService
@@ -86,10 +88,11 @@ class TestManagementCompanyService:
 
         result = ManagementCompanyService.update_company(db, DEFAULT_ID, data)
         db.commit.assert_called_once()
-        assert result is not False
+        assert result is not None
         assert result.name == "Renamed"
 
     def test_update_company_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.talent import ManagementCompanyBase
         from app.services.talent.management_company_service import ManagementCompanyService
 
@@ -97,8 +100,8 @@ class TestManagementCompanyService:
         db.get.return_value = None
         data = ManagementCompanyBase(name="Renamed")
 
-        result = ManagementCompanyService.update_company(db, MISSING_ID, data)
-        assert result is False
+        with pytest.raises(NotFoundError):
+            ManagementCompanyService.update_company(db, MISSING_ID, data)
 
     def test_delete_company_success(self):
         from app.services.talent.management_company_service import ManagementCompanyService

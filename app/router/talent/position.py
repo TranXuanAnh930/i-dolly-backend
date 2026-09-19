@@ -21,10 +21,7 @@ router = APIRouter(prefix="/positions", tags=["Positions"])
 
 @router.post("/add", response_model=PositionRead)
 async def add_new_position(position: PositionCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Position:
-    db_position = PositionService.add_position(db, position)
-    if not db_position:
-        raise HTTPException(status_code=400, detail="Invalid input")
-    return db_position
+    return PositionService.add_position(db, position)
 
 @router.get("/all", response_model=List[PositionRead])
 async def list_positions(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Position]:
@@ -35,10 +32,10 @@ async def list_positions(_: None = Depends(rate_limit(10, 60, ip_key)), db: Sess
 
 @router.put("/update/{id}", response_model=PositionRead)
 async def update_existing_position(id: uuid.UUID, data: PositionBase, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Position:
-    db_position = PositionService.update_position(db, id, data)
-    if not db_position:
-        raise HTTPException(status_code=404, detail="Position not found")
-    return db_position
+    try:
+        return PositionService.update_position(db, id, data)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_position(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:

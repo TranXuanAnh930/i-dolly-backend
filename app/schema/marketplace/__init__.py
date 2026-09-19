@@ -1,6 +1,6 @@
 """Re-exports every public schema class in this domain, so callers can do `from app.schema.marketplace import X` instead of reaching into the individual submodule."""
 
-from .album_detail import AlbumDetailBase, AlbumDetailCreate, AlbumDetailRead, AlbumDetailUpdate
+from .album_detail import AlbumDetailBase, AlbumDetailCreate, AlbumDetailRead, AlbumDetailUpdate, ReleaseFormat
 from .artist import ArtistRef
 from .cart import CartDetailRead, CartItem, CartOut, CartRead
 from .category import CategoryBase, CategoryCreate, CategoryRead, CategoryUpdate
@@ -32,6 +32,7 @@ __all__ = [
     "AlbumDetailCreate",
     "AlbumDetailUpdate",
     "AlbumDetailRead",
+    "ReleaseFormat",
     "ArtistRef",
     "CartItem",
     "CartOut",
