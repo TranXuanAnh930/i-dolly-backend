@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -44,7 +46,7 @@ class TestIdolColorService:
         db.query().all.return_value = []
 
         result = IdolColorService.get_idol_colors(db)
-        assert result is None
+        assert result == []
 
     def test_update_idol_color_success(self):
         from app.schema.talent import IdolColorBase
@@ -59,6 +61,7 @@ class TestIdolColorService:
         assert result is not None
 
     def test_update_idol_color_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.talent import IdolColorBase
         from app.services.talent.idol_color_service import IdolColorService
 
@@ -66,8 +69,8 @@ class TestIdolColorService:
         db.get.return_value = None
         data = IdolColorBase(name="Midnight Blue", hex_code="#191970")
 
-        result = IdolColorService.update_idol_color(db, MISSING_ID, data)
-        assert result is None
+        with pytest.raises(NotFoundError):
+            IdolColorService.update_idol_color(db, MISSING_ID, data)
 
     def test_delete_idol_color_success(self):
         from app.services.talent.idol_color_service import IdolColorService

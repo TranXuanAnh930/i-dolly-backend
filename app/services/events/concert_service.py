@@ -68,11 +68,8 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def get_concerts(db: Session) -> list[Concert] | None:
-        result = db.query(Concert).all()
-        if not result:
-            return None
-        return result
+    def get_concerts(db: Session) -> list[Concert]:
+        return db.query(Concert).all()
 
     @staticmethod
     def get_concert(db: Session, id: uuid.UUID) -> Concert | None:
@@ -149,18 +146,12 @@ class ConcertService:
         return db_link
 
     @staticmethod
-    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer] | None:
-        result = db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
-        if not result:
-            return None
-        return result
+    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer]:
+        return db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
 
     @staticmethod
-    def get_all_performers(db: Session) -> list[ConcertPerformer] | None:
-        result = db.query(ConcertPerformer).all()
-        if not result:
-            return None
-        return result
+    def get_all_performers(db: Session) -> list[ConcertPerformer]:
+        return db.query(ConcertPerformer).all()
 
     @staticmethod
     def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> ConcertPerformer:

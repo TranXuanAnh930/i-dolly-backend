@@ -156,7 +156,7 @@ class TestLotteryCampaignService:
         db.query().options().filter().all.return_value = []
 
         result = LotteryCampaignService.get_campaigns(db, MISSING_ID)
-        assert result is None
+        assert result == []
 
     def test_get_campaign_found(self):
         from app.services.events.lottery_campaign_service import LotteryCampaignService

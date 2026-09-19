@@ -66,11 +66,8 @@ class MerchDetailService:
         return db.get(MerchDetail, product_id)
 
     @staticmethod
-    def get_merch_details(db: Session) -> list[MerchDetail] | None:
-        result = db.query(MerchDetail).all()
-        if not result:
-            return None
-        return result
+    def get_merch_details(db: Session) -> list[MerchDetail]:
+        return db.query(MerchDetail).all()
 
     @staticmethod
     def update_merch_detail(db: Session, product_id: uuid.UUID, data: MerchDetailUpdate, current_user: Users) -> MerchDetail:

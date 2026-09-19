@@ -46,18 +46,15 @@ class LotteryCampaignService:
         return db_campaign
 
     @staticmethod
-    def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[LotteryCampaign] | None:
+    def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[LotteryCampaign]:
         # joinedload since LotteryCampaignRead now embeds ticket_type — without
         # it, serializing a multi-row result would lazy-load it once per row.
-        result = (
+        return (
             db.query(LotteryCampaign)
             .options(joinedload(LotteryCampaign.ticket_type))
             .filter(LotteryCampaign.ticket_type_id == ticket_type_id)
             .all()
         )
-        if not result:
-            return None
-        return result
 
     @staticmethod
     def get_campaign(db: Session, id: uuid.UUID) -> LotteryCampaign | None:

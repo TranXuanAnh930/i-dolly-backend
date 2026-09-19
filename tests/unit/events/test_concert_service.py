@@ -185,7 +185,7 @@ class TestConcertCrud:
         db.query().all.return_value = []
 
         result = ConcertService.get_concerts(db)
-        assert result is None
+        assert result == []
 
     def test_update_concert_not_found(self):
         from app.schema.events import ConcertUpdate
@@ -378,7 +378,7 @@ class TestConcertPerformers:
         db.query().filter().all.return_value = []
 
         result = ConcertService.get_performers(db, MISSING_ID)
-        assert result is None
+        assert result == []
 
     def test_get_all_performers_empty(self):
         from app.services.events.concert_service import ConcertService
@@ -387,7 +387,7 @@ class TestConcertPerformers:
         db.query().all.return_value = []
 
         result = ConcertService.get_all_performers(db)
-        assert result is None
+        assert result == []
 
     def test_remove_performer_not_found(self):
         from app.services.events.concert_service import ConcertService

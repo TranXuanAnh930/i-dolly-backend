@@ -103,7 +103,7 @@ class TestGenreService:
         db.query().all.return_value = []
 
         result = GenreService.get_genres(db)
-        assert result is None
+        assert result == []
 
     def test_delete_genre_success(self):
         from app.services.marketplace.genre_service import GenreService
@@ -225,7 +225,7 @@ class TestGenreService:
         db.query().filter().all.return_value = []
 
         result = GenreService.get_album_genres(db, DEFAULT_ID)
-        assert result is None
+        assert result == []
 
     def test_get_all_album_genres_found(self):
         from app.services.marketplace.genre_service import GenreService
@@ -243,7 +243,7 @@ class TestGenreService:
         db.query().all.return_value = []
 
         result = GenreService.get_all_album_genres(db)
-        assert result is None
+        assert result == []
 
     def test_remove_genre_success(self):
         from app.db.models.marketplace import AlbumDetail, AlbumGenre

@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -55,7 +57,7 @@ class TestManagementCompanyService:
         db.query().all.return_value = []
 
         result = ManagementCompanyService.get_companies(db)
-        assert result is None
+        assert result == []
 
     def test_get_company_found(self):
         from app.services.talent.management_company_service import ManagementCompanyService
@@ -90,6 +92,7 @@ class TestManagementCompanyService:
         assert result.name == "Renamed"
 
     def test_update_company_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.talent import ManagementCompanyBase
         from app.services.talent.management_company_service import ManagementCompanyService
 
@@ -97,8 +100,8 @@ class TestManagementCompanyService:
         db.get.return_value = None
         data = ManagementCompanyBase(name="Renamed")
 
-        result = ManagementCompanyService.update_company(db, MISSING_ID, data)
-        assert result is None
+        with pytest.raises(NotFoundError):
+            ManagementCompanyService.update_company(db, MISSING_ID, data)
 
     def test_delete_company_success(self):
         from app.services.talent.management_company_service import ManagementCompanyService

@@ -116,7 +116,7 @@ class TestTicketTypeService:
         db.query().filter().all.return_value = []
 
         result = TicketTypeService.get_ticket_types(db, MISSING_ID)
-        assert result is None
+        assert result == []
 
     def test_get_ticket_type_found(self):
         from app.services.events.ticket_type_service import TicketTypeService

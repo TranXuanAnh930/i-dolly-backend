@@ -41,13 +41,10 @@ class GroupService:
         return db_group
 
     @staticmethod
-    def get_groups(db: Session) -> list[Group] | None:
+    def get_groups(db: Session) -> list[Group]:
         # Public "browse all groups" list — deactivated groups don't belong on
         # a store-facing listing (database-design.md §3.3).
-        result = db.query(Group).filter(Group.is_active.is_(True)).all()
-        if not result:
-            return None
-        return result
+        return db.query(Group).filter(Group.is_active.is_(True)).all()
 
     @staticmethod
     def get_group(db: Session, id: uuid.UUID) -> Group | None:

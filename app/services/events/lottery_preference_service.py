@@ -49,16 +49,13 @@ class LotteryPreferenceService:
         return rows
 
     @staticmethod
-    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryPreference] | None:
-        result = (
+    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryPreference]:
+        return (
             db.query(LotteryPreference)
             .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)
             .order_by(LotteryPreference.rank)
             .all()
         )
-        if not result:
-            return None
-        return result
 
     @staticmethod
     def clear_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> bool:

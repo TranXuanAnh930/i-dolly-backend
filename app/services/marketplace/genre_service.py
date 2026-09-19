@@ -26,11 +26,8 @@ class GenreService:
         return db_genre
 
     @staticmethod
-    def get_genres(db: Session) -> list[Genre] | None:
-        result = db.query(Genre).all()
-        if not result:
-            return None
-        return result
+    def get_genres(db: Session) -> list[Genre]:
+        return db.query(Genre).all()
 
     @staticmethod
     def delete_genre(db: Session, id: uuid.UUID) -> bool:
@@ -77,18 +74,12 @@ class GenreService:
         return db_link
 
     @staticmethod
-    def get_album_genres(db: Session, product_id: uuid.UUID) -> list[AlbumGenre] | None:
-        result = db.query(AlbumGenre).filter(AlbumGenre.product_id == product_id).all()
-        if not result:
-            return None
-        return result
+    def get_album_genres(db: Session, product_id: uuid.UUID) -> list[AlbumGenre]:
+        return db.query(AlbumGenre).filter(AlbumGenre.product_id == product_id).all()
 
     @staticmethod
-    def get_all_album_genres(db: Session) -> list[AlbumGenre] | None:
-        result = db.query(AlbumGenre).all()
-        if not result:
-            return None
-        return result
+    def get_all_album_genres(db: Session) -> list[AlbumGenre]:
+        return db.query(AlbumGenre).all()
 
     @staticmethod
     def remove_genre(db: Session, product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users) -> AlbumGenre:

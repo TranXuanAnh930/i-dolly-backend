@@ -90,6 +90,7 @@ class TestCartService:
 
     def test_add_to_cart_insufficient_stock(self):
         from app.db.models.marketplace import Product
+        from app.exception.common import BadRequestError
         from app.schema.marketplace import CartItem
         from app.services.marketplace.cart_service import CartService
 
@@ -101,8 +102,8 @@ class TestCartService:
         db.query.side_effect = lambda model: product_query if model is Product else MagicMock()
 
         cart_data = CartItem(quantity=5, product_id=DEFAULT_ID)
-        result = CartService.add_to_cart(db, cart_data, DEFAULT_ID)
-        assert result is None
+        with pytest.raises(BadRequestError):
+            CartService.add_to_cart(db, cart_data, DEFAULT_ID)
 
     def test_add_to_cart_user_not_found(self):
         from app.exception.common import NotFoundError

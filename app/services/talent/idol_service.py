@@ -96,13 +96,10 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def get_idols(db: Session) -> list[Idol] | None:
+    def get_idols(db: Session) -> list[Idol]:
         # Public "browse all idols" list — deactivated idols don't belong on a
         # store-facing listing (database-design.md §3.4).
-        result = db.query(Idol).filter(Idol.is_active.is_(True)).all()
-        if not result:
-            return None
-        return result
+        return db.query(Idol).filter(Idol.is_active.is_(True)).all()
 
     @staticmethod
     def get_idol(db: Session, id: uuid.UUID) -> Idol | None:

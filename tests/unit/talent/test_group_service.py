@@ -168,7 +168,7 @@ class TestGroupService:
         db.query().filter().all.return_value = []
 
         result = GroupService.get_groups(db)
-        assert result is None
+        assert result == []
 
     def test_get_group(self):
         from app.services.talent.group_service import GroupService

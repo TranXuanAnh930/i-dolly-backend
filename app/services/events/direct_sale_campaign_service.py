@@ -38,11 +38,8 @@ class DirectSaleCampaignService:
         return db_campaign
 
     @staticmethod
-    def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[DirectSaleCampaign] | None:
-        result = db.query(DirectSaleCampaign).filter(DirectSaleCampaign.ticket_type_id == ticket_type_id).all()
-        if not result:
-            return None
-        return result
+    def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[DirectSaleCampaign]:
+        return db.query(DirectSaleCampaign).filter(DirectSaleCampaign.ticket_type_id == ticket_type_id).all()
 
     @staticmethod
     def get_campaign(db: Session, id: uuid.UUID) -> DirectSaleCampaign | None:

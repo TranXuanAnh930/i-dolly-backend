@@ -103,7 +103,7 @@ class TestPositionService:
         db.query().all.return_value = []
 
         result = PositionService.get_positions(db)
-        assert result is None
+        assert result == []
 
     def test_update_position_success(self):
         from app.schema.talent import PositionBase
@@ -118,6 +118,7 @@ class TestPositionService:
         assert result is not None
 
     def test_update_position_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.talent import PositionBase
         from app.services.talent.position_service import PositionService
 
@@ -125,8 +126,8 @@ class TestPositionService:
         db.get.return_value = None
         data = PositionBase(name="Leader")
 
-        result = PositionService.update_position(db, MISSING_ID, data)
-        assert result is None
+        with pytest.raises(NotFoundError):
+            PositionService.update_position(db, MISSING_ID, data)
 
     def test_delete_position_success(self):
         from app.services.talent.position_service import PositionService
@@ -226,7 +227,7 @@ class TestPositionService:
         db.query().filter().all.return_value = []
 
         result = PositionService.get_idol_positions(db, DEFAULT_ID)
-        assert result is None
+        assert result == []
 
     def test_get_all_idol_positions_found(self):
         from app.services.talent.position_service import PositionService
@@ -244,7 +245,7 @@ class TestPositionService:
         db.query().all.return_value = []
 
         result = PositionService.get_all_idol_positions(db)
-        assert result is None
+        assert result == []
 
     def test_update_idol_position_primary_success(self):
         from app.services.talent.position_service import PositionService

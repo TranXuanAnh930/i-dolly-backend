@@ -211,7 +211,7 @@ class TestGetEntries:
         db.query().options().filter().all.return_value = []
 
         result = LotteryEntryService.get_my_entries(db, make_mock_fan())
-        assert result is None
+        assert result == []
 
     def test_get_entries_for_campaign_not_found(self):
         from app.db.models.events import LotteryCampaign
@@ -266,4 +266,4 @@ class TestGetEntries:
         db.query().filter().all.return_value = []
 
         result = LotteryEntryService.get_entries_for_campaign(db, DEFAULT_ID, make_mock_admin())
-        assert result is None
+        assert result == []

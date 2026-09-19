@@ -208,7 +208,7 @@ class TestIdolService:
         db.query().filter().all.return_value = []
 
         result = IdolService.get_idols(db)
-        assert result is None
+        assert result == []
 
     def test_get_idol(self):
         from app.services.talent.idol_service import IdolService

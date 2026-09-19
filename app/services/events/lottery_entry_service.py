@@ -84,24 +84,21 @@ class LotteryEntryService:
         return db_entry
 
     @staticmethod
-    def get_my_entries(db: Session, current_user: Users) -> list[LotteryEntry] | None:
+    def get_my_entries(db: Session, current_user: Users) -> list[LotteryEntry]:
         # joinedload both hops — LotteryEntryRead embeds campaign (which embeds
         # ticket_type), and this list can span many different campaigns across
         # a fan's whole history, so lazy-loading each would be its own N+1 at
         # the DB layer (the frontend used to do this same N+1 over HTTP, once
         # per entry — see lotteryEntries.js's old resolveContext).
-        result = (
+        return (
             db.query(LotteryEntry)
             .options(joinedload(LotteryEntry.campaign).joinedload(LotteryCampaign.ticket_type))
             .filter(LotteryEntry.user_id == current_user.id)
             .all()
         )
-        if not result:
-            return None
-        return result
 
     @staticmethod
-    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry] | None:
+    def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry]:
         """Manager/admin view of who has entered a campaign under their own
         company (company_id resolved the same way as lottery_campaign_service:
         campaign -> ticket_type -> concert.company_id)."""
@@ -114,7 +111,4 @@ class LotteryEntryService:
             raise NotFoundError("Lottery campaign not found")
         if LotteryEntryService._manager_scope_violation(current_user, concert.company_id):
             raise ForbiddenError("Managers can only view entries for their own company's campaigns")
-        result = db.query(LotteryEntry).filter(LotteryEntry.campaign_id == campaign_id).all()
-        if not result:
-            return None
-        return result
+        return db.query(LotteryEntry).filter(LotteryEntry.campaign_id == campaign_id).all()

@@ -154,7 +154,7 @@ class TestDirectSaleCampaignService:
         db.query().filter().all.return_value = []
 
         result = DirectSaleCampaignService.get_campaigns(db, MISSING_ID)
-        assert result is None
+        assert result == []
 
     def test_get_campaign_found(self):
         from app.services.events.direct_sale_campaign_service import DirectSaleCampaignService

@@ -89,12 +89,9 @@ async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current
 @router.patch("/cancel/{order_id}", response_model=Order)
 async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> OrderModel:
     try:
-        order = OrderService.cancel_placed_order(db, user.id, order_id)
+        return OrderService.cancel_placed_order(db, user.id, order_id)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found!")
-    return order
 
 @router.get("/shipping_status/{order_id}", response_model=None)
 async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> ModelShippingStatus:
@@ -105,7 +102,7 @@ async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_use
 
 @router.patch("/update_shipping_status/{order_id}", response_model=None)
 async def update_status(new_status:SchemaShippingStatus, order_id:uuid.UUID, user:Users=Depends(require_admin), db:Session=Depends(get_db)) -> ModelShippingStatus:
-    order = OrderService.update_shipping_status(db, new_status, order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found/is cancelled")
-    return order
+    try:
+        return OrderService.update_shipping_status(db, new_status, order_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e

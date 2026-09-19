@@ -67,11 +67,8 @@ class ProductService:
         return current_user.company_id != company_id
 
     @staticmethod
-    def list_of_products(db:Session) -> list[Product] | None:
-        db_products = db.query(Product).options(selectinload(Product.category)).all()
-        if not db_products:
-            return None
-        return db_products
+    def list_of_products(db:Session) -> list[Product]:
+        return db.query(Product).options(selectinload(Product.category)).all()
 
     @staticmethod
     def search_product(db:Session, id:uuid.UUID) -> ProductWithCategoryRead | None:
@@ -89,9 +86,9 @@ class ProductService:
         )
 
     @staticmethod
-    def add_product(db: Session, product:ProductCreate) -> Product | None:
+    def add_product(db: Session, product:ProductCreate) -> Product:
         if not db.get(Category, product.category_id):
-            return None  # invalid category_id — was an uncaught IntegrityError -> 500 at commit
+            raise NotFoundError("category_id does not reference an existing category")  # was an uncaught IntegrityError -> 500 at commit
         db_product = Product(**product.model_dump())
         db.add(db_product)
         db.commit()
@@ -217,16 +214,16 @@ class ProductService:
         return db_product
 
     @staticmethod
-    def add_bulk_products(db:Session, product:List[ProductCreate]) -> list[Product] | None:
+    def add_bulk_products(db:Session, product:List[ProductCreate]) -> list[Product]:
+        if not product:
+            raise BadRequestError("No products given")
         db_products = [Product(**p.model_dump()) for p in product]
-        if not db_products:
-            return None
         # All-or-nothing: check every referenced category exists before saving
         # any of them — was an uncaught IntegrityError -> 500 at commit.
         category_ids = {p.category_id for p in product}
         existing_ids = {row[0] for row in db.query(Category.id).filter(Category.id.in_(category_ids)).all()}
         if category_ids - existing_ids:
-            return None
+            raise NotFoundError("One or more category_id values do not reference an existing category")
         db.bulk_save_objects(db_products)
         db.commit()
         return db_products

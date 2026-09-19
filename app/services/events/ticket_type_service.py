@@ -40,11 +40,8 @@ class TicketTypeService:
         return db_tt
 
     @staticmethod
-    def get_ticket_types(db: Session, concert_id: uuid.UUID) -> list[TicketType] | None:
-        result = db.query(TicketType).filter(TicketType.concert_id == concert_id).all()
-        if not result:
-            return None
-        return result
+    def get_ticket_types(db: Session, concert_id: uuid.UUID) -> list[TicketType]:
+        return db.query(TicketType).filter(TicketType.concert_id == concert_id).all()
 
     @staticmethod
     def get_ticket_type(db: Session, id: uuid.UUID) -> TicketType | None:

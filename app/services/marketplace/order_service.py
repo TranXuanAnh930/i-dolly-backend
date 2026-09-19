@@ -13,7 +13,7 @@ from app.exception.checkout import (
     PaymentAmountMismatch,
     UnsupportedGatewayError,
 )
-from app.exception.common import BadRequestError
+from app.exception.common import BadRequestError, NotFoundError
 from app.exception.db_triggers import (
     DuplicateIdempotencyKeyError,
     FanOnlyPurchaseError,
@@ -128,25 +128,18 @@ class OrderService:
 
     @staticmethod
     def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | None:
-        order = (
+        return (
             db.query(Order)
             .filter(Order.id==order_id, Order.user_id==user_id)
             .options(selectinload(Order.items))
             .first()
         )
-        if not order:
-            return None
-        return order
 
     @staticmethod
-    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | None:
+    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order:
         order = OrderService.fetch_single_placed_order(db, user_id, order_id)
         if not order:
-            return None
-        # A real business-rule rejection, not a "doesn't exist" case — raised rather than folded
-        # into the None branch above, so the router can still tell "not found" (404) apart from
-        # "found, but already shipped" (400) now that both can no longer be two different falsy
-        # sentinels (None vs the old Literal[False]).
+            raise NotFoundError("Order not found")
         if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
             raise BadRequestError("Order is already shipped and cannot be cancelled")
         order.status = OrderStatus.cancelled
@@ -157,16 +150,16 @@ class OrderService:
 
     @staticmethod
     def get_user_shipping_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> ShippingStatus | None:
-        ship_status = db.query(Order).filter(Order.user_id==user_id, Order.id==order_id).options(selectinload(Order.shippingstatus)).first()
-        if not ship_status:
-            return None
-        return ship_status.shippingstatus
+        order = db.query(Order).filter(Order.user_id==user_id, Order.id==order_id).options(selectinload(Order.shippingstatus)).first()
+        return order.shippingstatus if order else None
 
     @staticmethod
-    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID) -> ShippingStatus | None:
+    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID) -> ShippingStatus:
         order_shippingstatus = db.query(ShippingStatus).filter(ShippingStatus.order_id==order_id).first()
-        if not order_shippingstatus or order_shippingstatus.status == SchemaShippingStatus.cancelled:
-            return None
+        if not order_shippingstatus:
+            raise NotFoundError("Order not found")
+        if order_shippingstatus.status == SchemaShippingStatus.cancelled:
+            raise BadRequestError("Order is cancelled and its shipping status can no longer be updated")
         order_shippingstatus.status = new_status
         db.commit()
         db.refresh(order_shippingstatus)

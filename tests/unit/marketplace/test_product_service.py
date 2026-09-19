@@ -68,7 +68,7 @@ class TestProductService:
         db.query().options().all.return_value = []
 
         result = ProductService.list_of_products(db)
-        assert result is None
+        assert result == []
 
     def test_search_product_found(self):
         from app.services.marketplace.product_service import ProductService

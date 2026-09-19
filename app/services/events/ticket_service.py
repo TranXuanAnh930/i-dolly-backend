@@ -242,16 +242,13 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def get_my_tickets(db: Session, current_user: Users) -> list[Ticket] | None:
-        result = (
+    def get_my_tickets(db: Session, current_user: Users) -> list[Ticket]:
+        return (
             db.query(Ticket)
             .filter(Ticket.user_id == current_user.id)
             .options(selectinload(Ticket.ticket_type))
             .all()
         )
-        if not result:
-            return None
-        return result
 
     @staticmethod
     def get_ticket(db: Session, id: uuid.UUID) -> Ticket | None:

@@ -1,6 +1,8 @@
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
+
 # ───────────────────────────────────────────────────────────────
 # Id sentinels — plain MagicMock-based unit tests (no real DB), so any
 # distinct UUIDs work: DEFAULT_ID stands in for "the id under test",
@@ -45,7 +47,7 @@ class TestVenueService:
         db.query().all.return_value = []
 
         result = VenueService.get_venues(db)
-        assert result is None
+        assert result == []
 
     def test_get_venue_found(self):
         from app.services.events.venue_service import VenueService
@@ -84,6 +86,7 @@ class TestVenueService:
         db.commit.assert_called_once()
 
     def test_update_venue_not_found(self):
+        from app.exception.common import NotFoundError
         from app.schema.events import VenueUpdate
         from app.services.events.venue_service import VenueService
 
@@ -94,8 +97,8 @@ class TestVenueService:
             country="Japan", total_capacity=8000,
         )
 
-        result = VenueService.update_venue(db, MISSING_ID, data)
-        assert result is None
+        with pytest.raises(NotFoundError):
+            VenueService.update_venue(db, MISSING_ID, data)
 
     def test_delete_venue_success(self):
         from app.services.events.venue_service import VenueService

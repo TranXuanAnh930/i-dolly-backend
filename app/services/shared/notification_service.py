@@ -39,14 +39,11 @@ class NotificationService:
         )
 
     @staticmethod
-    def get_my_notifications(db: Session, current_user: Users, unread_only: bool = False) -> list[Notification] | None:
+    def get_my_notifications(db: Session, current_user: Users, unread_only: bool = False) -> list[Notification]:
         query = db.query(Notification).filter(Notification.user_id == current_user.id)
         if unread_only:
             query = query.filter(Notification.is_read == False)
-        result = query.order_by(Notification.created_at.desc()).all()
-        if not result:
-            return None
-        return result
+        return query.order_by(Notification.created_at.desc()).all()
 
     @staticmethod
     def mark_as_read(db: Session, notification_id: uuid.UUID, current_user: Users) -> Notification:

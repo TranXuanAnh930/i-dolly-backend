@@ -104,6 +104,18 @@ except ServiceError as e:
   error (e.g. `idol_service._validate_refs`) stays sentinel-returning rather than raising directly.
 - Plain reads returning `False`/`None` on "not found," handled inline in the router
   (`if not result: raise HTTPException(404, ...)`), are unaffected by this convention.
+  - A bare list-returning read (`db.query(X).all()`, no further transformation) never checks its
+    own result for emptiness — `return db.query(X).all()` directly, typed `-> list[X]:`, not
+    `list[X] | None`. `.all()` already returns `[]`, never `None`, and `[]` is exactly as falsy as
+    `None` to the router's `if not result:`, so re-wrapping it adds a branch that can never do
+    anything different from just returning the list. The same collapse applies to a single-object
+    read that's *only* `db.get(...)`/`.first()` immediately returned — `return db.get(X, id)`
+    directly, still typed `X | None` since that call itself can genuinely return `None`. It does
+    **not** apply once the query result gets wrapped into a bigger Pydantic object before
+    returning (`EventsPageRead(concerts=...)`, `IdolDetailRead(idol=..., ...)`, `CartDetailRead(...)`)
+    — a Pydantic model instance has no `__bool__`/`__len__`, so it's always truthy, and the
+    `if not entity: return None` guard in front of it is the only way the router can still tell
+    "nothing here" from "found." That guard stays.
 - **Checkout/payment exceptions** (`app/exception/checkout.py`): `CartItemError` and subclasses
   (`InsufficientStockError`, `PaymentAmountMismatch`, `UnsupportedGatewayError`, etc.), raised in
   the service, caught in the router, mapped to a status code. Use this shape for new multi-step

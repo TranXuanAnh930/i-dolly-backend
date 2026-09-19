@@ -618,6 +618,60 @@ newly introduced.
     `NotFoundError`/`BadRequestError` raised around this helper, not on its internal return value:
     393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
 
+38. **Simplified ~33 genuine read methods that re-checked a result already known to be falsy or
+    non-`None`, adding a branch that could never behave differently from just returning the query.**
+    Two shapes:
+    - A bare `list[X]`-returning read (`result = db.query(X)...all(); if not result: return None;
+      return result`) collapsed to `return db.query(X)...all()`, typed `-> list[X]:` instead of
+      `list[X] | None`. `.all()` already returns `[]`, never `None`, and `[]` is exactly as falsy as
+      `None` was to the router's existing `if not result: raise HTTPException(404, ...)` — so this
+      is a pure simplification, not a behavior change, for every router except one (below).
+    - A single-object read that was only `db_x = db.get(X, id); if not db_x: return None; return
+      db_x` (no other logic in between) collapsed to `return db.get(X, id)` directly. Stays typed
+      `X | None` — unlike the list case, `.get()`/`.first()` genuinely can return `None`.
+    26 files: `concert_service` (`get_concerts`/`get_performers`/`get_all_performers`),
+    `idol_service.get_idols`, `group_service.get_groups`, `venue_service.get_venues`,
+    `ticket_type_service.get_ticket_types`, `lottery_campaign_service.get_campaigns`,
+    `direct_sale_campaign_service.get_campaigns`, `lottery_entry_service`
+    (`get_my_entries`/`get_entries_for_campaign` — kept their existing `NotFoundError`/
+    `ForbiddenError` pre-checks, only the final list return was simplified),
+    `lottery_preference_service.get_my_preferences`, `management_company_service.get_companies`,
+    `position_service` (`get_positions`/`get_idol_positions`/`get_all_idol_positions`),
+    `idol_color_service.get_idol_colors`, `merch_detail_service.get_merch_details`,
+    `album_detail_service.get_album_details`, `genre_service`
+    (`get_genres`/`get_album_genres`/`get_all_album_genres`), `category_service.get_categories`,
+    `product_service.list_of_products`, `payment_service`
+    (`fetch_payment_status`/`fetch_ticket_payment_status`/`fetch_all_payments`),
+    `order_service.fetch_single_placed_order` (and `get_user_shipping_status`, rewritten as a
+    one-line ternary since it projects `.shippingstatus` off the queried row rather than returning
+    the row itself), `shipping_service` (`fetch_address`/`get_address_by_id`),
+    `notification_service.get_my_notifications`, `ticket_service.get_my_tickets`.
+
+    **Deliberately NOT touched**: any read that wraps its query result in a bigger Pydantic object
+    before returning (`get_events_page`, `get_members_page`, `get_group_detail`, `get_idol_detail`,
+    `get_groups_page`, `get_concert_detail_public`, `get_store_page`, `get_product_detail`,
+    `cart_service.see_cart`, `product_service.search_product`). A Pydantic model instance has no
+    `__bool__`/`__len__` and is always truthy, so `if not entity: return None` in front of building
+    one is the *only* way the router can tell "nothing here" from "found" — collapsing that check
+    away would silently turn every empty result into a 200 with a half-built page instead of a 404.
+    Same reasoning for `authenticate_user`/`verify_refresh_token` (real validation logic between the
+    query and the return, not a redundant re-check) and the private helpers `idol_service.
+    _validate_refs`/`ticket_service._existing_live_ticket`/`_unresolved_lottery_entry`.
+
+    **Found one real bug while auditing router callers for the list-shape change**:
+    `router/marketplace/payment.py::check_payment_status_all` checked `if payment is None:` against
+    `fetch_all_payments`'s result — correct against the old `list[Payment] | None`, but silently
+    wrong against the new `list[Payment]` (an empty list is never `None`, so a user with zero
+    payments would have gotten a 200 with `[]` instead of the intended 404). Fixed to `if not
+    payment:`, matching every sibling router's own check. Every other caller (routers and
+    `CacheService`'s own wrappers around `list_of_products`/`get_venues`/`get_idol_colors`/
+    `get_companies`) already used a falsy check, not an `is None` check, so needed no change.
+
+    Test fallout: every `test_*_empty` unit test for a converted list-returning method asserted
+    `result is None`; all ~27 switched to `result == []` (behavior at the HTTP boundary is
+    identical — `[]` and `None` are both still falsy to the router's `if not result:`). Confirmed
+    clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
+
     Every test asserting the old sentinel value (`test_lottery_draw_service.py` ×6,
     `test_product_service.py` ×4, `test_user_service.py` ×3) switched to `pytest.raises(...)`.
     Confirmed clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).

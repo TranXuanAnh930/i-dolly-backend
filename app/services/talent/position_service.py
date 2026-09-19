@@ -16,27 +16,22 @@ class PositionService:
         return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
-    def add_position(db: Session, position: PositionCreate) -> Position | None:
+    def add_position(db: Session, position: PositionCreate) -> Position:
         db_position = Position(**position.model_dump())
-        if not db_position:
-            return None
         db.add(db_position)
         db.commit()
         db.refresh(db_position)
         return db_position
 
     @staticmethod
-    def get_positions(db: Session) -> list[Position] | None:
-        result = db.query(Position).all()
-        if not result:
-            return None
-        return result
+    def get_positions(db: Session) -> list[Position]:
+        return db.query(Position).all()
 
     @staticmethod
-    def update_position(db: Session, id: uuid.UUID, data: PositionBase) -> Position | None:
+    def update_position(db: Session, id: uuid.UUID, data: PositionBase) -> Position:
         db_position = db.get(Position, id)
         if not db_position:
-            return None
+            raise NotFoundError("Position not found")
         db_position.name = data.name
         db.commit()
         db.refresh(db_position)
@@ -79,18 +74,12 @@ class PositionService:
         return db_link
 
     @staticmethod
-    def get_idol_positions(db: Session, idol_id: uuid.UUID) -> list[IdolPosition] | None:
-        result = db.query(IdolPosition).filter(IdolPosition.idol_id == idol_id).all()
-        if not result:
-            return None
-        return result
+    def get_idol_positions(db: Session, idol_id: uuid.UUID) -> list[IdolPosition]:
+        return db.query(IdolPosition).filter(IdolPosition.idol_id == idol_id).all()
 
     @staticmethod
-    def get_all_idol_positions(db: Session) -> list[IdolPosition] | None:
-        result = db.query(IdolPosition).all()
-        if not result:
-            return None
-        return result
+    def get_all_idol_positions(db: Session) -> list[IdolPosition]:
+        return db.query(IdolPosition).all()
 
     @staticmethod
     def update_idol_position_primary(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, is_primary: bool, current_user: Users) -> IdolPosition:

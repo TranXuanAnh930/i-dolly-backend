@@ -161,7 +161,7 @@ class TestGetAndClearPreferences:
         db.query().filter().order_by().all.return_value = []
 
         result = LotteryPreferenceService.get_my_preferences(db, DEFAULT_ID, make_mock_fan())
-        assert result is None
+        assert result == []
 
     def test_clear_my_preferences_deleted_some(self):
         from app.services.events.lottery_preference_service import LotteryPreferenceService

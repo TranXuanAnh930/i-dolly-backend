@@ -106,9 +106,10 @@ async def add_new_product(
         name=name, price=price, description=description, quantity=quantity,
         category_id=category_id, image_url=image_url,
     )
-    db_product = ProductService.add_product(db, product)
-    if not db_product:
-        raise HTTPException(status_code=400, detail="Unable to add product")
+    try:
+        ProductService.add_product(db, product)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()
@@ -205,9 +206,10 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
 
 @router.post("/bulk_products", response_model=MessageResponse)
 async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
-    db_product = ProductService.add_bulk_products(db, product)
-    if not db_product:
-        raise HTTPException(status_code=400, detail="Unable to add products")
+    try:
+        db_product = ProductService.add_bulk_products(db, product)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()

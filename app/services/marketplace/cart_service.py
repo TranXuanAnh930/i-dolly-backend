@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.identity import Users
 from app.db.models.marketplace import Cart, Product
-from app.exception.common import NotFoundError
+from app.exception.common import BadRequestError, NotFoundError
 from app.exception.db_triggers import FanOnlyPurchaseError, commit_or_raise
 from app.schema.identity import UserRole
 from app.schema.marketplace import CartDetailRead, CartItem
@@ -14,7 +14,7 @@ from app.schema.marketplace import CartDetailRead, CartItem
 class CartService:
 
     @staticmethod
-    def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID) -> Cart | None:
+    def add_to_cart(db:Session, cart_item:CartItem, user_id:uuid.UUID) -> Cart:
         user = db.get(Users, user_id)
         if not user:
             raise NotFoundError("User not found")
@@ -22,8 +22,10 @@ class CartService:
             # Primary check for trg_cart_fan_only — see FanOnlyPurchaseError's docstring.
             raise FanOnlyPurchaseError("Only fan accounts can add items to a cart")
         product = db.query(Product).filter(Product.id==cart_item.product_id).with_for_update().first()
-        if not product or product.quantity<cart_item.quantity:
-            return None
+        if not product:
+            raise NotFoundError("Product not found")
+        if product.quantity < cart_item.quantity:
+            raise BadRequestError("Insufficient stock")
 
         stmt = db.query(Cart).filter(Cart.user_id==user_id, Cart.product_id==cart_item.product_id).with_for_update().first()
         if stmt:

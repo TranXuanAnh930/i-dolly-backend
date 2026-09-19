@@ -70,11 +70,8 @@ class AlbumDetailService:
         return db.get(AlbumDetail, product_id)
 
     @staticmethod
-    def get_album_details(db: Session) -> list[AlbumDetail] | None:
-        result = db.query(AlbumDetail).all()
-        if not result:
-            return None
-        return result
+    def get_album_details(db: Session) -> list[AlbumDetail]:
+        return db.query(AlbumDetail).all()
 
     @staticmethod
     def update_album_detail(db: Session, product_id: uuid.UUID, data: AlbumDetailUpdate, current_user: Users) -> AlbumDetail:
