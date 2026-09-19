@@ -231,14 +231,15 @@ class TestAuthService:
     def test_email_verification_process(self):
         from app.services.identity.auth_service import AuthService
 
-        bg_tasks = MagicMock()
         mock_user = make_mock_user()
 
-        with patch("app.services.identity.auth_service.create_email_verification_token", return_value="tok123"):
-            result = AuthService.email_verification_process(bg_tasks, mock_user)
+        with patch("app.services.identity.auth_service.create_email_verification_token", return_value="tok123"), \
+             patch("app.services.identity.auth_service.celery_app.send_task") as mock_send_task:
+            result = AuthService.email_verification_process(mock_user)
 
-        bg_tasks.add_task.assert_called_once()
-        assert "msg" in result
+        mock_send_task.assert_called_once()
+        assert mock_send_task.call_args[0][0] == "app.tasks.email.send_email"
+        assert result is None
 
     def test_cleanup_expired_tokens(self):
         from app.services.identity.auth_service import AuthService

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
+from app.celery_app import celery_app
 from app.db.models.events import Concert, DirectSaleCampaign, LotteryCampaign, LotteryEntry, Ticket, TicketType
 from app.db.models.identity import Users
 from app.db.models.marketplace import Payment
@@ -28,6 +29,7 @@ from app.schema.events import TicketCheckoutCreate, TicketCreate, TicketUpdate, 
 from app.schema.marketplace import PaymentStatus
 from app.services.marketplace.payment_service import PaymentService
 from app.services.shared.notification_service import NotificationService
+from app.utils.email_templates import EmailTemplate
 from app.utils.tax import with_tax
 
 # ADMIN-ONLY STOPGAP for create/update/delete — see TicketCreate's docstring.
@@ -138,20 +140,18 @@ class TicketService:
             if ticket.status == "paid":
                 ticket_type.sold_quantity += 1
                 NotificationService.create_notification(db, user_id, "ticket_confirmation", ticket_id=ticket.id)
-
+                email_body = EmailTemplate.TICKET_CONFIRMED.render(
+                    email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+                )
+                celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
         commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert / chk_ticket_types_capacity backstop
         db.refresh(ticket)
         return ticket
 
-    # Pays for a ticket draw_lottery already created (status="pending_payment",
-    # lottery_entry_id set, ticket_type.sold_quantity already incremented at
-    # draw time — database-design.md §5.2) — distinct from checkout_ticket
-    # above, which creates a brand-new direct-sale ticket and only counts
-    # sold_quantity on payment success. Reuses create_ticket_payment unchanged
-    # (it doesn't care how the ticket came to exist, only that ticket.id is
-    # already populated), but deliberately does NOT touch sold_quantity on
-    # success the way checkout_ticket does — that would double-count a seat
-    # this function's caller already holds.
+    # Pays for a ticket draw_lottery already created (sold_quantity already incremented at draw
+    # time) — distinct from checkout_ticket above, which creates a new ticket and counts
+    # sold_quantity itself. Deliberately doesn't touch sold_quantity here, to avoid double-counting
+    # a seat the caller already holds.
     @staticmethod
     def checkout_won_ticket(db: Session, user_id: uuid.UUID, ticket_id: uuid.UUID, data: WonTicketCheckoutCreate) -> Ticket:
         if db.query(Payment).filter(Payment.idempotency_key == data.idempotency_key).first():
@@ -187,6 +187,14 @@ class TicketService:
             raise UnsupportedGatewayError("Unsupported payment gateway!")
         if payment.status == PaymentStatus.success:
             NotificationService.create_notification(db, user_id, "lottery_payment_confirmation", ticket_id=ticket.id)
+            user = db.get(Users, user_id)
+            if user:
+                email_body = EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.render(
+                    email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+                )
+                celery_app.send_task(
+                    "app.tasks.email.send_email", args=[user.email, EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.subject, email_body]
+                )
 
         commit_or_raise(db)
         db.refresh(ticket)

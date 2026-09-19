@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
+from app.celery_app import celery_app
 from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
 from app.schema.identity import UserCreate
-from app.utils.email_sender import send_email
+from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import create_access_token, create_email_verification_token, verify_token_and_get_user_id
 
@@ -73,19 +73,11 @@ class AuthService:
         return None
 
     @staticmethod
-    def email_verification_process(background_tasks:BackgroundTasks, user: Users):
+    def email_verification_process(user: Users) -> None:
         token = create_email_verification_token(user.id)
         link = f"{settings.BASE_URL}/account/verify?token={token}"
-        email_body = f"""
-            Hi {user.email}, 
-            Please verify your email by clicking the link below:
-
-            {link}
-
-            If you didn't request this, ignore this email.
-        """
-        background_tasks.add_task(send_email, user.email, "Verify your email", email_body)
-        return {"msg" : "email verification link sent"}
+        email_body = EmailTemplate.EMAIL_VERIFICATION.render(email=user.email, link=link)
+        celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.EMAIL_VERIFICATION.subject, email_body])
 
     @staticmethod
     def verify_email_token(db: Session, token: str):

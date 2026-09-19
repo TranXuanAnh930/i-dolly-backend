@@ -12,7 +12,7 @@ celery_app = Celery(
     "i_dolly",
     broker=_redis_url,
     backend=_redis_url,
-    include=["app.tasks.example", "app.tasks.lottery"],
+    include=["app.tasks.example", "app.tasks.lottery", "app.tasks.email"],
 )
 
 celery_app.conf.update(
