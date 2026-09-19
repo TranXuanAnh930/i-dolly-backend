@@ -106,8 +106,8 @@ def model_get_side_effect(mapping: dict):
 class TestConcertCrud:
 
     def test_add_concert_success(self):
-        from app.db.models.talent import ManagementCompany
         from app.db.models.events import Venue
+        from app.db.models.talent import ManagementCompany
         from app.schema.events import ConcertCreate
         from app.services.events.concert_service import ConcertService
 
@@ -154,8 +154,8 @@ class TestConcertCrud:
             ConcertService.add_concert(db, data, make_mock_admin())
 
     def test_add_concert_venue_not_found(self):
-        from app.db.models.talent import ManagementCompany
         from app.db.models.events import Venue
+        from app.db.models.talent import ManagementCompany
         from app.schema.events import ConcertCreate
         from app.services.events.concert_service import ConcertService
 
@@ -247,7 +247,6 @@ class TestConcertCrud:
         db.commit.assert_called_once()
 
     def test_update_concert_venue_not_found(self):
-        from app.db.models.events import Venue
         from app.schema.events import ConcertUpdate
         from app.services.events.concert_service import ConcertService
 
@@ -484,8 +483,15 @@ class TestGetConcertDetailPublic:
         """A group credit expands to its current members, a solo credit is
         just that one idol; the same idol reached via both should appear
         only once in the lineup (concert_service's own dedup rule)."""
-        from app.db.models.events import Concert, ConcertPerformer, DirectSaleCampaign, LotteryCampaign, LotteryEntry, TicketType
-        from app.db.models.talent import Group, Idol
+        from app.db.models.events import (
+            Concert,
+            ConcertPerformer,
+            DirectSaleCampaign,
+            LotteryCampaign,
+            LotteryEntry,
+            TicketType,
+        )
+        from app.db.models.talent import Idol
         from app.services.events.concert_service import ConcertService
 
         concert = make_mock_concert()

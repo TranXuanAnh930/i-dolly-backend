@@ -415,9 +415,8 @@ class TestFinalizePaypalPayment:
     def test_order_insufficient_stock_returns_none(self):
         from app.db.models.events import Ticket
         from app.db.models.marketplace import Order, OrderItem, Payment, Product
-
-        from app.services.marketplace.payment_service import PaymentService
         from app.schema.marketplace import OrderStatus
+        from app.services.marketplace.payment_service import PaymentService
 
         payment = self._mock_payment(order_id=DEFAULT_ID)
         order = MagicMock()
@@ -457,9 +456,8 @@ class TestFinalizePaypalPayment:
     def test_order_declined_cancels(self):
         from app.db.models.events import Ticket
         from app.db.models.marketplace import Order, OrderItem, Payment, Product
-
-        from app.services.marketplace.payment_service import PaymentService
         from app.schema.marketplace import OrderStatus
+        from app.services.marketplace.payment_service import PaymentService
 
         payment = self._mock_payment(order_id=DEFAULT_ID)
         order = MagicMock()

@@ -188,7 +188,6 @@ class TestLotteryCampaignService:
             LotteryCampaignService.update_campaign(db, MISSING_ID, data, make_mock_admin())
 
     def test_update_campaign_manager_wrong_company_forbidden(self):
-        from app.db.models.events import Concert, TicketType
         from app.schema.events import LotteryCampaignUpdate
         from app.services.events.lottery_campaign_service import LotteryCampaignService
 
