@@ -72,7 +72,7 @@ class DirectSaleCampaignService:
         return db_campaign
 
     @staticmethod
-    def delete_campaign(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def delete_campaign(db: Session, id: uuid.UUID, current_user: Users) -> DirectSaleCampaign:
         db_campaign = db.get(DirectSaleCampaign, id)
         if not db_campaign:
             raise NotFoundError("Direct sale campaign not found")
@@ -81,4 +81,4 @@ class DirectSaleCampaignService:
             raise ForbiddenError("Managers can only manage direct sale campaigns for their own company's concerts")
         db.delete(db_campaign)
         db.commit()
-        return True
+        return db_campaign

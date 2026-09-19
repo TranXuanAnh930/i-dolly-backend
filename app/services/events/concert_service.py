@@ -150,7 +150,7 @@ class ConcertService:
         return result
 
     @staticmethod
-    def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> ConcertPerformer:
         link = db.get(ConcertPerformer, id)
         if not link:
             raise NotFoundError("Performer assignment not found")
@@ -159,7 +159,7 @@ class ConcertService:
             raise ForbiddenError("Managers can only manage concerts for their own company")
         db.delete(link)
         db.commit()
-        return True
+        return link
 
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 

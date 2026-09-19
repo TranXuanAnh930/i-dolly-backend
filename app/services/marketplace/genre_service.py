@@ -91,7 +91,7 @@ class GenreService:
         return result
 
     @staticmethod
-    def remove_genre(db: Session, product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def remove_genre(db: Session, product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users) -> AlbumGenre:
         link = db.get(AlbumGenre, (product_id, genre_id))
         if not link:
             raise NotFoundError("Album details or genre not found")
@@ -100,4 +100,4 @@ class GenreService:
             raise ForbiddenError("Managers can only tag albums belonging to their own company's idols/groups")
         db.delete(link)
         db.commit()
-        return True
+        return link

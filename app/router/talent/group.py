@@ -10,6 +10,7 @@ from app.db.models.talent import Group
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.schema.common import MessageResponse
 from app.schema.talent import (
     GroupCreate,
     GroupDetailRead,
@@ -74,14 +75,14 @@ async def update_existing_group(id: uuid.UUID, data: GroupUpdate, current_user: 
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{id}")
-async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     # Soft delete (sets is_active=False) — see group_service.delete_group.
     try:
         GroupService.delete_group(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Group deleted successfully"}
+    return MessageResponse(msg="Group deleted successfully")
 
 @router.patch("/activate/{id}", response_model=GroupRead)
 async def activate_existing_group(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Group:

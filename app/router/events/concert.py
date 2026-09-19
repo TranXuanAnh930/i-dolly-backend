@@ -11,6 +11,7 @@ from app.db.models.identity import Users
 from app.deps.auth import get_current_user_optional, require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.schema.common import MessageResponse
 from app.schema.events import (
     ConcertCreate,
     ConcertDetailRead,
@@ -76,8 +77,8 @@ async def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_us
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{id}")
-async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     # Cancels (sets status="cancelled") rather than deleting the row — see
     # concert_service.delete_concert. Kept on DELETE /delete/{id} for URL
     # stability with existing clients; a manager can move the status off
@@ -87,7 +88,7 @@ async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(r
         ConcertService.delete_concert(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Concert cancelled successfully"}
+    return MessageResponse(msg="Concert cancelled successfully")
 
 
 # --- concert_performers (join table) — nested under /concerts/performers,
@@ -119,17 +120,17 @@ async def list_all_concert_performers(db: Session = Depends(get_db)) -> list[Con
         raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
-@router.delete("/performers/{id}")
-async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/performers/{id}", response_model=MessageResponse)
+async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         ConcertService.remove_performer(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Performer unassigned from concert successfully"}
+    return MessageResponse(msg="Performer unassigned from concert successfully")
 
 
-@router.put("/lottery-draw/{id}")
-async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.put("/lottery-draw/{id}", response_model=MessageResponse)
+async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     # Company-scoping has to happen HERE, synchronously, not inside the
     # Celery task — draw_lottery's own _user_scope_violation check runs in
     # the worker process, with no way to turn a rejection back into an HTTP
@@ -149,4 +150,4 @@ async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(
     # acknowledgement, so it can't declare response_model=LotteryResult
     # without failing validation on every call.
     celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)])
-    return {"msg": "Lottery draw task has been scheduled. Results will be available once the task is complete."}
+    return MessageResponse(msg="Lottery draw task has been scheduled. Results will be available once the task is complete.")

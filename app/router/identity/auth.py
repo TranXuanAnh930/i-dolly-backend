@@ -7,6 +7,7 @@ from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.identity import UserCreate, UserOut
 from app.services.identity.auth_service import AuthService
 
@@ -50,15 +51,15 @@ async def refresh(request:Request, _:None=Depends(rate_limit(10,60,ip_key)), db:
     response.set_cookie("refresh_token", new_token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 
-@router.post("/verify-request")
-async def send_verification_link(background_tasks:BackgroundTasks, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key))) -> dict[str, str]:
-    return AuthService.email_verification_process(background_tasks, user)
+@router.post("/verify-request", response_model=MessageResponse)
+async def send_verification_link(background_tasks:BackgroundTasks, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key))) -> MessageResponse:
+    return MessageResponse(**AuthService.email_verification_process(background_tasks, user))
 
-@router.get("/verify")
-async def verify_email(token:str, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.get("/verify", response_model=MessageResponse)
+async def verify_email(token:str, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
     result = AuthService.verify_email_token(db, token)
     if result is None:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
     if result is False:
         raise HTTPException(status_code=401, detail="user not found or account already verified")
-    return {"msg" : "Email verified successfully"}
+    return MessageResponse(msg="Email verified successfully")

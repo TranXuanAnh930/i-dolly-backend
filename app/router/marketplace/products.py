@@ -12,6 +12,7 @@ from app.cache.redis_client import redis_client
 from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.marketplace import (
     ManagerProductFormPageRead,
     ManagerProductsPageRead,
@@ -83,7 +84,7 @@ async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,
 # FastAPI can't mix a JSON body with Form/File fields on one endpoint, so
 # this replaced the previous plain-JSON version; any client posting here
 # now sends form fields, not a JSON body.
-@router.post("/add_product")
+@router.post("/add_product", response_model=MessageResponse)
 async def add_new_product(
     name: str = Form(...),
     price: float = Form(...),
@@ -93,7 +94,7 @@ async def add_new_product(
     image: UploadFile | None = File(None),
     current_user:Users=Depends(require_manager_or_admin),
     db:Session=Depends(get_db),
-) -> dict[str, str]:
+) -> MessageResponse:
     image_url = None
     if image is not None:
         try:
@@ -109,14 +110,14 @@ async def add_new_product(
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add product")
     redis_client.delete("products:list")
-    return {"msg" : "Product added successfully"}
+    return MessageResponse(msg="Product added successfully")
 
 # Bundles product creation with its AlbumDetail/MerchDetail row into one
 # request (see ProductWithDetailCreate's own docstring for why) —
 # ManagerProductFormPage.vue's "add product" form uses this, not the bare
 # /add_product above, so a product created there always ends up attached to
 # one of the manager's own idols/groups.
-@router.post("/add_with_detail")
+@router.post("/add_with_detail", response_model=MessageResponse)
 async def add_new_product_with_detail(
     name: str = Form(...),
     price: float = Form(...),
@@ -134,7 +135,7 @@ async def add_new_product_with_detail(
     image: UploadFile | None = File(None),
     current_user: Users = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+) -> MessageResponse:
     try:
         data = ProductWithDetailCreate(
             name=name, price=price, description=description, quantity=quantity,
@@ -162,10 +163,10 @@ async def add_new_product_with_detail(
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only create products for their own company's idols/groups")
     redis_client.delete("products:list")
-    return {"msg": "Product added successfully"}
+    return MessageResponse(msg="Product added successfully")
 
-@router.put("/update/{id}")
-async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.put("/update/{id}", response_model=MessageResponse)
+async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     db_product = ProductService.update_product(db, id, product, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
@@ -176,10 +177,10 @@ async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_u
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     delete_cached_products()
-    return {"msg" : "Product Updated successfully"}
+    return MessageResponse(msg="Product Updated successfully")
 
-@router.post("/{id}/image")
-async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.post("/{id}/image", response_model=MessageResponse)
+async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     """Replace an existing product's image without touching any other
     field — the complement to the inline upload on /products/add_product."""
     try:
@@ -192,25 +193,25 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     delete_cached_products()
-    return {"msg" : "Product image updated successfully"}
+    return MessageResponse(msg="Product image updated successfully")
 
-@router.delete("/delete/{id}")
-async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     db_product = ProductService.delete_product(db, id, current_user)
     if db_product == "forbidden":
         raise HTTPException(status_code=403, detail="Managers can only manage products belonging to their own company's idols/groups")
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     delete_cached_products()
-    return {"detail" : "Product Deleted successfully"}
+    return MessageResponse(msg="Product Deleted successfully")
 
-@router.post("/bulk_products")
-async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.post("/bulk_products", response_model=MessageResponse)
+async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     db_product = ProductService.add_bulk_products(db, product)
     if not db_product:
         raise HTTPException(status_code=400, detail="Unable to add products")
     delete_cached_products()
-    return {"msg" : f"{len(db_product)} bulk products added successfully"}
+    return MessageResponse(msg=f"{len(db_product)} bulk products added successfully")
 
 @router.get("/pagination")
 async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> dict[str, Any]:

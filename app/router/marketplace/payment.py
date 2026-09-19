@@ -8,6 +8,7 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import Payment
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.marketplace import PaymentResponse
 from app.services.marketplace.payment_service import PaymentService
 from app.utils.paypal_client import verify_webhook_signature
@@ -59,8 +60,8 @@ async def capture_paypal_payment(pg_order_id: str, user: Users = Depends(get_cur
 # Reconciliation path: PayPal calls this on its own schedule, independent
 # of any fan's browser — no auth dependency, trust comes entirely from
 # verify_webhook_signature below, not from who's logged in (nobody is).
-@router.post("/paypal/webhook")
-async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, str]:
+@router.post("/paypal/webhook", response_model=MessageResponse)
+async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> MessageResponse:
     raw_body = await request.body()
     if not verify_webhook_signature(request.headers, raw_body):
         # TODO: decide the response here deliberately, not by default —
@@ -79,4 +80,4 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> dic
     # anything left to do (already resolved by the capture endpoint,
     # duplicate delivery, etc.) — a non-2xx here just triggers a retry of
     # an event that was never going to do anything different next time.
-    return {"msg": "ok"}
+    return MessageResponse(msg="ok")

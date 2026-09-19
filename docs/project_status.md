@@ -740,10 +740,32 @@ newly introduced.
     these return types. `idol_service._validate_refs` (and its sibling helpers) deliberately keep
     the old sentinel-return shape — it's a private helper two callers inspect and sometimes
     override before deciding whether the result is actually an error, not something that should
-    raise directly. Verified after every domain: `py_compile`, `import main` (164 routes,
+    raise directly. Every delete/unassign function in this group also now returns the
+    deleted/unlinked ORM object itself (e.g. `delete_merch_detail(...) -> MerchDetail`) instead of
+    `Literal[True]` — the routers still discard it and reply with `{"msg": ...}`, so this is a
+    service-layer-only change, made for callers (tests, future code) that want the actual row
+    rather than a bare boolean confirmation. Verified after every domain: `py_compile`, `import main` (164 routes,
     unchanged), `pytest tests/unit` (213/213, unchanged — sentinel assertions became
     `pytest.raises(...)`, integration tests needed no changes since HTTP status codes are
     identical), `ruff check .` (clean, 0 findings).
+
+24. ~~**Every `{"msg": "..."}` router return was a bare `dict[str, str]`, invisible to OpenAPI as a
+    documented schema**~~ — **FIXED**. Added `app/schema/common.py::MessageResponse` (one field,
+    `msg: str`) and switched every such endpoint (40 across 22 router files, including
+    `/profile/logout` and `products.py::delete_existing_product` — see below) to
+    `response_model=MessageResponse` / `-> MessageResponse` / `return MessageResponse(msg="...")`
+    — see `docs/architecture.md` §2. `/profile/logout` still builds a raw `JSONResponse` (needs to
+    call `delete_cookie`), but its body is now `MessageResponse(msg="...").model_dump()` — same
+    field, `response_model=MessageResponse` still documents it in OpenAPI even though returning a
+    `Response` instance bypasses FastAPI's own response-model serialization.
+    `products.py::delete_existing_product` used to return `{"detail": "Product Deleted
+    successfully"}` — the only delete endpoint using `detail` instead of `msg` — and now matches
+    every sibling endpoint. **This one is a real, frontend-visible response-key change** (`detail`
+    -> `msg`), unlike the rest of this item which was pure documentation/schema — the frontend must
+    update whatever reads `response.detail` on that one call to read `response.msg` instead.
+    `/account/login` and `/account/refresh` are still excluded: both build a raw `JSONResponse` to
+    set the refresh-token cookie, and `/refresh`'s body has an extra `access_token` field alongside
+    `msg`, which doesn't fit `MessageResponse`'s single-field shape.
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a

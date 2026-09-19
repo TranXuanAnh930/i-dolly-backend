@@ -82,7 +82,17 @@ notifications), it goes in `shared/`, not force-fit into one:
 3. **`app/db/models/<domain>/<feature>.py`** — SQLAlchemy models, all inheriting `Base`.
    `app/schema/<domain>/<feature>.py` holds the paired Pydantic schemas (`*Create`,
    `*Read`/`*Out`/`*Response`, `*Update`) — request/response shapes are always separate classes
-   from the ORM model, never the ORM model returned directly.
+   from the ORM model, never the ORM model returned directly. A generic ack response
+   (`{"msg": "..."}`, most delete/unassign endpoints and a handful of others that don't return a
+   resource) uses `app/schema/common.py::MessageResponse` with `response_model=MessageResponse`
+   rather than a bare `dict[str, str]` return annotation — same rationale as
+   `app/exception/common.py` living outside every domain: it's genuinely cross-domain, not owned by
+   one feature. `MessageResponse(msg="...")` serializes to exactly the same JSON body a client
+   already receives, so this was a schema/OpenAPI-documentation fix, not an API contract change —
+   the couple of endpoints that instead build a raw `JSONResponse` (`/account/login`,
+   `/account/refresh`, `/profile/logout`) are excluded on purpose: they set cookies on the response
+   object or (in `/account/refresh`'s case) return an extra `access_token` field alongside `msg`,
+   which doesn't fit `MessageResponse`'s single-field shape.
 
 Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, not a
 bare `create_ticket_payment(...)`) — every router and every service-to-service reference imports
@@ -290,9 +300,12 @@ migration-chain smoke check rather than a precondition pytest depends on.)
   - The old sentinel-return convention (`return "forbidden"`, `return "not_found"`, typed as a
     precise `Literal[...]` union) has been superseded by the exception hierarchy in §2 for every
     function that used to pair with a router-side `_raise_for`/`_raise_for_link`; those now return
-    just the success type (e.g. `-> Idol`, `-> Literal[True]`) since the function only ever returns
-    success or raises. `Literal` is still the right tool for what's left: a plain read's `Literal[False]`
-    empty-result sentinel, a delete's `Literal[True]`, or a private multi-value helper like
+    just the success type since the function only ever returns success or raises — including every
+    delete/unassign function in that group, which returns the deleted/unlinked ORM object itself
+    (`-> Idol`, `-> IdolPosition`, ...) rather than `Literal[True]`, so a caller (a test, or future
+    code — the routers themselves still just discard it and reply with `{"msg": ...}`) has the
+    actual row, not just a boolean confirmation. `Literal` is still the right tool for what's left: a
+    plain read's `Literal[False]` empty-result sentinel, or a private multi-value helper like
     `idol_service._validate_refs` that a caller inspects rather than an exception.
   - **FastAPI gotcha, found the hard way**: a route function's own return-type annotation is used
     by FastAPI to build an implicit response schema whenever the decorator has **no**

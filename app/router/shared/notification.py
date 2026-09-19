@@ -10,6 +10,7 @@ from app.db.models.shared import Notification
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.schema.common import MessageResponse
 from app.schema.shared import NotificationRead, NotificationUnreadCount
 from app.services.shared.notification_service import NotificationService
 
@@ -39,7 +40,7 @@ async def mark_notification_read(notification_id: uuid.UUID, current_user: Users
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.post("/read-all")
-async def mark_all_notifications_read(current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.post("/read-all", response_model=MessageResponse)
+async def mark_all_notifications_read(current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     count = NotificationService.mark_all_as_read(db, current_user)
-    return {"msg": f"{count} notification(s) marked as read"}
+    return MessageResponse(msg=f"{count} notification(s) marked as read")

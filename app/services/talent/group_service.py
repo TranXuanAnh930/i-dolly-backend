@@ -71,7 +71,7 @@ class GroupService:
         return db_group
 
     @staticmethod
-    def delete_group(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def delete_group(db: Session, id: uuid.UUID, current_user: Users) -> Group:
         # Soft delete, not db.delete(): concert_performers CASCADEs off
         # groups.id and album_details/merch_details SET NULL their group_id —
         # hard-deleting a group with concert or product history would destroy
@@ -84,7 +84,7 @@ class GroupService:
             raise ForbiddenError("Managers can only manage groups for their own company")
         db_group.is_active = False
         db.commit()
-        return True
+        return db_group
 
     @staticmethod
     def reactivate_group(db: Session, id: uuid.UUID, current_user: Users) -> Group:

@@ -81,7 +81,7 @@ class LotteryCampaignService:
         return db_campaign
 
     @staticmethod
-    def delete_campaign(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def delete_campaign(db: Session, id: uuid.UUID, current_user: Users) -> LotteryCampaign:
         db_campaign = db.get(LotteryCampaign, id)
         if not db_campaign:
             raise NotFoundError("Lottery campaign not found")
@@ -90,4 +90,4 @@ class LotteryCampaignService:
             raise ForbiddenError("Managers can only manage lottery campaigns for their own company's concerts")
         db.delete(db_campaign)
         db.commit()
-        return True
+        return db_campaign

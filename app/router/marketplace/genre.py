@@ -10,6 +10,7 @@ from app.db.models.marketplace import AlbumGenre, Genre
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.schema.common import MessageResponse
 from app.schema.marketplace import AlbumGenreAssign, AlbumGenreRead, GenreCreate, GenreRead
 from app.services.marketplace.genre_service import GenreService
 
@@ -30,12 +31,12 @@ async def list_genres(db: Session = Depends(get_db)) -> list[Genre]:
         raise HTTPException(status_code=404, detail="No genres found")
     return result
 
-@router.delete("/delete/{id}")
-async def delete_existing_genre(id: uuid.UUID, current_user: Users = Depends(require_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_genre(id: uuid.UUID, current_user: Users = Depends(require_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     result = GenreService.delete_genre(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Genre not found")
-    return {"msg": "Genre deleted successfully"}
+    return MessageResponse(msg="Genre deleted successfully")
 
 
 # --- album_genres (join table) — nested under /genres/album_genres, scoped
@@ -65,10 +66,10 @@ async def list_all_album_genres(db: Session = Depends(get_db)) -> list[AlbumGenr
         raise HTTPException(status_code=404, detail="No album genres found")
     return result
 
-@router.delete("/album_genres/{product_id}/{genre_id}")
-async def unassign_genre_from_album(product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/album_genres/{product_id}/{genre_id}", response_model=MessageResponse)
+async def unassign_genre_from_album(product_id: uuid.UUID, genre_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         GenreService.remove_genre(db, product_id, genre_id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Genre unassigned from album successfully"}
+    return MessageResponse(msg="Genre unassigned from album successfully")

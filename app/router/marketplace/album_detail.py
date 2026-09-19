@@ -11,6 +11,7 @@ from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.common import MessageResponse
 from app.schema.marketplace import AlbumDetailCreate, AlbumDetailRead, AlbumDetailUpdate
 from app.services.marketplace.album_detail_service import AlbumDetailService
 
@@ -46,10 +47,10 @@ async def update_existing_album_detail(product_id: uuid.UUID, data: AlbumDetailU
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{product_id}")
-async def delete_existing_album_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{product_id}", response_model=MessageResponse)
+async def delete_existing_album_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         AlbumDetailService.delete_album_detail(db, product_id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Album details deleted successfully"}
+    return MessageResponse(msg="Album details deleted successfully")

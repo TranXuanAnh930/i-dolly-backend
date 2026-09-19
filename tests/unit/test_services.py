@@ -1263,7 +1263,7 @@ class TestPositionService:
         result = PositionService.remove_idol_position(db, DEFAULT_ID, DEFAULT_ID, current_user)
         db.delete.assert_called_once_with(link)
         db.commit.assert_called_once()
-        assert result is True
+        assert result is link
 
     def test_remove_idol_position_not_found(self):
         from app.services.talent.position_service import PositionService
@@ -1406,7 +1406,7 @@ class TestGroupService:
         current_user = make_mock_user(role="admin")
 
         result = GroupService.delete_group(db, DEFAULT_ID, current_user)
-        assert result is True
+        assert result is mock_group
         assert mock_group.is_active is False
         db.commit.assert_called_once()
         db.delete.assert_not_called()  # soft delete, not a hard db.delete()
@@ -1780,7 +1780,7 @@ class TestIdolService:
         current_user = make_mock_user(role="admin")
 
         result = IdolService.delete_idol(db, DEFAULT_ID, current_user)
-        assert result is True
+        assert result is mock_idol
         assert mock_idol.is_active is False
         db.delete.assert_not_called()  # soft delete
 
@@ -2139,7 +2139,7 @@ class TestAlbumDetailService:
         current_user = make_mock_user(role="admin")
 
         result = AlbumDetailService.delete_album_detail(db, DEFAULT_ID, current_user)
-        assert result is True
+        assert result is mock_album
         db.delete.assert_called_once_with(mock_album)
 
     def test_delete_album_detail_not_found(self):
@@ -2372,7 +2372,7 @@ class TestMerchDetailService:
         current_user = make_mock_user(role="admin")
 
         result = MerchDetailService.delete_merch_detail(db, DEFAULT_ID, current_user)
-        assert result is True
+        assert result is mock_merch
         db.delete.assert_called_once_with(mock_merch)
 
     def test_delete_merch_detail_not_found(self):
@@ -2592,7 +2592,7 @@ class TestGenreService:
         current_user = make_mock_user(role="admin")
 
         result = GenreService.remove_genre(db, DEFAULT_ID, DEFAULT_ID, current_user)
-        assert result is True
+        assert result is link
         db.delete.assert_called_once_with(link)
 
     def test_remove_genre_not_found(self):

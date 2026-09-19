@@ -9,6 +9,7 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import ShippingAddress as ShippingAddressModel
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.marketplace import ShippingAddress, ShippingBase
 from app.services.marketplace.shipping_service import ShippingService
 
@@ -35,16 +36,16 @@ async def get_user_address_byid(address_id:uuid.UUID, _:None=Depends(rate_limit(
         raise HTTPException(status_code=404, detail="address not found")
     return address
 
-@router.put("/update/{address_id}")
-async def update_existing_address(data:ShippingBase, address_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.put("/update/{address_id}", response_model=MessageResponse)
+async def update_existing_address(data:ShippingBase, address_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> MessageResponse:
     address = ShippingService.update_address(db, user.id, data, address_id)
     if not address:
         raise HTTPException(status_code=404, detail="Address not found")
-    return {"msg" : "Address updated successfully"}
+    return MessageResponse(msg="Address updated successfully")
 
-@router.delete("/delete/{address_id}")
-async def delete_existing_address(address_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{address_id}", response_model=MessageResponse)
+async def delete_existing_address(address_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> MessageResponse:
     address = ShippingService.delete_address(db, user.id, address_id)
     if not address:
         raise HTTPException(status_code=404, detail="Address not found")
-    return {"msg" : "Address deleted successfully"}
+    return MessageResponse(msg="Address deleted successfully")

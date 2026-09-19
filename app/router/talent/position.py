@@ -10,6 +10,7 @@ from app.db.models.talent import IdolPosition, Position
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.schema.common import MessageResponse
 from app.schema.talent import IdolPositionAssign, IdolPositionRead, PositionBase, PositionCreate, PositionRead
 from app.services.talent.position_service import PositionService
 
@@ -39,12 +40,12 @@ async def update_existing_position(id: uuid.UUID, data: PositionBase, current_us
         raise HTTPException(status_code=404, detail="Position not found")
     return db_position
 
-@router.delete("/delete/{id}")
-async def delete_existing_position(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_position(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     result = PositionService.delete_position(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Position not found")
-    return {"msg": "Position deleted successfully"}
+    return MessageResponse(msg="Position deleted successfully")
 
 
 # --- idol_positions (join table) — nested under /positions/idol_positions,
@@ -84,10 +85,10 @@ async def set_idol_position_primary(idol_id: uuid.UUID, position_id: uuid.UUID, 
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/idol_positions/{idol_id}/{position_id}")
-async def unassign_position_from_idol(idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/idol_positions/{idol_id}/{position_id}", response_model=MessageResponse)
+async def unassign_position_from_idol(idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         PositionService.remove_idol_position(db, idol_id, position_id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Position unassigned from idol successfully"}
+    return MessageResponse(msg="Position unassigned from idol successfully")

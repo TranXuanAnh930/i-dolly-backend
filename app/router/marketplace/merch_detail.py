@@ -11,6 +11,7 @@ from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.common import MessageResponse
 from app.schema.marketplace import MerchDetailCreate, MerchDetailRead, MerchDetailUpdate
 from app.services.marketplace.merch_detail_service import MerchDetailService
 
@@ -46,10 +47,10 @@ async def update_existing_merch_detail(product_id: uuid.UUID, data: MerchDetailU
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{product_id}")
-async def delete_existing_merch_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{product_id}", response_model=MessageResponse)
+async def delete_existing_merch_detail(product_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         MerchDetailService.delete_merch_detail(db, product_id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Merch details deleted successfully"}
+    return MessageResponse(msg="Merch details deleted successfully")

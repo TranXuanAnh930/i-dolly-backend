@@ -9,6 +9,7 @@ from app.db.models.identity import Users
 from app.db.models.talent import ManagementCompany
 from app.deps.auth import require_admin
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.talent import ManagementCompanyBase, ManagementCompanyCreate, ManagementCompanyRead
 from app.services.talent.management_company_service import ManagementCompanyService
 
@@ -46,9 +47,9 @@ async def update_existing_company(id: uuid.UUID, data: ManagementCompanyBase, cu
         raise HTTPException(status_code=404, detail="Management company not found")
     return db_company
 
-@router.delete("/delete/{id}")
-async def delete_existing_company(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_company(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     result = ManagementCompanyService.delete_company(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Management company not found")
-    return {"msg": "Management company deleted successfully"}
+    return MessageResponse(msg="Management company deleted successfully")

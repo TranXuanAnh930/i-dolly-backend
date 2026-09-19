@@ -295,10 +295,10 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def delete_ticket(db: Session, id: uuid.UUID) -> Literal[True]:
+    def delete_ticket(db: Session, id: uuid.UUID) -> Ticket:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
             raise NotFoundError("Ticket not found")
         db.delete(db_ticket)
         db.commit()
-        return True
+        return db_ticket

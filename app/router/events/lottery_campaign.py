@@ -10,6 +10,7 @@ from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.schema.common import MessageResponse
 from app.schema.events import LotteryCampaignCreate, LotteryCampaignRead, LotteryCampaignUpdate
 from app.services.events.lottery_campaign_service import LotteryCampaignService
 
@@ -43,10 +44,10 @@ async def update_existing_campaign(id: uuid.UUID, data: LotteryCampaignUpdate, c
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{id}")
-async def delete_existing_campaign(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_campaign(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         LotteryCampaignService.delete_campaign(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Lottery campaign deleted successfully"}
+    return MessageResponse(msg="Lottery campaign deleted successfully")

@@ -9,6 +9,7 @@ from app.db.models.events import Venue
 from app.db.models.identity import Users
 from app.deps.auth import require_admin
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.events import VenueCreate, VenueRead, VenueUpdate
 from app.services.events.venue_service import VenueService
 
@@ -41,9 +42,9 @@ async def update_existing_venue(id: uuid.UUID, data: VenueUpdate, current_user: 
         raise HTTPException(status_code=404, detail="Venue not found")
     return db_venue
 
-@router.delete("/delete/{id}")
-async def delete_existing_venue(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_venue(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     result = VenueService.delete_venue(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Venue not found")
-    return {"msg": "Venue deleted successfully"}
+    return MessageResponse(msg="Venue deleted successfully")

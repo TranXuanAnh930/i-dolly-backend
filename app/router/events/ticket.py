@@ -20,6 +20,7 @@ from app.exception.checkout import (
 )
 from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.common import MessageResponse
 from app.schema.events import (
     TicketCheckoutCreate,
     TicketCreate,
@@ -118,10 +119,10 @@ async def update_existing_ticket(id: uuid.UUID, data: TicketUpdate, current_user
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{id}")
-async def delete_existing_ticket(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_ticket(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         TicketService.delete_ticket(db, id)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Ticket deleted successfully"}
+    return MessageResponse(msg="Ticket deleted successfully")

@@ -186,7 +186,7 @@ class IdolService:
         return db_idol
 
     @staticmethod
-    def delete_idol(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def delete_idol(db: Session, id: uuid.UUID, current_user: Users) -> Idol:
         # Soft delete, not db.delete(): concert_performers CASCADEs off
         # idols.id and album_details/merch_details SET NULL their idol_id —
         # hard-deleting an idol with concert or product history would destroy
@@ -199,7 +199,7 @@ class IdolService:
             raise ForbiddenError("Managers can only manage idols for their own company")
         db_idol.is_active = False
         db.commit()
-        return True
+        return db_idol
 
     @staticmethod
     def reactivate_idol(db: Session, id: uuid.UUID, current_user: Users) -> Idol:

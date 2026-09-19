@@ -11,6 +11,7 @@ from app.deps.auth import get_current_user
 from app.deps.db import get_db
 from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.common import MessageResponse
 from app.schema.events import LotteryPreferenceRead, LotteryPreferenceSet
 from app.services.events.lottery_preference_service import LotteryPreferenceService
 
@@ -35,9 +36,9 @@ async def list_my_preferences(concert_id: uuid.UUID, current_user: Users = Depen
         raise HTTPException(status_code=404, detail="You have no preferences set for this concert")
     return result
 
-@router.delete("/mine/{concert_id}")
-async def delete_my_preferences(concert_id: uuid.UUID, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(10, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/mine/{concert_id}", response_model=MessageResponse)
+async def delete_my_preferences(concert_id: uuid.UUID, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(10, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     result = LotteryPreferenceService.clear_my_preferences(db, concert_id, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="You have no preferences set for this concert")
-    return {"msg": "Preferences cleared successfully"}
+    return MessageResponse(msg="Preferences cleared successfully")

@@ -93,7 +93,7 @@ class AlbumDetailService:
         return db_album
 
     @staticmethod
-    def delete_album_detail(db: Session, product_id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def delete_album_detail(db: Session, product_id: uuid.UUID, current_user: Users) -> AlbumDetail:
         db_album = db.get(AlbumDetail, product_id)
         if not db_album:
             raise NotFoundError("Album details not found")
@@ -102,4 +102,4 @@ class AlbumDetailService:
             raise ForbiddenError("Managers can only manage album details for their own company's idols/groups")
         db.delete(db_album)
         db.commit()
-        return True
+        return db_album

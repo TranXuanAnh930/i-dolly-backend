@@ -10,6 +10,7 @@ from app.db.models.marketplace import Cart
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.common import MessageResponse
 from app.schema.marketplace import CartItem
 from app.services.marketplace.cart_service import CartService
 
@@ -34,9 +35,9 @@ async def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(ge
         raise HTTPException(status_code=404, detail="Cart is empty")
     return cart
 
-@router.delete("/delete_cart/{cart_id}")
-async def delete_cart(cart_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete_cart/{cart_id}", response_model=MessageResponse)
+async def delete_cart(cart_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> MessageResponse:
     cart = CartService.remove_cart(db, user.id, cart_id)
     if not cart:
         raise HTTPException(status_code=404, detail="Cart item not found")
-    return {"msg":"Cart item deleted successfully"}
+    return MessageResponse(msg="Cart item deleted successfully")

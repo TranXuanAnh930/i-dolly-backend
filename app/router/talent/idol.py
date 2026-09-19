@@ -11,6 +11,7 @@ from app.db.models.talent import Idol
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.schema.common import MessageResponse
 from app.schema.talent import (
     IdolCreate,
     IdolDetailRead,
@@ -115,14 +116,14 @@ async def update_existing_idol(id: uuid.UUID, data: IdolUpdate, current_user: Us
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{id}")
-async def delete_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     # Soft delete (sets is_active=False) — see idol_service.delete_idol.
     try:
         IdolService.delete_idol(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Idol deleted successfully"}
+    return MessageResponse(msg="Idol deleted successfully")
 
 @router.patch("/activate/{id}", response_model=IdolRead)
 async def activate_existing_idol(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Idol:

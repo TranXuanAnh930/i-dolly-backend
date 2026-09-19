@@ -105,7 +105,7 @@ class PositionService:
         return link
 
     @staticmethod
-    def remove_idol_position(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def remove_idol_position(db: Session, idol_id: uuid.UUID, position_id: uuid.UUID, current_user: Users) -> IdolPosition:
         link = db.get(IdolPosition, (idol_id, position_id))
         if not link:
             raise NotFoundError("This idol/position assignment doesn't exist")
@@ -113,4 +113,4 @@ class PositionService:
             raise ForbiddenError("Managers can only manage positions for idols in their own company")
         db.delete(link)
         db.commit()
-        return True
+        return link

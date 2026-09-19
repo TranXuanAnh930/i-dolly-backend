@@ -9,6 +9,7 @@ from app.db.models.identity import Users
 from app.db.models.talent import IdolColor
 from app.deps.auth import require_admin, require_manager_or_admin
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.talent import IdolColorBase, IdolColorCreate, IdolColorRead
 from app.services.talent.idol_color_service import IdolColorService
 
@@ -40,9 +41,9 @@ async def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current
         raise HTTPException(status_code=404, detail="Idol color not found")
     return db_color
 
-@router.delete("/delete/{id}")
-async def delete_existing_idol_color(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_idol_color(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     result = IdolColorService.delete_idol_color(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Idol color not found")
-    return {"msg": "Idol color deleted successfully"}
+    return MessageResponse(msg="Idol color deleted successfully")

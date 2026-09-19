@@ -89,7 +89,7 @@ class MerchDetailService:
         return db_ls
 
     @staticmethod
-    def delete_merch_detail(db: Session, product_id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def delete_merch_detail(db: Session, product_id: uuid.UUID, current_user: Users) -> MerchDetail:
         db_ls = db.get(MerchDetail, product_id)
         if not db_ls:
             raise NotFoundError("Merch details not found")
@@ -98,4 +98,4 @@ class MerchDetailService:
             raise ForbiddenError("Managers can only manage merch details for their own company's idols/groups")
         db.delete(db_ls)
         db.commit()
-        return True
+        return db_ls

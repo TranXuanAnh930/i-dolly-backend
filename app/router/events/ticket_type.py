@@ -11,6 +11,7 @@ from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
+from app.schema.common import MessageResponse
 from app.schema.events import TicketTypeCreate, TicketTypeRead, TicketTypeUpdate
 from app.services.events.ticket_type_service import TicketTypeService
 
@@ -52,10 +53,10 @@ async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, cur
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-@router.delete("/delete/{id}")
-async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> dict[str, str]:
+@router.delete("/delete/{id}", response_model=MessageResponse)
+async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         TicketTypeService.delete_ticket_type(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    return {"msg": "Ticket type deleted successfully"}
+    return MessageResponse(msg="Ticket type deleted successfully")

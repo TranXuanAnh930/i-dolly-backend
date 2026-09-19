@@ -81,7 +81,7 @@ class TicketTypeService:
         return db_tt
 
     @staticmethod
-    def delete_ticket_type(db: Session, id: uuid.UUID, current_user: Users) -> Literal[True]:
+    def delete_ticket_type(db: Session, id: uuid.UUID, current_user: Users) -> TicketType:
         db_tt = db.get(TicketType, id)
         if not db_tt:
             raise NotFoundError("Ticket type not found")
@@ -90,4 +90,4 @@ class TicketTypeService:
             raise ForbiddenError("Managers can only manage ticket types for their own company's concerts")
         db.delete(db_tt)
         db.commit()
-        return True
+        return db_tt
