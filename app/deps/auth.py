@@ -14,7 +14,7 @@ oauth_scheme = OAuth2PasswordBearer(tokenUrl="account/login")
 # to personalize the response for whoever happens to be logged in.
 oauth_scheme_optional = OAuth2PasswordBearer(tokenUrl="account/login", auto_error=False)
 
-def get_current_user(request:Request, token:str=Depends(oauth_scheme), db:Session=Depends(get_db)):
+def get_current_user(request:Request, token:str=Depends(oauth_scheme), db:Session=Depends(get_db)) -> Users:
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid credentials")

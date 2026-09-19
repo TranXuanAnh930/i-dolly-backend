@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import redis
 from fastapi import HTTPException, Request
 
@@ -13,15 +15,15 @@ def _route_key(request: Request) -> str:
     route = request.scope.get("route")
     return route.path if route is not None else request.url.path
 
-def ip_key(request:Request):
+def ip_key(request:Request) -> str:
     return f"rate:ip:{_route_key(request)}:{request.client.host}"
 
-def user_key(request:Request):
+def user_key(request:Request) -> str:
     user = request.state.user
     return f"rate:user:{_route_key(request)}:{user.id}"
 
-def rate_limit(limit:int, window:int, key_func):
-    def limiter(request:Request):
+def rate_limit(limit:int, window:int, key_func: Callable[[Request], str]) -> Callable[[Request], None]:
+    def limiter(request:Request) -> None:
         try:
             key = key_func(request)
             count = redis_client.incr(key)   # atomically: create at 1 if missing, else +1

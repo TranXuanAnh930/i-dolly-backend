@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -9,7 +10,7 @@ from app.schema.talent import IdolColorBase, IdolColorCreate
 class IdolColorService:
 
     @staticmethod
-    def add_idol_color(db: Session, color: IdolColorCreate):
+    def add_idol_color(db: Session, color: IdolColorCreate) -> IdolColor | Literal[False]:
         db_color = IdolColor(**color.model_dump())
         if not db_color:
             return False
@@ -19,14 +20,14 @@ class IdolColorService:
         return db_color
 
     @staticmethod
-    def get_idol_colors(db: Session):
+    def get_idol_colors(db: Session) -> list[IdolColor] | Literal[False]:
         result = db.query(IdolColor).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def update_idol_color(db: Session, id: uuid.UUID, data: IdolColorBase):
+    def update_idol_color(db: Session, id: uuid.UUID, data: IdolColorBase) -> IdolColor | Literal[False]:
         db_color = db.get(IdolColor, id)
         if not db_color:
             return False
@@ -37,7 +38,7 @@ class IdolColorService:
         return db_color
 
     @staticmethod
-    def delete_idol_color(db: Session, id: uuid.UUID):
+    def delete_idol_color(db: Session, id: uuid.UUID) -> bool:
         db_color = db.get(IdolColor, id)
         if not db_color:
             return False

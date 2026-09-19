@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -25,6 +26,25 @@ class ProductCreate(ProductBase):
 class ProductRead(ProductBase):
     id: uuid.UUID
     category : str
+
+# Distinct from ProductRead — ProductRead.category is a resolved category
+# NAME (str), which needs manual resolution from the ORM's Category
+# relationship (see cache_service.get_cached_products's own comment on why).
+# search_existing_product/paginated_product/filter_product return raw
+# Product rows straight off the ORM instead, so category here is the full
+# CategoryRead object Pydantic can validate directly off product.category —
+# no service-layer resolution needed for these three.
+class ProductWithCategoryRead(ProductBase):
+    id: uuid.UUID
+    category: CategoryRead
+
+    model_config = {"from_attributes": True}
+
+class ProductsPageRead(BaseModel):
+    page: int
+    limit: int
+    count: int
+    data: list[ProductWithCategoryRead]
 
 # Bundles a Product with its AlbumDetail/MerchDetail row into one request
 # (product_service.add_product_with_detail) — a bare add_product left a
@@ -52,7 +72,7 @@ class ProductWithDetailCreate(BaseModel):
     color_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
-    def _check_kind_and_owner(self):
+    def _check_kind_and_owner(self) -> Self:
         if self.detail_kind == "album":
             if self.idol_id is None and self.group_id is None:
                 raise ValueError("At least one of idol_id or group_id must be set for an album/single/EP product")

@@ -699,6 +699,132 @@ newly introduced.
     any call signature unless given `autospec=True`. Caught by direct inspection + a manual repro
     (`python -c` calling the real function), not a new test; fixed by dropping the stray argument and
     tightening both call sites to fire only on the success branch, as described above.
+22. ~~**Almost no function had a return type, and ~3% of parameters had none**~~ — **FIXED**.
+    Audited before touching anything: 406 real findings across `app/router` (188) and
+    `app/services` (167 missing return types alone, since every service function is now a
+    `@staticmethod` — see the class-refactor entry above), plus a handful in `app/cache`/`app/utils`/
+    `app/schema`/`app/deps`/`main.py`. Enforced going forward via ruff's `ANN` rules
+    (`pyproject.toml`), not just fixed once — `tests/*`/`scripts/*` exempted (625 of the raw 1031
+    findings were there, and pytest conventions don't benefit from typing test functions).
+    Sentinel-return functions (this codebase's `return "forbidden"` convention) got precise
+    `Literal["forbidden", "not_found"]` unions, not a loose `str`, so a typo'd sentinel string is a
+    type error, not a silent runtime miss. Full reasoning and the two real bugs this caught while
+    writing the annotations (a stray-argument `TypeError`, a list-where-instance-expected
+    `ValidationError`) plus a genuine FastAPI gotcha it surfaced (a route's own return-type
+    annotation becomes an implicit `response_model` when the decorator has none — a bare ORM class
+    there crashes the app at import time, fixed with `response_model=None`, hit 3 times in
+    `cart.py`/`order.py`) are in `docs/architecture.md` §5, not repeated here. Verified after every
+    domain, not just once at the end: `py_compile`, `import main` (164 routes, unchanged),
+    `pytest tests/unit` (213/213, unchanged), `ruff check .` (clean, 0 findings). Two small,
+    genuinely-wrong pre-existing annotations were corrected along the way, found only because this
+    pass touched every signature: `category_service.get_categories` was typed `-> CategoryCreate`
+    (a single instance of the wrong schema) when it actually returns `list[Category] | Literal[False]`;
+    several `_manager_scope_violation`-style helpers across services were typed `company_id:
+    uuid.UUID` when callers can and do pass `None` (the correct type is `uuid.UUID | None`).
+
+23. ~~**Two error-handling conventions coexisted: string sentinels for most RBAC/company-scoping
+    failures, real exceptions for checkout/payment and DB-trigger violations**~~ — **FIXED,
+    unified on exceptions**. All 14 router+service pairs that returned `"forbidden"`/`"not_found"`/
+    `"company_mismatch"`/`"conflict"`/... and paired with a router-side `_raise_for`/
+    `_raise_for_link` helper (`talent`: group, idol, position; `events`: concert,
+    direct_sale_campaign, lottery_campaign, lottery_entry, lottery_preference, ticket,
+    ticket_type; `marketplace`: album_detail, genre, merch_detail; `shared`: notification) were
+    migrated to `app/exception/common.py`'s new `ServiceError`/`NotFoundError`/`ForbiddenError`/
+    `BadRequestError` hierarchy — full rationale and the exact convention in
+    `docs/architecture.md` §2. Each raise site got a more specific message than the single
+    blanket `not_found_detail` string the old router helper covered every not-found reason with.
+    Also fixes, as a side effect, the 34-occurrence mypy-narrowing gap the sentinel convention had
+    across these 14 router files (a router couldn't prove `result` was narrowed after `_raise_for`
+    returned, since nothing enforced that it always raised) — a function that only returns success
+    or raises doesn't have that problem, so the stale `Literal[...] |` unions came off every one of
+    these return types. `idol_service._validate_refs` (and its sibling helpers) deliberately keep
+    the old sentinel-return shape — it's a private helper two callers inspect and sometimes
+    override before deciding whether the result is actually an error, not something that should
+    raise directly. Every delete/unassign function in this group also now returns the
+    deleted/unlinked ORM object itself (e.g. `delete_merch_detail(...) -> MerchDetail`) instead of
+    `Literal[True]` — the routers still discard it and reply with `{"msg": ...}`, so this is a
+    service-layer-only change, made for callers (tests, future code) that want the actual row
+    rather than a bare boolean confirmation. Verified after every domain: `py_compile`, `import main` (164 routes,
+    unchanged), `pytest tests/unit` (213/213, unchanged — sentinel assertions became
+    `pytest.raises(...)`, integration tests needed no changes since HTTP status codes are
+    identical), `ruff check .` (clean, 0 findings).
+
+24. ~~**Every `{"msg": "..."}` router return was a bare `dict[str, str]`, invisible to OpenAPI as a
+    documented schema**~~ — **FIXED**. Added `app/schema/common.py::MessageResponse` (one field,
+    `msg: str`) and switched every such endpoint (40 across 22 router files, including
+    `/profile/logout` and `products.py::delete_existing_product` — see below) to
+    `response_model=MessageResponse` / `-> MessageResponse` / `return MessageResponse(msg="...")`
+    — see `docs/architecture.md` §2. `/profile/logout` still builds a raw `JSONResponse` (needs to
+    call `delete_cookie`), but its body is now `MessageResponse(msg="...").model_dump()` — same
+    field, `response_model=MessageResponse` still documents it in OpenAPI even though returning a
+    `Response` instance bypasses FastAPI's own response-model serialization.
+    `products.py::delete_existing_product` used to return `{"detail": "Product Deleted
+    successfully"}` — the only delete endpoint using `detail` instead of `msg` — and now matches
+    every sibling endpoint. **This one is a real, frontend-visible response-key change** (`detail`
+    -> `msg`), unlike the rest of this item which was pure documentation/schema — the frontend must
+    update whatever reads `response.detail` on that one call to read `response.msg` instead.
+    `/account/login` and `/account/refresh` are still excluded: both build a raw `JSONResponse` to
+    set the refresh-token cookie, and `/refresh`'s body has an extra `access_token` field alongside
+    `msg`, which doesn't fit `MessageResponse`'s single-field shape.
+
+25. ~~**Four more router functions returned a raw `dict` with no `response_model`, undocumented in
+    OpenAPI and unvalidated at the HTTP boundary**~~ — **FIXED**. `cart.py::check_cart` (`GET
+    /cart/see_cart`), `products.py::search_existing_product` (`GET /products/search/{id:uuid}`),
+    `paginated_product` (`GET /products/pagination`), and `filter_product` (`GET /products/filter`)
+    now each declare a real `response_model`. Two schema additions: `CartDetailRead` (`items:
+    list[CartRead]`, `total_price: float` — `CartRead` itself was also missing `model_config =
+    {"from_attributes": True}`, added here, since nothing had ever validated it straight off an ORM
+    `Cart` row before) and `ProductWithCategoryRead` (`ProductBase` + `id` + `category:
+    CategoryRead`, `from_attributes=True`), reused as the `data` element type for a new
+    `ProductsPageRead` (`page/limit/count/data`, matching the existing `ProductSalesPageRead`/
+    `TicketSalesPageRead` shape) so both list endpoints and the single-item search endpoint share
+    one schema. `ProductWithCategoryRead` is deliberately a NEW schema, not a change to the
+    existing `ProductRead` — `ProductRead.category` is a resolved category *name* (`str`), which
+    `cache_service.get_cached_products` has to build by hand precisely because `Product.category`
+    on the ORM side is the full `Category` relationship, not a string; `search_product`/
+    `pagination_process`/`filter_products` return raw `Product` rows with that relationship still
+    attached, so embedding `CategoryRead` directly (rather than resolving a name) is both correct
+    for what these three actually return and needs no service-layer change. Before this, all three
+    endpoints' actual on-the-wire shape for `category` was unverified — no `response_model` meant
+    FastAPI fell back to its default object encoder on a live `Category` ORM instance, a path this
+    project's static-analysis-only verification (§3) can't exercise. Schema-only fix, no service
+    changes; verified with `py_compile`, `import main` (164 routes, unchanged), `pytest tests/unit`
+    (213/213, unchanged), `ruff check .` (clean). `POST /cart/add_cart` was flagged in passing but
+    left alone — it already opts out via `response_model=None` and returns a raw `Cart` ORM object
+    rather than a dict, a related but distinct gap from the one this item covers.
+
+26. ~~**Every remaining service function typed `-> dict[str, Any]` (or router function of the
+    same shape reusing its own `-> dict[str, Any]`) built and returned a plain dict, relying
+    entirely on `response_model=` to shape it into a schema at the HTTP boundary**~~ — **FIXED**.
+    All 21 such functions across 7 service files (`concert_service`, `ticket_service`,
+    `cart_service`, `order_service`, `product_service` (9 — the largest, including the private
+    `_build_product_cards`/`artist_ref`/`resolve_artist`/`_product_read_dict` helpers),
+    `group_service`, `idol_service`) plus `cache_service.get_cached_store_page` now construct and
+    return the real Pydantic schema instance — every one already had a matching schema and
+    `response_model=` at the router, so this closes the gap between what a function's own
+    annotation claimed and what it actually returned, the same class of drift the mypy pass (item
+    22) flagged elsewhere. Full rationale in `docs/architecture.md` §2. Two things worth knowing
+    before touching this code again:
+    - `product_service._build_product_cards` returning `list[ProductCard]` instead of
+      `list[dict]` had a real ripple effect — every caller reading a card by dict key
+      (`get_product_detail`'s recommendation logic, `group_service.get_group_detail`'s
+      artist-match filter) had to switch to attribute access. `ProductCard` itself intentionally
+      has no `from_attributes` config, unlike its siblings — it's always hand-constructed from
+      already-resolved values, never validated off a raw ORM row.
+    - Fixing this surfaced a real unit-test gotcha, not just a mechanical rename: `MagicMock`
+      auto-vivifies *any* attribute access, which defeats a Pydantic `from_attributes` schema's
+      normal "attribute missing -> use the field's default" fallback — a test double that never
+      explicitly set `debut_date`/`created_at`/`idol_positions`/etc. used to pass silently (nothing
+      ever read those fields through real validation), then failed with a `ValidationError` the
+      moment the corresponding service function started constructing the real schema. Fixed by
+      making the shared mock factories (`make_mock_group`, `make_mock_idol`) set every field their
+      target schemas need, and adding `make_mock_venue`/`make_mock_concert`/`make_mock_color` for
+      the two tests (`group_service.get_group_detail`, and its siblings) that validate nested
+      `ConcertWithVenue`/`VenueRead`/`IdolColorRead` chains — any new test that flows a mocked ORM
+      row through a `from_attributes` schema needs the same treatment, not just the fields the test
+      itself asserts on. Verified: `py_compile`, `import main` (164 routes, unchanged),
+      `pytest tests/unit` (213/213, unchanged — all breakage was in test assertions/mocks, not
+      production logic), `ruff check .` (clean).
 
 Several smaller items from the original boilerplate audit (UTF-16 `requirements.txt`, a
 category-update authorization bug, secrets traveling as query params, no `.dockerignore`, a
@@ -837,9 +963,16 @@ idempotency mechanism ended up being that status guard rather than a separate ev
    PayPal successfully take a buyer's money for an order that turns out unfulfillable), then marks
    `Payment`/`Order`/`Ticket` success and commits once. Two router endpoints in
    `app/router/marketplace/payment.py`: `POST /payment/paypal/capture/{pg_order_id}` (fast path, authenticated)
-   and `POST /payment/paypal/webhook` (reconciliation path, signature-verified, no auth).
-   `GET /payment/paypal/return` and `/cancel` are placeholder JSON responses standing in for the
-   frontend routes PayPal's `return_url`/`cancel_url` need once one exists — see
+   and `POST /payment/paypal/webhook` (reconciliation path, signature-verified, no auth). This entry
+   was stale: it previously described `GET /payment/paypal/return`/`/cancel` as backend placeholder
+   JSON responses standing in for frontend routes that didn't exist yet — checked directly against
+   the current code while updating this section: those backend endpoints don't exist at all anymore,
+   and `create_order()` (`app/utils/paypal_client.py`) sets `return_url`/`cancel_url` straight to
+   `{FRONTEND_BASE_URL}/payment/paypal/return` / `/cancel`. The frontend side is fully built, not a
+   placeholder: `PaypalReturnPage.vue` reads `token` off the query string, calls
+   `POST /payment/paypal/capture/{pg_order_id}` itself, renders a real success/decline confirmation
+   UI, and force-refetches the orders/tickets stores on success so "View Details" doesn't show a
+   stale pre-payment snapshot; `PaypalCancelPage.vue` handles the cancel redirect separately. See
    `docs/api-spec.md` §6 "PayPal checkout flow" for the full frontend-facing sequence.
 
 **Deviations from the original plan**:
@@ -854,7 +987,14 @@ idempotency mechanism ended up being that status guard rather than a separate ev
 
 **Verified so far**: a real PayPal Sandbox ticket checkout end-to-end — create order → approve on
 PayPal's sandbox UI → `POST /payment/paypal/capture/{pg_order_id}` → `Payment`/`Ticket` both flip to
-success/paid correctly.
+success/paid correctly. **Now also confirmed against the actual deployed Render app**, not just
+local Docker Compose — the same ticket-checkout flow was re-run end-to-end against the live Render
+deployment and completed successfully, meaning the real production env vars (`PAYPAL_MODE`,
+`PAYPAL_CLIENT_ID`/`SECRET`, `BASE_URL`, `FRONTEND_BASE_URL`, CORS) are correctly wired together
+there, not just in local dev. Not yet re-confirmed on Render specifically: the order-flow checkout,
+the webhook path, and the decline path below — each was already open before this deployment and
+stays open, this only closes "does ticket checkout work in the real deployed environment," not
+those other gaps.
 
 **Not yet verified — known limitations, not silently assumed working**:
 - **The order-flow (marketplace) checkout has not been run end-to-end against real PayPal** — only

@@ -4,7 +4,7 @@ from sendgrid.helpers.mail import Mail
 from app.config.settings import settings
 
 
-def send_email(to_email:str, subject:str, body:str):
+def send_email(to_email:str, subject:str, body:str) -> None:
     # Dev convenience (settings.DEBUG, default false — see its own comment):
     # print the token-bearing body up front, before attempting a real send,
     # since SENDGRID_API_KEY is a placeholder in most local setups and the

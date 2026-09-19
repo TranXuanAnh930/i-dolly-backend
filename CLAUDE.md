@@ -61,8 +61,10 @@ Don't re-derive these from the code — read the docs first, they're kept curren
 
 - Follow the existing three-layer split (router / service / model+schema) — see
   `docs/architecture.md` §2. Don't put ORM queries in routers or FastAPI imports in services.
-- Match whichever error-handling convention (sentinel return vs. exception) the file you're
-  touching already uses; don't introduce a third pattern into an existing service.
+- Error handling is unified on exceptions: raise `NotFoundError`/`ForbiddenError`/`BadRequestError`
+  (`app/exception/common.py`) from a service, catch `ServiceError` once in the router and map it to
+  an `HTTPException` — see `docs/architecture.md` §2. Don't reintroduce the old string-sentinel +
+  router-side `_raise_for` pattern for new code.
 - Every new mutating/user-scoped query filters by `user_id` or `company_id` at the query level.
 - One concern per Alembic migration; enum types use the atomic idempotent `DO $$ ... EXCEPTION
   WHEN duplicate_object ...` pattern, not `checkfirst=True` (`docs/architecture.md` §4 has why).

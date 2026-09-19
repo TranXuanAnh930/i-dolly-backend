@@ -1,15 +1,16 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.db.models.marketplace import Category
-from app.schema.marketplace import CategoryBase, CategoryCreate, CategoryUpdate
+from app.schema.marketplace import CategoryBase, CategoryUpdate
 
 
 class CategoryService:
 
     @staticmethod
-    def add_categories(db:Session, category:CategoryBase):
+    def add_categories(db:Session, category:CategoryBase) -> Category | Literal[False]:
         db_category = Category(**category.model_dump())
         if not db_category:
             return False
@@ -19,14 +20,18 @@ class CategoryService:
         return db_category
 
     @staticmethod
-    def get_categories(db:Session) -> CategoryCreate:
+    def get_categories(db:Session) -> list[Category] | Literal[False]:
+        # Was previously annotated `-> CategoryCreate`, which was wrong on two
+        # counts: this returns a list, not a single instance, and the actual
+        # rows are Category ORM objects, not the CategoryCreate input schema.
+        # Corrected while adding the annotations this file was missing.
         result = db.query(Category).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def update_category(db:Session, id:uuid.UUID, new_category:CategoryUpdate):
+    def update_category(db:Session, id:uuid.UUID, new_category:CategoryUpdate) -> Category | Literal[False]:
         db_category = db.get(Category, id)
         if not db_category:
             return False
@@ -38,7 +43,7 @@ class CategoryService:
         return db_category
 
     @staticmethod
-    def delete_category(db:Session, id:uuid.UUID):
+    def delete_category(db:Session, id:uuid.UUID) -> bool:
         db_category = db.get(Category, id)
         if not db_category:
             return False

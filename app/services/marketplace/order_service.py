@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
@@ -20,7 +21,14 @@ from app.exception.db_triggers import (
     commit_or_raise,
     flush_or_raise,
 )
-from app.schema.marketplace import OrderStatus, PaymentCreate, PaymentStatus
+from app.schema.marketplace import (
+    ManagerOrderItemRead,
+    ManagerOrderRead,
+    ManagerOrdersPageRead,
+    OrderStatus,
+    PaymentCreate,
+    PaymentStatus,
+)
 from app.schema.marketplace import ShippingStatus as SchemaShippingStatus
 from app.services.marketplace.payment_service import PaymentService
 from app.services.marketplace.product_service import ProductService
@@ -32,7 +40,7 @@ from app.utils.tax import with_tax
 class OrderService:
 
     @staticmethod
-    def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate):
+    def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate) -> Order:
         user = db.get(Users, user_id)
         if not user or user.role != "fan":
             # Primary check for trg_orders_fan_only — see FanOnlyPurchaseError's docstring.
@@ -107,7 +115,7 @@ class OrderService:
         return order
 
     @staticmethod
-    def fetch_placed_order(db:Session, user_id:uuid.UUID):
+    def fetch_placed_order(db:Session, user_id:uuid.UUID) -> list[Order]:
         order = (
             db.query(Order)
             .filter(Order.user_id==user_id)
@@ -117,7 +125,7 @@ class OrderService:
         return order
 
     @staticmethod
-    def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
+    def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | Literal[False]:
         order = (
             db.query(Order)
             .filter(Order.id==order_id, Order.user_id==user_id)
@@ -129,7 +137,7 @@ class OrderService:
         return order
 
     @staticmethod
-    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
+    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | Literal[False] | None:
         order = OrderService.fetch_single_placed_order(db, user_id, order_id)
         if not order:
             return None
@@ -142,14 +150,14 @@ class OrderService:
         return order
 
     @staticmethod
-    def get_user_shipping_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID):
+    def get_user_shipping_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> ShippingStatus | None:
         ship_status = db.query(Order).filter(Order.user_id==user_id, Order.id==order_id).options(selectinload(Order.shippingstatus)).first()
         if not ship_status:
             return None
         return ship_status.shippingstatus
 
     @staticmethod
-    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID):
+    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID) -> ShippingStatus | None:
         order_shippingstatus = db.query(ShippingStatus).filter(ShippingStatus.order_id==order_id).first()
         if not order_shippingstatus or order_shippingstatus.status == SchemaShippingStatus.cancelled:
             return None
@@ -169,7 +177,7 @@ class OrderService:
     # customer's purchase history, not public catalog data.
 
     @staticmethod
-    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10):
+    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> ManagerOrdersPageRead:
         products = db.query(Product).all()
         if company_id is None:
             relevant_ids = {p.id for p in products}
@@ -178,7 +186,7 @@ class OrderService:
             relevant_ids = {pid for pid, cid in company_by_product.items() if cid in (None, company_id)}
 
         if not relevant_ids:
-            return {"page": page, "limit": limit, "count": 0, "data": []}
+            return ManagerOrdersPageRead(page=page, limit=limit, count=0, data=[])
 
         order_ids = [
             row[0] for row in
@@ -202,22 +210,22 @@ class OrderService:
             # see what else a customer bought from another company in the same
             # checkout, only their own company's part of it.
             items = [item for item in order.items if item.product_id in relevant_ids]
-            data.append({
-                "id": order.id,
-                "buyer_name": order.user_item.name if order.user_item else "",
-                "buyer_email": order.user_item.email if order.user_item else "",
-                "status": order.status,
-                "created_at": order.created_at,
-                "items": [
-                    {
-                        "product_id": item.product_id,
-                        "product_name": products_by_id[item.product_id].name if item.product_id in products_by_id else "",
-                        "quantity": item.quantity,
-                        "price": item.price,
-                    }
+            data.append(ManagerOrderRead(
+                id=order.id,
+                buyer_name=order.user_item.name if order.user_item else "",
+                buyer_email=order.user_item.email if order.user_item else "",
+                status=order.status,
+                created_at=order.created_at,
+                items=[
+                    ManagerOrderItemRead(
+                        product_id=item.product_id,
+                        product_name=products_by_id[item.product_id].name if item.product_id in products_by_id else "",
+                        quantity=item.quantity,
+                        price=item.price,
+                    )
                     for item in items
                 ],
-                "company_total": sum(item.price * item.quantity for item in items),
-            })
+                company_total=sum(item.price * item.quantity for item in items),
+            ))
 
-        return {"page": page, "limit": limit, "count": len(data), "data": data}
+        return ManagerOrdersPageRead(page=page, limit=limit, count=len(data), data=data)

@@ -6,7 +6,7 @@ from jose import JWTError, jwt
 from app.config.settings import settings
 
 
-def create_access_token(data: dict):
+def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp" : expires_at})
@@ -17,7 +17,7 @@ def create_access_token(data: dict):
         algorithm=settings.JWT_ALGORITHM
     )
 
-def decode_token(token: str):
+def decode_token(token: str) -> dict | None:
     try:
         payload = jwt.decode(
             token, 
@@ -28,12 +28,12 @@ def decode_token(token: str):
     except JWTError:
         return None
     
-def create_email_verification_token(user_id: uuid.UUID):
+def create_email_verification_token(user_id: uuid.UUID) -> str:
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.EMAIL_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub" : str(user_id), "type":"verify", "exp":expires}
     return jwt.encode(to_encode, settings.JWT_EMAIL_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
-def verify_token_and_get_user_id(token: str, token_type: str):
+def verify_token_and_get_user_id(token: str, token_type: str) -> uuid.UUID | None:
     try: 
         payload = jwt.decode(token, settings.JWT_EMAIL_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         if not payload or payload.get("type") != "verify":
@@ -42,12 +42,12 @@ def verify_token_and_get_user_id(token: str, token_type: str):
     except JWTError:
         return None
     
-def create_password_reset_token(user_id: uuid.UUID):
+def create_password_reset_token(user_id: uuid.UUID) -> str:
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.EMAIL_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub" : str(user_id), "type":"reset", "exp":expires}
     return jwt.encode(to_encode, settings.JWT_EMAIL_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
-def verify_rtoken_and_get_user_id(token: str, token_type: str):
+def verify_rtoken_and_get_user_id(token: str, token_type: str) -> uuid.UUID | None:
     try: 
         payload = jwt.decode(token, settings.JWT_EMAIL_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         if not payload or payload.get("type") != "reset":

@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from sqlalchemy.orm import Session, selectinload
 
@@ -18,6 +19,7 @@ from app.exception.checkout import (
     UnsupportedGatewayError,
     WrongSaleMethodError,
 )
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import (
     DuplicateConcertTicketError,
     DuplicateIdempotencyKeyError,
@@ -25,7 +27,14 @@ from app.exception.db_triggers import (
     commit_or_raise,
     flush_or_raise,
 )
-from app.schema.events import TicketCheckoutCreate, TicketCreate, TicketUpdate, WonTicketCheckoutCreate
+from app.schema.events import (
+    TicketCheckoutCreate,
+    TicketCreate,
+    TicketSaleRead,
+    TicketSalesPageRead,
+    TicketUpdate,
+    WonTicketCheckoutCreate,
+)
 from app.schema.marketplace import PaymentStatus
 from app.services.marketplace.payment_service import PaymentService
 from app.services.shared.notification_service import NotificationService
@@ -42,7 +51,7 @@ _UNRESOLVED_LOTTERY_STATUSES = ("pending", "won")
 class TicketService:
 
     @staticmethod
-    def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
+    def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> Ticket | None:
         return (
             db.query(Ticket)
             .join(TicketType, Ticket.ticket_type_id == TicketType.id)
@@ -55,7 +64,7 @@ class TicketService:
         )
 
     @staticmethod
-    def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
+    def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> LotteryEntry | None:
         # A fan mid-lottery for this concert (still "pending", or "won" but
         # hasn't paid/expired yet — a live ticket from that win is already
         # caught by _existing_live_ticket above, but a *won* entry whose ticket
@@ -201,23 +210,23 @@ class TicketService:
         return ticket
 
     @staticmethod
-    def add_ticket(db: Session, data: TicketCreate):
+    def add_ticket(db: Session, data: TicketCreate) -> Ticket:
         ticket_type = db.get(TicketType, data.ticket_type_id)
         if not ticket_type:
-            return "not_found"
+            raise NotFoundError("Ticket type not found")
         target_user = db.get(Users, data.user_id)
         if not target_user:
-            return "not_found"
+            raise NotFoundError("User not found")
         if target_user.role != "fan":
             # Primary check for trg_tickets_fan_only — checks the ticket's
             # intended owner (data.user_id), not the caller, since this
             # endpoint is admin-only (an admin issuing a ticket to a fan).
-            return "fan_only"
+            raise ForbiddenError("Tickets can only be issued to fan accounts")
         if data.lottery_entry_id is not None and not db.get(LotteryEntry, data.lottery_entry_id):
-            return "not_found"
+            raise NotFoundError("Lottery entry not found")
 
         if TicketService._existing_live_ticket(db, data.user_id, ticket_type.concert_id):
-            return "conflict"  # trg_tickets_one_per_concert: one live ticket per user per concert
+            raise BadRequestError("This user already holds a live ticket for this concert")  # trg_tickets_one_per_concert: one live ticket per user per concert
 
         db_ticket = Ticket(
             ticket_type_id=data.ticket_type_id, user_id=data.user_id, lottery_entry_id=data.lottery_entry_id,
@@ -228,7 +237,7 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def get_my_tickets(db: Session, current_user: Users):
+    def get_my_tickets(db: Session, current_user: Users) -> list[Ticket] | Literal[False]:
         result = (
             db.query(Ticket)
             .filter(Ticket.user_id == current_user.id)
@@ -240,7 +249,7 @@ class TicketService:
         return result
 
     @staticmethod
-    def get_ticket(db: Session, id: uuid.UUID):
+    def get_ticket(db: Session, id: uuid.UUID) -> Ticket | None:
         return (
             db.query(Ticket)
             .filter(Ticket.id == id)
@@ -253,12 +262,12 @@ class TicketService:
     # product_service.get_product_sales_page's shape (page/limit/count/data) for
     # the manager-facing "sales history" list/page pair.
     @staticmethod
-    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10):
+    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> TicketSalesPageRead:
         concert = db.get(Concert, concert_id)
         if not concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if current_user.role == "manager" and current_user.company_id != concert.company_id:
-            return "forbidden"
+            raise ForbiddenError("Managers can only view ticket sales for their own company's concerts")
 
         query = (
             db.query(Ticket)
@@ -271,23 +280,23 @@ class TicketService:
         rows = query.offset(offset).limit(limit).all()
 
         data = [
-            {
-                "ticket_id": ticket.id,
-                "tier": ticket.ticket_type.tier,
-                "status": ticket.status,
-                "price": ticket.ticket_type.price,
-                "source": "lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
-                "created_at": ticket.created_at,
-            }
+            TicketSaleRead(
+                ticket_id=ticket.id,
+                tier=ticket.ticket_type.tier,
+                status=ticket.status,
+                price=ticket.ticket_type.price,
+                source="lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
+                created_at=ticket.created_at,
+            )
             for ticket in rows
         ]
-        return {"page": page, "limit": limit, "count": len(data), "data": data}
+        return TicketSalesPageRead(page=page, limit=limit, count=len(data), data=data)
 
     @staticmethod
-    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate):
+    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate) -> Ticket:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
-            return "not_found"
+            raise NotFoundError("Ticket not found")
         if data.status is not None:
             db_ticket.status = data.status
         if data.issued_code is not None:
@@ -301,10 +310,10 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def delete_ticket(db: Session, id: uuid.UUID):
+    def delete_ticket(db: Session, id: uuid.UUID) -> Ticket:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
-            return "not_found"
+            raise NotFoundError("Ticket not found")
         db.delete(db_ticket)
         db.commit()
-        return True
+        return db_ticket

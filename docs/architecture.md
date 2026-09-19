@@ -82,7 +82,53 @@ notifications), it goes in `shared/`, not force-fit into one:
 3. **`app/db/models/<domain>/<feature>.py`** — SQLAlchemy models, all inheriting `Base`.
    `app/schema/<domain>/<feature>.py` holds the paired Pydantic schemas (`*Create`,
    `*Read`/`*Out`/`*Response`, `*Update`) — request/response shapes are always separate classes
-   from the ORM model, never the ORM model returned directly.
+   from the ORM model, never the ORM model returned directly. A generic ack response
+   (`{"msg": "..."}`, most delete/unassign endpoints and a handful of others that don't return a
+   resource) uses `app/schema/common.py::MessageResponse` with `response_model=MessageResponse`
+   rather than a bare `dict[str, str]` return annotation — same rationale as
+   `app/exception/common.py` living outside every domain: it's genuinely cross-domain, not owned by
+   one feature. `MessageResponse(msg="...")` serializes to exactly the same JSON body a client
+   already receives, so this was a schema/OpenAPI-documentation fix, not an API contract change.
+   `/profile/logout` builds a raw `JSONResponse` (needs to call `delete_cookie`) but its body is
+   `MessageResponse(msg="...").model_dump()`, and still declares `response_model=MessageResponse`
+   for OpenAPI even though returning a `Response` instance bypasses FastAPI's own response-model
+   serialization. `/account/login` and `/account/refresh` stay on a raw `{"access_token": ...}` /
+   `{"msg": ..., "access_token": ...}` body instead — `/refresh`'s extra `access_token` field
+   alongside `msg` doesn't fit `MessageResponse`'s single-field shape.
+
+   The same "don't leave a return type as a bare, undocumented `dict`" rule applies beyond acks:
+   `cart.py::check_cart`, `products.py::search_existing_product`/`paginated_product`/
+   `filter_product` used to return a raw dict with no `response_model` at all (`CartDetailRead` and
+   `ProductWithCategoryRead`/`ProductsPageRead`, `app/schema/marketplace/cart.py` and `products.py`,
+   fixed this). `ProductWithCategoryRead` is a deliberately separate schema from `ProductRead` —
+   `ProductRead.category` is a resolved category *name* (`str`, built by hand in
+   `cache_service.get_cached_products` since `Product.category` is really the `Category`
+   relationship, not a string), while these three functions return raw `Product` rows with that
+   relationship still attached, so embedding `CategoryRead` directly is the correct shape for them,
+   not a shortcut.
+
+   **Every remaining `-> dict[str, Any]` page-shaped service function now constructs and returns
+   the real schema instance instead of a plain dict** (`concert_service.get_events_page`/
+   `get_concert_detail`/`get_manager_events_page`, `ticket_service.get_concert_ticket_sales`,
+   `cart_service.see_cart`, `order_service.get_manager_orders_page`,
+   `product_service.search_product`/`get_store_page`/`get_product_detail`/
+   `get_manager_products_page`/`get_manager_product_form_page`/`get_product_sales_page`/
+   `_build_product_cards` (+ its nested `artist_ref`/`resolve_artist` closures)/`_product_read_dict`,
+   `group_service.get_groups_page`/`get_group_detail`/`get_manager_groups_page`,
+   `idol_service.get_members_page`/`get_idol_detail`/`get_manager_idols_page`/
+   `get_manager_idol_form_page`, `cache_service.get_cached_store_page`). Every one of these already
+   had a matching schema and `response_model=` at the router — the router's own return-type
+   annotation was already `dict[str, Any]` too, just passed through to `response_model` for
+   validation; now both layers agree with what's actually returned. The one place this had a real
+   ripple effect: `product_service._build_product_cards` returning `list[ProductCard]` instead of
+   `list[dict]` meant every caller that read a card by dict key (`card["artist"]`,
+   `card["genres"]`, ...) — `get_product_detail`'s recommendation logic, and
+   `group_service.get_group_detail`'s "products belonging to this group" filter — switched to
+   attribute access (`card.artist`, `card.genres`). `ProductCard` itself deliberately has **no**
+   `from_attributes` config (unlike every other schema mentioned here) — `_build_product_cards`
+   always constructs it directly from already-resolved plain values (a category *name*, nested
+   `AlbumMini`/`ArtistRef` instances it built itself), never validates it off a raw ORM row, so it
+   never needed that config; don't add it on the assumption every `*Read`-shaped class here does.
 
 Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, not a
 bare `create_ticket_payment(...)`) — every router and every service-to-service reference imports
@@ -101,23 +147,39 @@ feature of any one domain), so its own import lines are the one place that must 
 hand whenever a model file moves or a new one is added; see its own CORRECTION comment for why
 this matters more than it looks (SQLAlchemy's string-based `relationship()` resolution).
 
-### Error-handling: two conventions coexist — match whichever the code you're touching uses
+### Error-handling: one unified convention — exceptions, not sentinels
 
-- **Sentinel returns** (most of the codebase, including all the idol/group/venue/concert/
-  ticket-type/lottery services added this project): services return a plain value on success and
-  either `False`/`None` (simple not-found/invalid) or a short string sentinel
-  (`"forbidden"`/`"not_found"`/`"company_mismatch"`/`"conflict"`) for a mutating function that can
-  fail more than one way. The router does `isinstance(result, str)` and maps each sentinel to its
-  status code (403/404/400) — anything else (the ORM object, or `True` for a delete) is success.
-  The exact sentinel vocabulary is **not** identical across every service file — read the service
-  function before trusting what a given return value means; `product_service.py` in particular
-  still uses plain `False` throughout rather than the string-sentinel convention.
+All 14 router+service pairs that used to return a string sentinel (`"forbidden"`/`"not_found"`/
+`"company_mismatch"`/`"conflict"`/...) for a mutating function that can fail more than one way,
+paired with a router-side `_raise_for(result)`/`_raise_for_link(result)` helper that mapped each
+sentinel to a status code, have been migrated to `app/exception/common.py`'s exception hierarchy —
+`ServiceError` (base, default 400) with `NotFoundError` (404), `ForbiddenError` (403), and
+`BadRequestError` (400, inherits the base). A service raises the specific subclass at the exact
+point a check fails, with a message naming that specific failure (an improvement over the old
+design, where one blanket `not_found_detail` string covered every possible not-found reason in a
+function); the router wraps the call once: `try: return XService.method(...) except ServiceError as
+e: raise HTTPException(status_code=e.status_code, detail=str(e)) from e`. This also resolves a real
+mypy-surfaced gap the old design had: a router couldn't prove `result` was narrowed after
+`_raise_for` returned (nothing stopped it from falling through), so every one of these functions'
+return type carried a spurious `Literal[...] |` union; a function that only ever returns success or
+raises doesn't have that problem.
+
+- A private, multi-consumer helper that a public method needs to *inspect and override* before
+  deciding whether something is actually an error (e.g. `idol_service._validate_refs`, whose
+  `"group_inactive"` result `update_idol` overrides to "not an error" when the group_id is
+  unchanged) is the one place that legitimately stays sentinel-returning rather than raising
+  directly — the caller needs the intermediate value, not an immediate raise.
+- Plain-read functions returning `False`/`None` on "not found" (handled inline in the router via
+  `if not result: raise HTTPException(404, ...)`, with no shared `_raise_for`-style helper) were
+  never part of this convention and are unaffected — see `product_service.py` for the largest
+  example.
 - **Exceptions** (checkout/payment only): `app/exception/checkout.py` defines `CartItemError` and
   subclasses (`InsufficientStockError`, `AddressIdError`, `PaymentAmountMismatch`,
   `UnsupportedGatewayError`, `OrderError`, `PaymentError`, `PaymentFailedError`). Raised in the
   service, caught in the router (`order.py`, `payment.py`), mapped to a status code. Follow this
   pattern for new multi-step flows (a lottery draw, seat reservation) rather than threading
-  sentinel values through several layers.
+  sentinel values through several layers — this is the same shape `app/exception/common.py`
+  generalizes for the simpler forbidden/not-found/bad-request case.
 - **DB-trigger errors** (`app/exception/db_triggers.py`): a third, narrower variant of the
   exceptions pattern above, specifically for the 12 Postgres triggers/8 trigger functions listed
   in `database-design.md` §4/§4.1-4.2. `TriggerViolationError` + 8 named subclasses, a
@@ -129,7 +191,8 @@ this matters more than it looks (SQLAlchemy's string-based `relationship()` reso
   str(e))`. Use this — not a bare `db.commit()` — for any new write that lands on a
   trigger-covered table; see `project_status.md` §4 item 9 for which service functions already
   use it and why (only the functions that actually reach a trigger-covered insert/update, not
-  every function that touches that table).
+  every function that touches that table). A function can raise both a `TriggerViolationError` and
+  a `ServiceError` (e.g. `ticket_service.checkout_ticket`) — the router catches both.
 
 ## 3. Cross-cutting pieces, reused the same way from every router
 
@@ -143,7 +206,7 @@ this matters more than it looks (SQLAlchemy's string-based `relationship()` reso
   (`groups`, `idols`, `concerts`, `ticket_types`, `lottery_campaigns`, `album_details`,
   `merch_details`) has a `_manager_scope_violation(current_user, company_id)`-shaped helper:
   `False` for an admin (always) or a manager whose own `company_id` matches the row being touched,
-  `True` otherwise — returned as the `"forbidden"` sentinel above. Reads stay unscoped (public
+  `True` otherwise — raised as `ForbiddenError` (§2) in a mutating function. Reads stay unscoped (public
   listings). `products` uses the same shape but resolves `company_id` indirectly — see
   `product_service._resolve_product_company_id()` — since a product has no `company_id` column of
   its own; ownership is derived from whichever of `album_details`/`merch_details` references
@@ -260,3 +323,33 @@ migration-chain smoke check rather than a precondition pytest depends on.)
   hitting each endpoint against a real DB as the standing "still needs a real smoke test" item
   for anything built this way — noted per-feature in `project_status.md` rather than repeated
   here.
+- **Every function needs a return type, and every parameter needs a type** — enforced by ruff's
+  `ANN` rules (`pyproject.toml`), not just a style preference. Parameters were already ~97% typed
+  before this was enforced; return types were the real gap (88% of ~400 production functions had
+  none). This isn't cosmetic: writing the annotations directly caught two real bugs no test caught
+  first — a stray argument passed to a function that had just been changed to take none
+  (`TypeError` on every call), and a list passed where `model_validate` expected one instance
+  (`ValidationError` on every call) — both are exactly the class of mistake a return/param type
+  makes visible on sight, no runtime repro needed. `tests/*` and `scripts/*` are exempted
+  (pytest conventions don't benefit from typing test functions; measured, not assumed — see the
+  per-file-ignore's own comment).
+  - The old sentinel-return convention (`return "forbidden"`, `return "not_found"`, typed as a
+    precise `Literal[...]` union) has been superseded by the exception hierarchy in §2 for every
+    function that used to pair with a router-side `_raise_for`/`_raise_for_link`; those now return
+    just the success type since the function only ever returns success or raises — including every
+    delete/unassign function in that group, which returns the deleted/unlinked ORM object itself
+    (`-> Idol`, `-> IdolPosition`, ...) rather than `Literal[True]`, so a caller (a test, or future
+    code — the routers themselves still just discard it and reply with `{"msg": ...}`) has the
+    actual row, not just a boolean confirmation. `Literal` is still the right tool for what's left: a
+    plain read's `Literal[False]` empty-result sentinel, or a private multi-value helper like
+    `idol_service._validate_refs` that a caller inspects rather than an exception.
+  - **FastAPI gotcha, found the hard way**: a route function's own return-type annotation is used
+    by FastAPI to build an implicit response schema whenever the decorator has **no**
+    `response_model=`. Annotating such a function's return type as a bare SQLAlchemy ORM class
+    (not a Pydantic model) crashes the app at import time
+    (`FastAPIError: Invalid args for response field!`) — and `py_compile`/`ruff` won't catch it,
+    since it only fires when the decorator actually runs. If a route has no `response_model=` and
+    its real return type isn't a Pydantic-serializable shape (a dict, a list of dicts, `None`),
+    add `response_model=None` to the decorator explicitly rather than relying on the annotation
+    alone — that's FastAPI's own documented way to keep an accurate return-type annotation without
+    it being mistaken for a schema.

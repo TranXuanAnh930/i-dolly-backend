@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 
 from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
+from app.db.models.marketplace import Payment
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.schema.common import MessageResponse
 from app.schema.marketplace import PaymentResponse
 from app.services.marketplace.payment_service import PaymentService
 from app.utils.paypal_client import verify_webhook_signature
@@ -14,7 +16,7 @@ from app.utils.paypal_client import verify_webhook_signature
 router = APIRouter(prefix="/payment", tags=["Payment"])
 
 @router.patch("/status/all", response_model=list[PaymentResponse])
-async def check_payment_status_all(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
+async def check_payment_status_all(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> list[Payment]:
     payment = PaymentService.fetch_all_payments(db, user.id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found!")
@@ -26,14 +28,14 @@ async def check_payment_status_all(user:Users=Depends(get_current_user), _:None=
 # Nothing else referenced the old path (grepped both repos) so this isn't
 # a breaking rename in practice.
 @router.patch("/status/order/{order_id}", response_model=PaymentResponse)
-async def check_payment_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
+async def check_payment_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> Payment:
     payment = PaymentService.fetch_payment_status(db, user.id, order_id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found!")
     return payment
 
 @router.patch("/status/ticket/{ticket_id}", response_model=PaymentResponse)
-async def check_ticket_payment_status(ticket_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)):
+async def check_ticket_payment_status(ticket_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> Payment:
     payment = PaymentService.fetch_ticket_payment_status(db, user.id, ticket_id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found!")
@@ -49,7 +51,7 @@ async def check_ticket_payment_status(ticket_id:uuid.UUID, user:Users=Depends(ge
 # actually belong to the caller?) rather than as part of the lookup key —
 # the webhook below has no current_user at all and must still work.
 @router.post("/paypal/capture/{pg_order_id}", response_model=PaymentResponse)
-async def capture_paypal_payment(pg_order_id: str, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)):
+async def capture_paypal_payment(pg_order_id: str, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)) -> Payment:
     payment = PaymentService.finalize_paypal_payment(db, pg_order_id, user_id=user.id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found, already resolved, or not yours")
@@ -58,8 +60,8 @@ async def capture_paypal_payment(pg_order_id: str, user: Users = Depends(get_cur
 # Reconciliation path: PayPal calls this on its own schedule, independent
 # of any fan's browser — no auth dependency, trust comes entirely from
 # verify_webhook_signature below, not from who's logged in (nobody is).
-@router.post("/paypal/webhook")
-async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
+@router.post("/paypal/webhook", response_model=MessageResponse)
+async def paypal_webhook(request: Request, db: Session = Depends(get_db)) -> MessageResponse:
     raw_body = await request.body()
     if not verify_webhook_signature(request.headers, raw_body):
         # TODO: decide the response here deliberately, not by default —
@@ -78,4 +80,4 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
     # anything left to do (already resolved by the capture endpoint,
     # duplicate delivery, etc.) — a non-2xx here just triggers a retry of
     # an event that was never going to do anything different next time.
-    return {"msg": "ok"}
+    return MessageResponse(msg="ok")
