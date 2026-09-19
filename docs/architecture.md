@@ -203,8 +203,14 @@ to Render on `main`.
     functions now return just the success type. A plain read's empty-result sentinel is `None`
     (`Object | None`), not `Literal[False]` — `None` is Python's actual "nothing here" value, and
     it's what `db.get(...)`/`.first()` already return on a miss, so a read that wraps one of those
-    doesn't need to invent a second falsy value meaning the same thing. `Literal` is still right
-    for a private multi-value sentinel helper like `idol_service._validate_refs`.
+    doesn't need to invent a second falsy value meaning the same thing. A private multi-value
+    sentinel helper like `idol_service._validate_refs` still returns a sentinel rather than raising
+    (see the bullet below this one) — but the sentinel itself is a local `class _RefIssue(str,
+    Enum)` next to the helper, not a bare `Literal["a", "b", ...]`, for the same reason the next
+    bullet gives for model columns: a typo in a member name is a `NameError`/`AttributeError` at
+    the call site instead of a string that silently never matches any `if error == "...":` branch.
+    `Literal` is still right for a genuinely one-off inline type hint, just not for a value set
+    that gets compared against in more than one place.
   - **A fixed set of string values (role, status, sale method, tier, notification type, ...) is a
     `class X(str, Enum)` in the schema file that already owns the field's Read/Update model, never
     a bare `str` with the allowed values just noted in a comment.** The model's `Column` wires the
@@ -215,9 +221,12 @@ to Render on `main`.
     violation surfacing as a raw `IntegrityError` deep in a commit. `role`/`TicketType.tier`/
     `TicketType.sale_method`/`Concert.status`/`LotteryCampaign.status`/`DirectSaleCampaign.status`/
     `LotteryEntry.status`/`Ticket.status`/`Notification.type`/`Notification.status`/
-    `AlbumDetail.format` all follow this now. Doesn't apply to the sentinel-return strings above
-    (`Literal["forbidden", "not_found"]` and friends) — those aren't a model column's value set,
-    they're a function's own multi-way result and stay `Literal`.
+    `AlbumDetail.format` all follow this now. Doesn't apply to the exception-hierarchy sentinel
+    strings from two bullets up (`Literal["forbidden", "not_found"]` and friends, now raised
+    exceptions, not returned values) — those were never a model column's value set. A private
+    multi-way sentinel *helper* like `_validate_refs` is a middle case: not a model column either,
+    but compared against in more than one place, so it gets the enum treatment too (`_RefIssue`)
+    rather than `Literal`, per the bullet just above.
   - **FastAPI gotcha**: a route's own return-type annotation becomes an implicit response schema
     when the decorator has no `response_model=`. A bare SQLAlchemy ORM class there crashes the app
     at import time. If a route has no `response_model=` and its real return type isn't

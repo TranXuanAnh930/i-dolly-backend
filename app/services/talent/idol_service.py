@@ -1,5 +1,6 @@
 import uuid
-from typing import Any, Literal
+from enum import Enum
+from typing import Any
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -16,6 +17,16 @@ from app.schema.talent import (
     MembersPageRead,
 )
 
+
+class _RefIssue(str, Enum):
+    """Private outcome type for `IdolService._validate_refs` — not a model column's value set, so
+    it stays local to this module rather than in `app/schema/`, same reasoning as any other
+    private-helper sentinel (`docs/architecture.md` §2)."""
+    company_not_found = "company_not_found"
+    group_not_found = "group_not_found"
+    company_mismatch = "company_mismatch"
+    group_inactive = "group_inactive"
+    color_not_found = "color_not_found"
 
 class IdolService:
 
@@ -42,29 +53,29 @@ class IdolService:
         return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
-    def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None) -> Literal["company_not_found", "group_not_found", "company_mismatch", "group_inactive", "color_not_found"] | None:
+    def _validate_refs(db: Session, company_id: uuid.UUID, group_id: uuid.UUID | None, color_id: uuid.UUID | None) -> _RefIssue | None:
         company = db.get(ManagementCompany, company_id)
         if not company:
-            return "company_not_found"
+            return _RefIssue.company_not_found
         if group_id is not None:
             group = db.get(Group, group_id)
             if not group:
-                return "group_not_found"
+                return _RefIssue.group_not_found
             # App-level invariant (database-design.md §3.4, not a DB constraint,
             # matching this codebase's existing service-layer cross-field checks):
             # if group_id is set, the idol's company_id must equal that group's
             # company_id.
             if group.company_id != company_id:
-                return "company_mismatch"
+                return _RefIssue.company_mismatch
             # A deactivated group is closed to new/changed membership — it can
             # still be READ (existing members, past products/events), but an
             # idol can't be newly assigned into it via add/update.
             if not group.is_active:
-                return "group_inactive"
+                return _RefIssue.group_inactive
         if color_id is not None:
             color = db.get(IdolColor, color_id)
             if not color:
-                return "color_not_found"
+                return _RefIssue.color_not_found
         return None
 
     @staticmethod
@@ -72,9 +83,9 @@ class IdolService:
         if IdolService._manager_scope_violation(current_user, idol.company_id):
             raise ForbiddenError("Managers can only manage idols for their own company")
         error = IdolService._validate_refs(db, idol.company_id, idol.group_id, idol.color_id)
-        if error == "company_mismatch":
+        if error == _RefIssue.company_mismatch:
             raise BadRequestError("group_id belongs to a different company than company_id")
-        if error == "group_inactive":
+        if error == _RefIssue.group_inactive:
             raise BadRequestError("Cannot assign an idol into a deactivated group")
         if error is not None:
             raise NotFoundError("Management company, group, or idol color not found")
@@ -162,11 +173,11 @@ class IdolService:
         # group got deactivated, that's not a new assignment and shouldn't block
         # the rest of the edit. Only a genuine move INTO a deactivated group
         # (data.group_id != the idol's current group_id) is rejected.
-        if error == "group_inactive" and data.group_id == db_idol.group_id:
+        if error == _RefIssue.group_inactive and data.group_id == db_idol.group_id:
             error = None
-        if error == "company_mismatch":
+        if error == _RefIssue.company_mismatch:
             raise BadRequestError("group_id belongs to a different company than company_id")
-        if error == "group_inactive":
+        if error == _RefIssue.group_inactive:
             raise BadRequestError("Cannot assign an idol into a deactivated group")
         if error is not None:
             raise NotFoundError("Idol, group, or idol color not found")

@@ -607,7 +607,16 @@ newly introduced.
     idol was already in that group before it got deactivated) before deciding it's an error, which
     an immediately-`raise`d exception can't express — `docs/architecture.md` §2 already documents
     this as the one legitimate exception to the "raise, don't return a sentinel" rule, not an
-    oversight.
+    oversight. Its sentinel values themselves were still a bare `Literal["company_not_found", ...]`
+    though, so as a follow-up they're now a local `class _RefIssue(str, Enum)` next to the helper
+    in `idol_service.py` — not `app/schema/`, since this isn't a model column's value set, just a
+    private helper's own multi-way result compared against in two places (`add_idol`/`update_idol`).
+    Same motivation as item 36's enum sweep (a typo in a member name is a caught `AttributeError`,
+    not a string that silently never matches an `if error == "...":` branch) applied to the one
+    sentinel-returning case item 36 didn't reach because it wasn't a `Column`. No behavior change —
+    confirmed via the existing `add_idol`/`update_idol` tests, which already asserted on the public
+    `NotFoundError`/`BadRequestError` raised around this helper, not on its internal return value:
+    393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
 
     Every test asserting the old sentinel value (`test_lottery_draw_service.py` ×6,
     `test_product_service.py` ×4, `test_user_service.py` ×3) switched to `pytest.raises(...)`.
