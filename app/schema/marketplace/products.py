@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -26,14 +27,25 @@ class ProductRead(ProductBase):
     id: uuid.UUID
     category : str
 
-# Bundles a Product with its AlbumDetail/MerchDetail row into one request
-# (product_service.add_product_with_detail) — a bare add_product left a
-# product with no album_details/merch_details row until a separate,
-# optional follow-up call attached one; this is the route
-# ManagerProductFormPage.vue now uses instead so a product is never left
-# without one. detail_kind picks which set of the fields below applies —
-# mirrors AlbumDetailCreate's "at least one of idol_id/group_id" and
-# MerchDetailCreate's "exactly one" validators respectively.
+# Distinct from ProductRead — ProductRead.category is a resolved name (str), built by hand from
+# the Category relationship. search_existing_product/paginated_product/filter_product return raw
+# Product rows instead, so category here is the full CategoryRead object, validated directly.
+class ProductWithCategoryRead(ProductBase):
+    id: uuid.UUID
+    category: CategoryRead
+
+    model_config = {"from_attributes": True}
+
+class ProductsPageRead(BaseModel):
+    page: int
+    limit: int
+    count: int
+    data: list[ProductWithCategoryRead]
+
+# Bundles a Product with its AlbumDetail/MerchDetail row into one request, so a product is never
+# left ownerless the way a bare add_product + optional follow-up call could leave it. detail_kind
+# picks which set of fields below applies, mirroring AlbumDetailCreate/MerchDetailCreate's own
+# idol_id/group_id validators.
 class ProductWithDetailCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     price: float = Field(..., gt=0)
@@ -52,7 +64,7 @@ class ProductWithDetailCreate(BaseModel):
     color_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
-    def _check_kind_and_owner(self):
+    def _check_kind_and_owner(self) -> Self:
         if self.detail_kind == "album":
             if self.idol_id is None and self.group_id is None:
                 raise ValueError("At least one of idol_id or group_id must be set for an album/single/EP product")
@@ -63,13 +75,9 @@ class ProductWithDetailCreate(BaseModel):
             raise ValueError("detail_kind must be 'album' or 'merch'")
         return self
 
-# --- page-shaped reads — one bundled response per screen (see idol.py's
-# equivalent comment). ProductCard is the single shape every product-grid
-# view renders (store grid, a group's products, a product's own
-# recommendations) — album info, genre tags, and the resolved artist
-# (idol/group, from album_details/merch_details, or a name-prefix
-# match for plain merch with neither) all embedded so the client never
-# needs a second lookup to render one.
+# --- page-shaped reads. ProductCard is the shape every product-grid view renders (store grid, a
+# group's products, recommendations) — album info, genres, and the resolved artist all embedded
+# so the client never needs a second lookup.
 
 class AlbumMini(BaseModel):
     release_date: date | None = None
@@ -92,15 +100,10 @@ class ProductCard(BaseModel):
     # order_service.checkout and app/utils/resale.RESALE_CAP_QUANTITY).
     resale_cap_quantity: int | None = None
 
-# Deliberately not up with the other imports at the top of this file, AND
-# deliberately direct-submodule (not the app.schema.talent package shortcut):
-# talent needs marketplace back (group.py imports ProductCard), so a
-# package-level import on either side of that cycle needs the whole other
-# package's __init__ to have finished first — true regardless of which side
-# is entered first, confirmed by testing every domain as the first import in
-# a fresh process, not just the one order that happened to work. Nothing
-# above this line needs anything from talent; this is the first thing that
-# does, so both imports only need to land before here, not at the top.
+# Deliberately not with the top imports, and a direct submodule import rather than the
+# app.schema.talent package shortcut: talent needs marketplace back (group.py imports
+# ProductCard), so a package-level import on either side of that cycle needs the other package's
+# __init__ to have already finished — regardless of which side loads first.
 from app.schema.talent.idol import GroupMini, GroupOptionForCompany, IdolRead  # noqa: E402
 from app.schema.talent.idol_color import IdolColorRead  # noqa: E402
 

@@ -4,7 +4,7 @@ from sendgrid.helpers.mail import Mail
 from app.config.settings import settings
 
 
-def send_email(to_email:str, subject:str, body:str):
+def send_email(to_email:str, subject:str, body:str) -> None:
     # Dev convenience (settings.DEBUG, default false — see its own comment):
     # print the token-bearing body up front, before attempting a real send,
     # since SENDGRID_API_KEY is a placeholder in most local setups and the
@@ -23,9 +23,6 @@ def send_email(to_email:str, subject:str, body:str):
     try:
         sg.send(msg)
     except Exception as e:
-        # Runs inside a FastAPI BackgroundTask, after the response has
-        # already gone out — there's no request left to fail, so raising
-        # here would only surface as an unhandled-exception traceback in
-        # the server log with no token in it (the dev print above already
-        # covers that). Log and move on either way.
+        # Runs inside a Celery worker, not the request/response cycle — there's no
+        # caller left to raise to, so log and move on.
         print(f"send_email to {to_email} failed: {e}")

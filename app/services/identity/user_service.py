@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from app.utils.jwt_manager import create_password_reset_token, verify_rtoken_and
 class UserService:
 
     @staticmethod
-    def change_password_process(db: Session, user:Users, old_password: str, new_password: str):
+    def change_password_process(db: Session, user:Users, old_password: str, new_password: str) -> bool | None:
         password_verification = verify_password(old_password, user.hashed_password)
         if not password_verification:
             return None
@@ -25,7 +26,7 @@ class UserService:
         return True
 
     @staticmethod
-    def reset_password_process(db: Session, email: str, background_tasks:BackgroundTasks):
+    def reset_password_process(db: Session, email: str, background_tasks:BackgroundTasks) -> Literal[True]:
         # Always returns True, whether or not the email is registered — the
         # router gives the same generic response either way, so this endpoint
         # can't be used to enumerate which emails have an account. Only the
@@ -48,7 +49,7 @@ class UserService:
         return True
 
     @staticmethod
-    def verify_rtoken(db: Session, token: str, new_password: str):
+    def verify_rtoken(db: Session, token: str, new_password: str) -> bool | None:
         user_id = verify_rtoken_and_get_user_id(token, "reset")
         if not user_id:
             return False
@@ -72,7 +73,7 @@ class UserService:
         return True
 
     @staticmethod
-    def promote_admin(db: Session, user_id: uuid.UUID):
+    def promote_admin(db: Session, user_id: uuid.UUID) -> bool | None:
         user = db.get(Users, user_id)
         if not user:
             return None
@@ -84,7 +85,7 @@ class UserService:
         return True
 
     @staticmethod
-    def create_manager_user(db: Session, data: ManagerCreate):
+    def create_manager_user(db: Session, data: ManagerCreate) -> Users | Literal["email_taken", "company_not_found"]:
         """Admin-only counterpart to self-register — creates a brand new
         role='manager' account tied to a company in one call, rather than
         promoting an already-registered fan (which /make-admin does for admins,
@@ -109,7 +110,7 @@ class UserService:
         return new_user
 
     @staticmethod
-    def revoke_token(db:Session, token: str):
+    def revoke_token(db:Session, token: str) -> bool:
         db_token = db.query(RefreshToken).filter(RefreshToken.token == token).first()
         if not db_token:
             return False
@@ -119,7 +120,7 @@ class UserService:
         return True
 
     @staticmethod
-    def delete_user(db:Session, user_id:uuid.UUID):
+    def delete_user(db:Session, user_id:uuid.UUID) -> bool | None:
         db_user = db.get(Users, user_id)
         if not db_user:
             return None

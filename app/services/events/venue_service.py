@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -13,7 +14,7 @@ class VenueService:
     # (database-design.md §3.7).
 
     @staticmethod
-    def add_venue(db: Session, venue: VenueCreate):
+    def add_venue(db: Session, venue: VenueCreate) -> Venue:
         db_venue = Venue(**venue.model_dump())
         db.add(db_venue)
         db.commit()
@@ -21,18 +22,18 @@ class VenueService:
         return db_venue
 
     @staticmethod
-    def get_venues(db: Session):
+    def get_venues(db: Session) -> list[Venue] | Literal[False]:
         result = db.query(Venue).all()
         if not result:
             return False
         return result
 
     @staticmethod
-    def get_venue(db: Session, id: uuid.UUID):
+    def get_venue(db: Session, id: uuid.UUID) -> Venue | None:
         return db.get(Venue, id)
 
     @staticmethod
-    def update_venue(db: Session, id: uuid.UUID, data: VenueUpdate):
+    def update_venue(db: Session, id: uuid.UUID, data: VenueUpdate) -> Venue | Literal[False]:
         db_venue = db.get(Venue, id)
         if not db_venue:
             return False
@@ -47,7 +48,7 @@ class VenueService:
         return db_venue
 
     @staticmethod
-    def delete_venue(db: Session, id: uuid.UUID):
+    def delete_venue(db: Session, id: uuid.UUID) -> bool:
         db_venue = db.get(Venue, id)
         if not db_venue:
             return False

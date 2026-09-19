@@ -1,8 +1,10 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from sqlalchemy.orm import Session, selectinload
 
+from app.celery_app import celery_app
 from app.db.models.events import Concert, DirectSaleCampaign, LotteryCampaign, LotteryEntry, Ticket, TicketType
 from app.db.models.identity import Users
 from app.db.models.marketplace import Payment
@@ -17,6 +19,7 @@ from app.exception.checkout import (
     UnsupportedGatewayError,
     WrongSaleMethodError,
 )
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import (
     DuplicateConcertTicketError,
     DuplicateIdempotencyKeyError,
@@ -24,10 +27,18 @@ from app.exception.db_triggers import (
     commit_or_raise,
     flush_or_raise,
 )
-from app.schema.events import TicketCheckoutCreate, TicketCreate, TicketUpdate, WonTicketCheckoutCreate
+from app.schema.events import (
+    TicketCheckoutCreate,
+    TicketCreate,
+    TicketSaleRead,
+    TicketSalesPageRead,
+    TicketUpdate,
+    WonTicketCheckoutCreate,
+)
 from app.schema.marketplace import PaymentStatus
 from app.services.marketplace.payment_service import PaymentService
 from app.services.shared.notification_service import NotificationService
+from app.utils.email_templates import EmailTemplate
 from app.utils.tax import with_tax
 
 # ADMIN-ONLY STOPGAP for create/update/delete — see TicketCreate's docstring.
@@ -40,7 +51,7 @@ _UNRESOLVED_LOTTERY_STATUSES = ("pending", "won")
 class TicketService:
 
     @staticmethod
-    def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
+    def _existing_live_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> Ticket | None:
         return (
             db.query(Ticket)
             .join(TicketType, Ticket.ticket_type_id == TicketType.id)
@@ -53,7 +64,7 @@ class TicketService:
         )
 
     @staticmethod
-    def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID):
+    def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> LotteryEntry | None:
         # A fan mid-lottery for this concert (still "pending", or "won" but
         # hasn't paid/expired yet — a live ticket from that win is already
         # caught by _existing_live_ticket above, but a *won* entry whose ticket
@@ -138,20 +149,18 @@ class TicketService:
             if ticket.status == "paid":
                 ticket_type.sold_quantity += 1
                 NotificationService.create_notification(db, user_id, "ticket_confirmation", ticket_id=ticket.id)
-
+                email_body = EmailTemplate.TICKET_CONFIRMED.render(
+                    email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+                )
+                celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
         commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert / chk_ticket_types_capacity backstop
         db.refresh(ticket)
         return ticket
 
-    # Pays for a ticket draw_lottery already created (status="pending_payment",
-    # lottery_entry_id set, ticket_type.sold_quantity already incremented at
-    # draw time — database-design.md §5.2) — distinct from checkout_ticket
-    # above, which creates a brand-new direct-sale ticket and only counts
-    # sold_quantity on payment success. Reuses create_ticket_payment unchanged
-    # (it doesn't care how the ticket came to exist, only that ticket.id is
-    # already populated), but deliberately does NOT touch sold_quantity on
-    # success the way checkout_ticket does — that would double-count a seat
-    # this function's caller already holds.
+    # Pays for a ticket draw_lottery already created (sold_quantity already incremented at draw
+    # time) — distinct from checkout_ticket above, which creates a new ticket and counts
+    # sold_quantity itself. Deliberately doesn't touch sold_quantity here, to avoid double-counting
+    # a seat the caller already holds.
     @staticmethod
     def checkout_won_ticket(db: Session, user_id: uuid.UUID, ticket_id: uuid.UUID, data: WonTicketCheckoutCreate) -> Ticket:
         if db.query(Payment).filter(Payment.idempotency_key == data.idempotency_key).first():
@@ -187,29 +196,37 @@ class TicketService:
             raise UnsupportedGatewayError("Unsupported payment gateway!")
         if payment.status == PaymentStatus.success:
             NotificationService.create_notification(db, user_id, "lottery_payment_confirmation", ticket_id=ticket.id)
+            user = db.get(Users, user_id)
+            if user:
+                email_body = EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.render(
+                    email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+                )
+                celery_app.send_task(
+                    "app.tasks.email.send_email", args=[user.email, EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.subject, email_body]
+                )
 
         commit_or_raise(db)
         db.refresh(ticket)
         return ticket
 
     @staticmethod
-    def add_ticket(db: Session, data: TicketCreate):
+    def add_ticket(db: Session, data: TicketCreate) -> Ticket:
         ticket_type = db.get(TicketType, data.ticket_type_id)
         if not ticket_type:
-            return "not_found"
+            raise NotFoundError("Ticket type not found")
         target_user = db.get(Users, data.user_id)
         if not target_user:
-            return "not_found"
+            raise NotFoundError("User not found")
         if target_user.role != "fan":
             # Primary check for trg_tickets_fan_only — checks the ticket's
             # intended owner (data.user_id), not the caller, since this
             # endpoint is admin-only (an admin issuing a ticket to a fan).
-            return "fan_only"
+            raise ForbiddenError("Tickets can only be issued to fan accounts")
         if data.lottery_entry_id is not None and not db.get(LotteryEntry, data.lottery_entry_id):
-            return "not_found"
+            raise NotFoundError("Lottery entry not found")
 
         if TicketService._existing_live_ticket(db, data.user_id, ticket_type.concert_id):
-            return "conflict"  # trg_tickets_one_per_concert: one live ticket per user per concert
+            raise BadRequestError("This user already holds a live ticket for this concert")  # trg_tickets_one_per_concert: one live ticket per user per concert
 
         db_ticket = Ticket(
             ticket_type_id=data.ticket_type_id, user_id=data.user_id, lottery_entry_id=data.lottery_entry_id,
@@ -220,7 +237,7 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def get_my_tickets(db: Session, current_user: Users):
+    def get_my_tickets(db: Session, current_user: Users) -> list[Ticket] | Literal[False]:
         result = (
             db.query(Ticket)
             .filter(Ticket.user_id == current_user.id)
@@ -232,7 +249,7 @@ class TicketService:
         return result
 
     @staticmethod
-    def get_ticket(db: Session, id: uuid.UUID):
+    def get_ticket(db: Session, id: uuid.UUID) -> Ticket | None:
         return (
             db.query(Ticket)
             .filter(Ticket.id == id)
@@ -245,12 +262,12 @@ class TicketService:
     # product_service.get_product_sales_page's shape (page/limit/count/data) for
     # the manager-facing "sales history" list/page pair.
     @staticmethod
-    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10):
+    def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> TicketSalesPageRead:
         concert = db.get(Concert, concert_id)
         if not concert:
-            return "not_found"
+            raise NotFoundError("Concert not found")
         if current_user.role == "manager" and current_user.company_id != concert.company_id:
-            return "forbidden"
+            raise ForbiddenError("Managers can only view ticket sales for their own company's concerts")
 
         query = (
             db.query(Ticket)
@@ -263,23 +280,23 @@ class TicketService:
         rows = query.offset(offset).limit(limit).all()
 
         data = [
-            {
-                "ticket_id": ticket.id,
-                "tier": ticket.ticket_type.tier,
-                "status": ticket.status,
-                "price": ticket.ticket_type.price,
-                "source": "lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
-                "created_at": ticket.created_at,
-            }
+            TicketSaleRead(
+                ticket_id=ticket.id,
+                tier=ticket.ticket_type.tier,
+                status=ticket.status,
+                price=ticket.ticket_type.price,
+                source="lottery" if ticket.ticket_type.sale_method == "lottery" else "direct",
+                created_at=ticket.created_at,
+            )
             for ticket in rows
         ]
-        return {"page": page, "limit": limit, "count": len(data), "data": data}
+        return TicketSalesPageRead(page=page, limit=limit, count=len(data), data=data)
 
     @staticmethod
-    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate):
+    def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate) -> Ticket:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
-            return "not_found"
+            raise NotFoundError("Ticket not found")
         if data.status is not None:
             db_ticket.status = data.status
         if data.issued_code is not None:
@@ -293,10 +310,10 @@ class TicketService:
         return db_ticket
 
     @staticmethod
-    def delete_ticket(db: Session, id: uuid.UUID):
+    def delete_ticket(db: Session, id: uuid.UUID) -> Ticket:
         db_ticket = db.get(Ticket, id)
         if not db_ticket:
-            return "not_found"
+            raise NotFoundError("Ticket not found")
         db.delete(db_ticket)
         db.commit()
-        return True
+        return db_ticket
