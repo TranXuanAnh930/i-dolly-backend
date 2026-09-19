@@ -21,7 +21,6 @@ from app.exception.checkout import (
 from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
 from app.schema.common import MessageResponse
-from app.schema.identity import UserRole
 from app.schema.events import (
     TicketCheckoutCreate,
     TicketCreate,
@@ -30,6 +29,7 @@ from app.schema.events import (
     TicketUpdate,
     WonTicketCheckoutCreate,
 )
+from app.schema.identity import UserRole
 from app.services.events.ticket_service import TicketService
 
 # add/update/delete below stay the ADMIN-ONLY stopgap until the lottery

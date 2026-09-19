@@ -29,8 +29,8 @@ from app.schema.events import (
     ManagerEventsPageRead,
     PerformingGroupMini,
 )
-from app.schema.events.ticket import TicketStatus
 from app.schema.events.lottery_entry import LotteryEntryStatus
+from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
 
 # Once a concert has gone on sale (or further), fans may already hold
