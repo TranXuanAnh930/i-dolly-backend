@@ -27,21 +27,11 @@ from app.utils.resale import RESALE_CAP_QUANTITY
 
 class ProductService:
 
-    # Company-scoping for update/delete/image-replace only (see docs/project_status.md
-    # SS4 item 10). A product has no company_id column of its own; its owner, if any,
-    # is resolved by whichever of album_details/merch_details references it -
-    # the same dual-FK "which row exists, then which of idol_id/group_id is set"
-    # lookup as album_detail_service._resolve_company_id / merch_detail_service's
-    # twin - rather than a direct column check, per docs/database-design.md SS6's
-    # note on this. A product tied to neither (plain merch not linked to any
-    # idol/group) has no company owner and stays manager-agnostic, matching the
-    # permissive behavior this project already had for every product before this -
-    # only a product actually tied to talent is scoped. add_product/add_bulk_products
-    # are deliberately NOT scoped: a bare Product row is created before any
-    # album_details/merch_details row exists to attach it to a company, so
-    # there is nothing to check yet at creation time - that's handled when the
-    # details row is created, by album_detail_service/merch_detail_service's
-    # own scoping.
+    # Company-scoping for update/delete/image-replace only. A product has no company_id column of
+    # its own — ownership resolves through whichever of album_details/merch_details references it,
+    # same dual-FK lookup as album_detail_service/merch_detail_service. A product tied to neither
+    # (plain merch) has no owner and stays manager-agnostic. add_product/add_bulk_products stay
+    # unscoped since a bare Product has no idol/group link yet at creation.
 
     @staticmethod
     def _resolve_product_company_id(db: Session, product_id: uuid.UUID) -> uuid.UUID | None:
@@ -132,13 +122,9 @@ class ProductService:
             return group is None or group.is_active
         return True
 
-    # The combined create ManagerProductFormPage.vue actually uses — creates
-    # the Product and its AlbumDetail/MerchDetail row in one transaction (flush
-    # for the product's generated id, one commit for both), so a rejected
-    # detail (bad owner, wrong company, ...) rolls the product insert back too.
-    # Unlike the bare add_product above (deliberately unscoped — see this
-    # module's top comment), this is scoped from the start: the schema itself
-    # requires idol_id/group_id, so there's always an owner to check against.
+    # Creates the Product and its AlbumDetail/MerchDetail row in one transaction, so a rejected
+    # detail (bad owner, wrong company) rolls the product insert back too. Unlike the bare
+    # add_product above, this is scoped from the start — the schema requires idol_id/group_id.
     @staticmethod
     def add_product_with_detail(db: Session, data: ProductWithDetailCreate, image_url: str | None, current_user: Users) -> Product | Literal["category_not_found", "owner_not_found", "artist_inactive", "forbidden"]:
         if not db.get(Category, data.category_id):
@@ -413,16 +399,8 @@ class ProductService:
             category=product.category.name if product.category else None,
         )
 
-    # Batch version of _resolve_product_company_id — one query per detail table
-    # instead of two per product. A product with neither an album_details nor a
-    # merch_details row (plain merch) resolves to None: "no company owns
-    # this", not "belongs to no one's view" — _manager_scope_violation already
-    # treats that as manageable by any manager, so a manager's product list
-    # must show it too, not just their own company's products. Not
-    # underscore-prefixed (unlike its singular sibling above): order_service's
-    # get_manager_orders_page reuses it to scope orders by which products in
-    # them belong to a company, the same "which detail row, then which of
-    # idol_id/group_id" chain.
+    # Batch version of _resolve_product_company_id — one query per detail table instead of two
+    # per product. Not underscore-prefixed: order_service.get_manager_orders_page reuses it too.
     @staticmethod
     def resolve_product_company_ids(db: Session, products: list[Product]) -> dict[uuid.UUID, uuid.UUID | None]:
         product_ids = [p.id for p in products]
@@ -489,14 +467,9 @@ class ProductService:
             colors=colors,
         )
 
-    # --- sales history — replaces the manager products page's old hard-delete
-    # action (deleting a Product with any order history would CASCADE-delete
-    # its orders_items rows, same class of data-loss bug the concert/idol/group
-    # soft-deletes already fixed). "Delete" isn't replaced with a soft-delete
-    # here since Product has nothing to flip (no is_active/status column) —
-    # instead the manager UI drops the destructive action entirely in favor of
-    # a read-only view of what actually sold, paginated newest-first same as
-    # /products/pagination's page/limit/count/data shape.
+    # --- sales history — replaces the old hard-delete action (would CASCADE-delete order
+    # history). Product has no is_active/status column to soft-delete instead, so the manager UI
+    # drops the destructive action entirely in favor of a read-only sales view.
     @staticmethod
     def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> ProductSalesPageRead | Literal["not_found", "forbidden"]:
         db_product = db.get(Product, product_id)

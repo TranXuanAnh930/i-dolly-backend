@@ -68,17 +68,9 @@ class PaymentService:
 
     @staticmethod
     def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:TicketCheckoutCreate | WonTicketCheckoutCreate) -> Payment:
-        # Deliberately does not commit
-        # caller (ticket_service.checkout_ticket) holds a row lock on the
-        # ticket_type for the whole operation and commits once at the end, so
-        # the lock is never released mid-flow the way order_service.checkout's
-        # commit here does (see docs/project_status.md §4 item 1 — the exact
-        # race this avoids repeating in new code).
-        #
-        # Requires ticket.id already populated (the caller flushes right after
-        # adding the ticket) — this sets payment.ticket_id below, the column
-        # that lets a payment say what it was for without a reverse scan of
-        # tickets.payment_id.
+        # Deliberately does not commit — the caller holds a row lock on ticket_type for the whole
+        # operation and commits once at the end, so the lock is never released mid-flow. Requires
+        # ticket.id already populated (the caller flushes right after adding the ticket).
         gateway = PaymentGateway(data.gateway)
         payment_status = PaymentStatus.pending
         pg_approval_url = None

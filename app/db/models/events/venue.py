@@ -17,23 +17,10 @@ class Venue(Base):
     city = Column(String, nullable=False)
     country = Column(String, nullable=False)
     total_capacity = Column(Integer, nullable=False)
-    # GENERATED ALWAYS AS ... STORED in Postgres (database-design.md §3.7) —
-    # Computed() tells SQLAlchemy this column is server-derived, so it's
-    # correctly left out of every INSERT/UPDATE this app ever issues. The
-    # column and its generation expression already exist from the migration
-    # (965f5718222d) via raw DDL; this mirrors that expression for
-    # documentation, not to (re-)create it — create_all() is never run
-    # against this already-migrated table.
-    #
-    # CORRECTION: originally typed as a Postgres `venue_size_enum`, cast via
-    # `::venue_size_enum` inside the CASE. That broke on a real Postgres
-    # instance ("generation expression is not immutable") — a GENERATED
-    # STORED expression must be strictly IMMUTABLE, and Postgres's text->enum
-    # cast for a user-defined enum goes through `enum_in()`, which is STABLE,
-    # not IMMUTABLE (enum membership can change at runtime via ALTER TYPE ...
-    # ADD VALUE). Casting to a user-defined enum can never appear inside a
-    # GENERATED STORED expression. Fixed by making this a plain String/VARCHAR
-    # column instead — see the corrected 965f5718222d migration.
+    # GENERATED ALWAYS AS ... STORED in Postgres (database-design.md §3.7) — Computed() marks it
+    # server-derived so SQLAlchemy leaves it out of every INSERT/UPDATE. Plain VARCHAR, not a
+    # Postgres enum: a GENERATED STORED expression must be IMMUTABLE, and the enum text->enum cast
+    # is only STABLE (enum values can change at runtime via ALTER TYPE ... ADD VALUE).
     size = Column(
         String,
         Computed(

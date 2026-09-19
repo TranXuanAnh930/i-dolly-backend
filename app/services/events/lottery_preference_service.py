@@ -12,18 +12,10 @@ from app.schema.events import LotteryPreferenceSet
 
 class LotteryPreferenceService:
 
-    # Fan-facing, self-scoped by user_id = current_user.id — not company-scoped,
-    # since a fan (regardless of role) ranks their own tier preferences for a
-    # concert they want to attend. No require_manager_or_admin gate here; any
-    # authenticated user manages only their own rows (database-design.md §4's
-    # "own data" row for lottery_preferences/lottery_entries).
-    #
-    # set_preferences replaces the fan's whole ranked list for one concert in a
-    # single call rather than exposing rank-by-rank insert/update, since
-    # uq_lottery_preferences_rank/uq_lottery_preferences_tier make partial edits
-    # error-prone (swapping two ranks needs a temp value to avoid a UNIQUE clash
-    # mid-transaction). This mirrors how the draw job will read the list anyway:
-    # whole, in rank order.
+    # Fan-facing, self-scoped by user_id — not company-scoped, since any authenticated user just
+    # ranks their own preferences (database-design.md §4). set_preferences replaces the whole
+    # ranked list in one call rather than rank-by-rank edits, since the rank/tier UNIQUE
+    # constraints make partial edits error-prone (swapping two ranks needs a temp value).
 
     @staticmethod
     def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users) -> list[LotteryPreference]:

@@ -18,15 +18,9 @@ def get_cached_products(db:Session) -> list[dict[str, Any]]:
     if not products:
         return []
 
-    # One ProductRead per row, not one call on the whole list — model_validate
-    # validates a single instance, not a collection. ProductRead also has no
-    # from_attributes config, so it needs a dict, not the raw Product row;
-    # category is the one field that still needs manual resolution either way
-    # (category_id -> Category.name isn't something Pydantic can infer from a
-    # plain dict), but every other field now comes from the real schema
-    # instead of a second hand-typed field list, so a renamed/added/removed
-    # ProductRead field surfaces as a loud validation error here, not a silent
-    # drift between this cache and the schema.
+    # ProductRead has no from_attributes config, so it validates a dict, not the raw Product row —
+    # category still needs manual resolution (category_id -> Category.name), but every other
+    # field goes through the real schema so a renamed field fails loudly here, not silently.
     payload = [
         ProductRead.model_validate({
             "id": p.id,
@@ -48,13 +42,9 @@ def get_cached_store_page(db: Session) -> StorePageRead | Literal[False]:
     if cached:
         return StorePageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
-    # get_store_page already returns a real StorePageRead instance (nested
-    # ORM objects — Genre, Group — resolved via each nested model's
-    # from_attributes config), so this cache can't diverge from the schema
-    # without a validation error at write time. model_dump(mode="json") turns
-    # it into the UUID-as-str / date-as-isoformat-string shapes msgpack can
-    # store; the cache-hit branch above reconstructs the same StorePageRead
-    # from that stored dict.
+    # get_store_page already returns a real StorePageRead instance, so this cache can't diverge
+    # from the schema. model_dump(mode="json") gives msgpack-storable values; the cache-hit branch
+    # above reconstructs the same StorePageRead from that stored dict.
     result = ProductService.get_store_page(db)
     if not result:
         return False
