@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from typing import Any, List
+from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import ValidationError
