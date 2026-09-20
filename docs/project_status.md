@@ -71,7 +71,7 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 - **Email dispatch**: every transactional email — verification link, order placed, ticket
   confirmed, lottery win, lottery loss, lottery ticket payment confirmed — goes through
   `celery_app.send_task("app.tasks.email.send_email", ...)`, picked up by the worker task in
-  `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s SendGrid wrapper. Subject/body
+  `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s Resend wrapper. Subject/body
   text for each lives in `app/utils/email_templates.py`'s `EmailTemplate` enum (`.subject`,
   `.render(**fields)`) rather than inline at each call site. Replaces the original
   `BackgroundTasks.add_task` approach (verification email only) — that couldn't extend to
@@ -702,6 +702,28 @@ newly introduced.
     directly and the change only ever short-circuits a branch that previously either silently
     failed (placeholder key) or shouldn't have run at all (real key, which was the actual bug).
 
+41. ~~**Migrated transactional email from SendGrid to Resend**~~ — **FIXED**. `app/utils/email_sender.py`
+    now calls `resend.Emails.send(...)` instead of `SendGridAPIClient.send(...)`; same `send_email(to_email,
+    subject, body)` signature, same `settings.DEBUG` dev short-circuit (item 40). `Settings.SENDGRID_API_KEY`
+    is gone, replaced by `RESEND_API_KEY`; `FROM_EMAIL` is unchanged but now must be on a
+    Resend-verified domain (or the sandbox `onboarding@resend.dev`) rather than an arbitrary address.
+    `requirements.txt`, `.env.example`, CI (`.github/workflows/test.yml`'s two `SENDGRID_API_KEY`
+    secret refs), and `render.yaml` all updated to match.
+
+    While updating `render.yaml`, found a pre-existing gap unrelated to this migration: the
+    `i-dolly-backend-worker` service's `envVars` never included `SENDGRID_API_KEY`/`FROM_EMAIL` at
+    all (only the web service had them), even though the worker is the process that actually runs
+    `app.tasks.email.send_email` and `Settings` has no default for that key — so the worker
+    container should have failed to boot on Render whenever it was last (re)deployed from this
+    config. Added `RESEND_API_KEY`/`FROM_EMAIL`/`DEBUG` to the worker's `envVars` as part of this
+    change; worth confirming on the next real Render deploy that the worker was actually getting
+    these some other way (e.g. set by hand in the dashboard, out of sync with this exported file).
+
+    Verification: `py_compile` + `ruff check --select F401,F811,F821` clean; full unit suite
+    (393/393) unaffected, since the autouse `celery_app.send_task` mock from item 40 stops any
+    test from reaching `email_sender.py` at all. No live Resend account available from here to
+    smoke-test an actual delivery — same caveat as item 40's SendGrid verification.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
@@ -791,8 +813,8 @@ duplicated logic. Re-running it against an already-resolved payment is a no-op
 mechanism, not a separate event-id table.
 
 **What shipped**:
-1. `app/config/settings.py`: `PAYPAL_CLIENT_ID`/`SECRET`, `PAYPAL_MODE`, `PAYPAL_WEBHOOK_ID`,
-   `BASE_URL`. No new dependency beyond `httpx`.
+1. `app/config/settings.py`: `PAYPAL_CLIENT_ID`/`SECRET`, `PAYPAL_MODE`, `PAYPAL_WEBHOOK_ID`.
+   No new dependency beyond `httpx`.
 2. `app/utils/paypal_client.py`: `get_access_token()` (OAuth2 client-credentials, cached
    in-process), `create_order()`, `capture_order()`, `verify_webhook_signature()` (posts back to
    PayPal's own verify-webhook-signature endpoint rather than reimplementing cert-chain
@@ -818,7 +840,7 @@ times the webhook re-delivers, with no second table to maintain.
 
 **Verified**: a real PayPal Sandbox ticket checkout end-to-end (create order → approve → capture
 → `Payment`/`Ticket` flip to success/paid), confirmed both locally and against the deployed
-Render app (so `PAYPAL_MODE`/`BASE_URL`/`FRONTEND_BASE_URL`/CORS are wired correctly there too).
+Render app (so `PAYPAL_MODE`/`FRONTEND_BASE_URL`/CORS are wired correctly there too).
 ~~The order-flow (marketplace) checkout hasn't been run end-to-end against real PayPal~~ —
 **DONE**: run against real PayPal Sandbox the same way as the ticket flow, same
 create-order → approve → capture → `Payment`/`Order` success sequence.

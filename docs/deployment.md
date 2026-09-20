@@ -16,8 +16,8 @@ Budget time for that specifically; see §7's rollback note.
   or DigitalOcean Spaces all work unchanged (`app/utils/storage.py` already supports all three via
   env vars, no code change). Cloudflare R2 has the most generous free tier if you don't already
   have a preference.
-- A real SendGrid account is **not** required to deploy — `app/config/settings.py` requires
-  `SENDGRID_API_KEY`/`FROM_EMAIL` to be *set* (Pydantic will refuse to boot otherwise) but nothing
+- A real Resend account is **not** required to deploy — `app/config/settings.py` requires
+  `RESEND_API_KEY`/`FROM_EMAIL` to be *set* (Pydantic will refuse to boot otherwise) but nothing
   forces them to be valid unless you actually exercise the email-sending code paths. A placeholder
   value is fine for a portfolio deploy; see the table in §6. Payments use a mock gateway only —
   real payment gateway integration is deferred to a later phase, so there's nothing to configure
@@ -132,8 +132,8 @@ causes it, not on a cron — so only the worker needs deploying, not a second sc
 | `EMAIL_TOKEN_EXPIRE_MINUTES` | `60` | |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | from §4 | internal hostname, usually `6379`, `0` |
 | `CELERY_BROKER_DB` | `1` (default, can be omitted) | only relevant if the Celery worker (§5) is deployed too |
-| `SENDGRID_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | only exercised by the email-verification/password-reset flows |
-| `DEBUG` | **omit, or `false`** | dev-only: prints verification/reset tokens to the console when a placeholder `SENDGRID_API_KEY` can't actually deliver (`architecture.md`'s SendGrid note). Leaving it unset defaults to `false`, which is what you want here — these token bodies have no business in Render's shared logs. |
+| `RESEND_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | only exercised by the email-verification/password-reset flows |
+| `DEBUG` | **omit, or `false`** | dev-only: prints verification/reset tokens to the console when a placeholder `RESEND_API_KEY` can't actually deliver (`architecture.md`'s Resend note). Leaving it unset defaults to `false`, which is what you want here — these token bodies have no business in Render's shared logs. |
 | `BASE_URL` | `https://<your-render-service>.onrender.com` | used to build the email verification link |
 | `CORS_ORIGINS` | your frontend's real origin(s), comma-separated | e.g. `https://your-frontend.vercel.app` |
 | `STORAGE_BACKEND` | `s3` | per the chosen option in §3 |
