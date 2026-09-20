@@ -83,12 +83,6 @@ notifications above, the ETL/analytics pipeline, and a full audit trail on the P
 webhook paths: [`docs/project_status.md`](docs/project_status.md) §2 and §5.
 
 ## Known limitations
-- Caching is narrow in scope — only `GET /products/all` and `GET /products/store-page` read from
-  Redis (`app/cache/cache_service.py`); `/pagination` is a reasonable next candidate (bounded key
-  space) but not yet built, and `/filter`'s key space (free-text `name`, arbitrary price ranges) is
-  deliberately left uncached — caching it would mean paying for cache writes that almost never get
-  read back, and it hands an unauthenticated caller a way to fill Redis with junk keys for free. See
-  `docs/project_status.md` §4 item 21.
 - Rate-limit coverage now spans all 25 router files by an explicit tier policy
   (`docs/architecture.md` §3) rather than ad hoc per-route judgment — but the policy itself (which
   tier a route belongs to, and its exact limit/window) is a portfolio-scoped judgment call, not a

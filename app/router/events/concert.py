@@ -116,6 +116,11 @@ async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(r
 # (concert, idol|group) pair it links. Scoped via the parent concert's
 # company_id (concert_service._manager_scope_violation).
 
+# FRONTEND: not currently called by i-dolly-frontend. A concert's lineup
+# shows up in the UI (EventDetailPage) only as data already embedded in
+# GET /concerts/{id}/detail — this join-table CRUD itself is unused (a
+# concert's performers must be assigned some other way today, e.g. directly
+# in the DB, since there's no frontend form for it).
 @router.post("/performers/assign", response_model=ConcertPerformerRead)
 async def assign_concert_performer(data: ConcertPerformerAssign, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> ConcertPerformer:
     try:
@@ -125,6 +130,7 @@ async def assign_concert_performer(data: ConcertPerformerAssign, current_user: U
     CacheService.delete_cached_concert_detail(data.concert_id)  # lineup/performing_groups changed
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.get("/performers/concert/{concert_id}", response_model=List[ConcertPerformerRead])
 async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_performers(db, concert_id)
@@ -135,6 +141,7 @@ async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(g
 # Bulk read — lets a client that needs to know which concerts feature a
 # given idol/group (e.g. a group's detail page) fetch every performer link
 # in one request instead of looping over every concert.
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.get("/performers/all", response_model=List[ConcertPerformerRead])
 async def list_all_concert_performers(db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_all_performers(db)
@@ -142,6 +149,7 @@ async def list_all_concert_performers(db: Session = Depends(get_db)) -> list[Con
         raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/performers/{id}", response_model=MessageResponse)
 async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:

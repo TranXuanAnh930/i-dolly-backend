@@ -39,6 +39,10 @@ async def add_new_campaign(data: LotteryCampaignCreate, current_user: Users = De
         CacheService.delete_cached_concert_detail(concert_id)
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend. Campaign data is read
+# off the bundled GET /concerts/{id}/detail instead — LotteryService only
+# ever calls the inherited create() (POST /add) for the manager-facing
+# "add campaign" form; this read and update/delete below are unused.
 @router.get("/ticket_type/{ticket_type_id}", response_model=List[LotteryCampaignRead])
 async def list_campaigns(ticket_type_id: uuid.UUID, db: Session = Depends(get_db)) -> list[LotteryCampaign]:
     result = LotteryCampaignService.get_campaigns(db, ticket_type_id)
@@ -46,6 +50,7 @@ async def list_campaigns(ticket_type_id: uuid.UUID, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="No lottery campaigns found for this ticket type")
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.get("/{id}", response_model=LotteryCampaignRead)
 async def get_campaign_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> LotteryCampaign:
     campaign = LotteryCampaignService.get_campaign(db, id)
@@ -53,6 +58,9 @@ async def get_campaign_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Lo
         raise HTTPException(status_code=404, detail="Lottery campaign not found")
     return campaign
 
+# FRONTEND: not currently called by i-dolly-frontend. A manager can create a
+# lottery campaign but has no UI to edit one afterward (e.g. no way to
+# adjust entry_end_at once it's set).
 @router.put("/update/{id}", response_model=LotteryCampaignRead)
 async def update_existing_campaign(id: uuid.UUID, data: LotteryCampaignUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> LotteryCampaign:
     try:
@@ -64,6 +72,7 @@ async def update_existing_campaign(id: uuid.UUID, data: LotteryCampaignUpdate, c
         CacheService.delete_cached_concert_detail(concert_id)
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_campaign(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:

@@ -234,12 +234,14 @@ newly introduced.
     documented anti-enumeration behavior (§4 item 18), and a missing required `idempotency_key`
     field (item 16). All were test bugs, not app bugs — every failure was the suite lagging behind
     landed service changes, fixed by updating the tests to match.
-12. **Seeded accounts share a hardcoded, publicly-committed password** — `scripts/seed.py`
-    creates an admin, three managers, and four fans all with the same password, written in plain
-    text in the file's own docstring. Fine for a throwaway local dev DB; not fine the moment
-    `scripts/seed.py` runs against a real deployed database — anyone reading the repo could then
-    log in as admin. Not fixed: randomize the seeded password before ever seeding a real
-    deployment, or don't seed it at all.
+12. ~~**Seeded accounts share a hardcoded, publicly-committed password**~~ — **FIXED**.
+    `scripts/seed.py` creates an admin, three managers, and twelve fans all with the same password
+    — now `SEED_PASSWORD` read from the environment (`os.environ.get("SEED_PASSWORD", ...)`), with
+    the old hardcoded string kept only as the local-dev fallback default. `.env.example` documents
+    the var (commented out, since it's optional and dev-only). Still on the deployer to actually set
+    it before ever running this script against a real database — this fixes the "committed to the
+    repo, silently the same everywhere" problem, not the "don't seed a real deployment with
+    guessable accounts at all" one, which is a separate judgment call for whoever deploys.
 13. ~~**An invalid `category_id` on a product write crashed with a raw 500**~~ — **FIXED**.
     `add_product`/`update_product`/`add_bulk_products` set `category_id` with no existence check,
     so a bad id raised an uncaught `IntegrityError` at commit instead of a 4xx. `update_product`
@@ -675,6 +677,30 @@ newly introduced.
     Every test asserting the old sentinel value (`test_lottery_draw_service.py` ×6,
     `test_product_service.py` ×4, `test_user_service.py` ×3) switched to `pytest.raises(...)`.
     Confirmed clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
+
+40. ~~**Unit tests were sending real emails through SendGrid**~~ — **FIXED**. Two compounding bugs:
+    - `app/utils/email_sender.py::send_email` only used `settings.DEBUG` to print a dev banner —
+      it still called the real SendGrid API afterward regardless, on the assumption that a local
+      `SENDGRID_API_KEY` is always a placeholder so the real send just fails harmlessly. That
+      assumption doesn't hold once a real key is configured locally (e.g. to test the email flow
+      end to end), which is exactly this project's actual local setup: `DEBUG=true` *and* a real
+      key. Fixed by `return`ing right after the dev-banner print instead of falling through.
+    - `tests/unit/events/test_lottery_draw_service.py`'s win/loss tests never mocked
+      `celery_app.send_task` (unlike `test_user_service.py`/`test_auth_service.py`, which already
+      did), so every winner/loser `draw_lottery` produces enqueues a real `LOTTERY_WON`/
+      `LOTTERY_LOST` email task — which, with a real worker consuming the same Redis broker and
+      the `send_email` bug above, gets actually delivered. Fixed at the root rather than patching
+      that one file: a new autouse fixture in `tests/unit/conftest.py` mocks
+      `app.celery_app.celery_app.send_task` for every unit test, so no test — this one or a future
+      one — can reach a real Celery dispatch regardless of whether it remembers to mock it itself.
+      Same defense-in-depth reasoning as `tests/conftest.py`'s existing `fake_redis` patch.
+
+    Verified by temporarily poisoning `sendgrid.SendGridAPIClient.send` to raise if ever called
+    and running the full unit suite — 393/393 passed, confirming nothing reaches it. `docs/`
+    doesn't have a way to verify the second fix (`send_email`'s DEBUG short-circuit) against a live
+    SendGrid account from here; reasoned safe instead, since no test exercises `email_sender.py`
+    directly and the change only ever short-circuits a branch that previously either silently
+    failed (placeholder key) or shouldn't have run at all (real key, which was the actual bug).
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

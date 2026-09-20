@@ -52,11 +52,16 @@ async def refresh(request:Request, _:None=Depends(rate_limit(10,60,ip_key)), db:
     response.set_cookie("refresh_token", new_token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 
+# FRONTEND: not currently called by i-dolly-frontend — no "resend
+# verification email" action exists anywhere in the UI.
 @router.post("/verify-request", response_model=MessageResponse)
 async def send_verification_link(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key))) -> MessageResponse:
     AuthService.email_verification_process(user)
     return MessageResponse(msg="email verification link sent")
 
+# FRONTEND: not currently called by i-dolly-frontend — there's no landing
+# page for the verification link this endpoint is meant to be opened from
+# (the email itself is sent server-side; see settings.py's DEBUG comment).
 @router.get("/verify", response_model=MessageResponse)
 async def verify_email(token:str, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
     result = AuthService.verify_email_token(db, token)

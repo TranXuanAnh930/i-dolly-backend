@@ -5,12 +5,16 @@ from app.config.settings import settings
 
 
 def send_email(to_email:str, subject:str, body:str) -> None:
-    # Dev convenience (settings.DEBUG, default false — see its own comment):
-    # print the token-bearing body up front, before attempting a real send,
-    # since SENDGRID_API_KEY is a placeholder in most local setups and the
-    # send below will fail either way.
+    # Dev convenience (settings.DEBUG, default false — see its own comment): print the
+    # token-bearing body and stop, instead of also attempting a real send. The old version printed
+    # then sent anyway, on the assumption that SENDGRID_API_KEY is always a placeholder in local
+    # dev so the real send would just fail harmlessly — that assumption breaks the moment someone
+    # configures a real key locally (e.g. to test the email flow end to end), and it was silently
+    # spending real SendGrid quota on every test run that reached this function through an
+    # unmocked Celery dispatch.
     if settings.DEBUG:
         print(f"\n--- DEV EMAIL (SendGrid not delivering) ---\nTo: {to_email}\nSubject: {subject}\n{body}\n--- END DEV EMAIL ---\n")
+        return
 
     msg = Mail(
         from_email=settings.FROM_EMAIL,
