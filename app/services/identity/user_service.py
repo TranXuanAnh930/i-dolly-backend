@@ -3,6 +3,7 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
+from app.celery_app import celery_app
 from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
 from app.db.models.talent import ManagementCompany
@@ -13,7 +14,7 @@ from app.services.shared.notification_service import NotificationService
 from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import create_password_reset_token, verify_rtoken_and_get_user_id
-from app.celery_app import celery_app
+
 
 class UserService:
 
