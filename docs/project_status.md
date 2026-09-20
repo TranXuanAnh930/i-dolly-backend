@@ -678,6 +678,30 @@ newly introduced.
     `test_product_service.py` ×4, `test_user_service.py` ×3) switched to `pytest.raises(...)`.
     Confirmed clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
 
+40. ~~**Unit tests were sending real emails through SendGrid**~~ — **FIXED**. Two compounding bugs:
+    - `app/utils/email_sender.py::send_email` only used `settings.DEBUG` to print a dev banner —
+      it still called the real SendGrid API afterward regardless, on the assumption that a local
+      `SENDGRID_API_KEY` is always a placeholder so the real send just fails harmlessly. That
+      assumption doesn't hold once a real key is configured locally (e.g. to test the email flow
+      end to end), which is exactly this project's actual local setup: `DEBUG=true` *and* a real
+      key. Fixed by `return`ing right after the dev-banner print instead of falling through.
+    - `tests/unit/events/test_lottery_draw_service.py`'s win/loss tests never mocked
+      `celery_app.send_task` (unlike `test_user_service.py`/`test_auth_service.py`, which already
+      did), so every winner/loser `draw_lottery` produces enqueues a real `LOTTERY_WON`/
+      `LOTTERY_LOST` email task — which, with a real worker consuming the same Redis broker and
+      the `send_email` bug above, gets actually delivered. Fixed at the root rather than patching
+      that one file: a new autouse fixture in `tests/unit/conftest.py` mocks
+      `app.celery_app.celery_app.send_task` for every unit test, so no test — this one or a future
+      one — can reach a real Celery dispatch regardless of whether it remembers to mock it itself.
+      Same defense-in-depth reasoning as `tests/conftest.py`'s existing `fake_redis` patch.
+
+    Verified by temporarily poisoning `sendgrid.SendGridAPIClient.send` to raise if ever called
+    and running the full unit suite — 393/393 passed, confirming nothing reaches it. `docs/`
+    doesn't have a way to verify the second fix (`send_email`'s DEBUG short-circuit) against a live
+    SendGrid account from here; reasoned safe instead, since no test exercises `email_sender.py`
+    directly and the change only ever short-circuits a branch that previously either silently
+    failed (placeholder key) or shouldn't have run at all (real key, which was the actual bug).
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
