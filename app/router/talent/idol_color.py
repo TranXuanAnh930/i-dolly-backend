@@ -22,6 +22,9 @@ from app.services.talent.idol_color_service import IdolColorService
 # a manager shouldn't be able to break another company's data.
 router = APIRouter(prefix="/idol_colors", tags=["Idol Colors"])
 
+# FRONTEND: not currently called by i-dolly-frontend. IdolColorsService
+# only ever calls the inherited getAllPublic() (GET /idol_colors/all) —
+# there's no color-management UI, so create/update/delete are unused.
 @router.post("/add", response_model=IdolColorRead)
 async def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
     db_color = IdolColorService.add_idol_color(db, color)
@@ -37,6 +40,7 @@ async def list_idol_colors(_: None = Depends(rate_limit(10, 60, ip_key)), db: Se
         raise HTTPException(status_code=404, detail="No idol colors found")
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.put("/update/{id}", response_model=IdolColorRead)
 async def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
     try:
@@ -48,6 +52,7 @@ async def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current
     CacheService.delete_cached_manager_products_pages()
     return db_color
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_idol_color(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     result = IdolColorService.delete_idol_color(db, id)

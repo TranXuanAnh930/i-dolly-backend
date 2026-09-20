@@ -72,6 +72,8 @@ async def get_product_sales(
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
+# FRONTEND: not currently called by i-dolly-frontend — no dedicated
+# "search by id" flow exists (/products/{id}/detail is used instead).
 @router.get("/search/{id:uuid}", response_model=ProductWithCategoryRead)
 async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> ProductWithCategoryRead:
     db_product = ProductService.search_product(db, id)
@@ -204,6 +206,8 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
     CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product Deleted successfully")
 
+# FRONTEND: not currently called by i-dolly-frontend — products are always
+# created one at a time (/add_product or /add_with_detail).
 @router.post("/bulk_products", response_model=MessageResponse)
 async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     try:
@@ -215,6 +219,8 @@ async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=
     CacheService.delete_cached_product_details()
     return MessageResponse(msg=f"{len(db_product)} bulk products added successfully")
 
+# FRONTEND: not currently called by i-dolly-frontend — the Store grid uses
+# the unpaginated /products/store-page bundle instead.
 @router.get("/pagination", response_model=ProductsPageRead)
 async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> ProductsPageRead:
     db_product = ProductService.pagination_process(db, page, limit)
@@ -225,6 +231,8 @@ async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, l
         data=db_product,
     )
 
+# FRONTEND: not currently called by i-dolly-frontend — the Store grid
+# filters client-side over the /products/store-page bundle instead.
 @router.get("/filter", response_model=ProductsPageRead)
 async def filter_product(
     category:str,

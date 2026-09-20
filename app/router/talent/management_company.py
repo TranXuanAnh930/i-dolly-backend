@@ -34,6 +34,9 @@ async def list_companies(_: None = Depends(rate_limit(10, 60, ip_key)), db: Sess
         raise HTTPException(status_code=404, detail="No management companies found")
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend. CompaniesService only
+# ever calls the inherited getAllPublic() (GET /management_companies/all) —
+# there's no single-company lookup anywhere in the UI.
 @router.get("/{id}", response_model=ManagementCompanyRead)
 async def get_company_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> ManagementCompany:
     company = ManagementCompanyService.get_company(db, id)

@@ -55,6 +55,14 @@ class EmailTemplate(Enum):
         "Price: ${price:.2f}\n\n"
         "Bring this confirmation with you to the venue.",
     )
+    RESET_PASSWORD = (
+        "Reset your password",
+        "Hi {email},\n\n"
+        "We received a request to reset your password. If you didn't make this request, you can ignore this email.\n\n"
+        "Click the link below to choose a new password:\n\n"
+        "{link}\n\n"
+        "This link expires in 15 minutes.",
+    )
 
     @property
     def subject(self) -> str:

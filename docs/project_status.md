@@ -234,12 +234,14 @@ newly introduced.
     documented anti-enumeration behavior (§4 item 18), and a missing required `idempotency_key`
     field (item 16). All were test bugs, not app bugs — every failure was the suite lagging behind
     landed service changes, fixed by updating the tests to match.
-12. **Seeded accounts share a hardcoded, publicly-committed password** — `scripts/seed.py`
-    creates an admin, three managers, and four fans all with the same password, written in plain
-    text in the file's own docstring. Fine for a throwaway local dev DB; not fine the moment
-    `scripts/seed.py` runs against a real deployed database — anyone reading the repo could then
-    log in as admin. Not fixed: randomize the seeded password before ever seeding a real
-    deployment, or don't seed it at all.
+12. ~~**Seeded accounts share a hardcoded, publicly-committed password**~~ — **FIXED**.
+    `scripts/seed.py` creates an admin, three managers, and twelve fans all with the same password
+    — now `SEED_PASSWORD` read from the environment (`os.environ.get("SEED_PASSWORD", ...)`), with
+    the old hardcoded string kept only as the local-dev fallback default. `.env.example` documents
+    the var (commented out, since it's optional and dev-only). Still on the deployer to actually set
+    it before ever running this script against a real database — this fixes the "committed to the
+    repo, silently the same everywhere" problem, not the "don't seed a real deployment with
+    guessable accounts at all" one, which is a separate judgment call for whoever deploys.
 13. ~~**An invalid `category_id` on a product write crashed with a raw 500**~~ — **FIXED**.
     `add_product`/`update_product`/`add_bulk_products` set `category_id` with no existence check,
     so a bad id raised an uncaught `IntegrityError` at commit instead of a 4xx. `update_product`

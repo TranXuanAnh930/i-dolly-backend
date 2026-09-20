@@ -1,19 +1,19 @@
 import uuid
 from typing import Literal
 
-from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
+from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
 from app.db.models.talent import ManagementCompany
 from app.exception.common import BadRequestError, NotFoundError
 from app.schema.identity import ManagerCreate, UserRole
 from app.schema.shared import NotificationType
 from app.services.shared.notification_service import NotificationService
-from app.utils.email_sender import send_email
+from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import create_password_reset_token, verify_rtoken_and_get_user_id
-
+from app.celery_app import celery_app
 
 class UserService:
 
@@ -28,7 +28,7 @@ class UserService:
         return True
 
     @staticmethod
-    def reset_password_process(db: Session, email: str, background_tasks:BackgroundTasks) -> Literal[True]:
+    def reset_password_process(db: Session, email: str) -> Literal[True]:
         # Always returns True, whether or not the email is registered — the
         # router gives the same generic response either way, so this endpoint
         # can't be used to enumerate which emails have an account. Only the
@@ -36,18 +36,13 @@ class UserService:
         user = db.query(Users).filter(Users.email == email).first()
         if user:
             token = create_password_reset_token(user.id)
-            email_body = f"""
-                Hi {user.email},
-                This is I-Dolly.
-                Thank you for using our service. We received a request to reset your password. If you did not make this request, please ignore this email.
-                Your password reset token is:
-
-                {token}
-
-                This token is valid for only 15 minutes. Please use it to reset your password. If you have any questions, please contact our support team.
-
-            """
-            background_tasks.add_task(send_email, user.email, "Reset password", email_body)
+            # Points at the frontend's own /reset-password page (not this API
+            # directly, unlike email_verification_process's link) since that
+            # page is what actually calls POST /profile/set-password with the
+            # token — the fan clicks through, never copy-pastes anything.
+            link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
+            email_body = EmailTemplate.RESET_PASSWORD.render(email=user.email, link=link)
+            celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.RESET_PASSWORD.subject, email_body])
         return True
 
     @staticmethod

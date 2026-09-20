@@ -79,6 +79,9 @@ async def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:No
         raise HTTPException(status_code=404, detail="No orders found")
     return order
 
+# FRONTEND: not currently called by i-dolly-frontend. There's no order-
+# detail drilldown page — OrderService only calls checkout(), fetchAll()
+# (/fetch_placed_order) and getManagerOrdersPage().
 @router.get("/single_placed_order/{order_id}", response_model=Order)
 async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     order = OrderService.fetch_single_placed_order(db, user.id, order_id)
@@ -86,6 +89,8 @@ async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
+# FRONTEND: not currently called by i-dolly-frontend — no "cancel order" UI
+# exists for a fan.
 @router.patch("/cancel/{order_id}", response_model=Order)
 async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> OrderModel:
     try:
@@ -93,6 +98,8 @@ async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user),
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
+# FRONTEND: not currently called by i-dolly-frontend — no shipping-status
+# view exists for a fan.
 @router.get("/shipping_status/{order_id}", response_model=None)
 async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> ModelShippingStatus:
     shipstat = OrderService.get_user_shipping_status(db, user.id, order_id)
@@ -100,6 +107,8 @@ async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_use
         raise HTTPException(status_code=404, detail="Order not found or not authorized")
     return shipstat
 
+# FRONTEND: not currently called by i-dolly-frontend — ManagerOrdersPage
+# lists orders but has no control to update a shipping status.
 @router.patch("/update_shipping_status/{order_id}", response_model=None)
 async def update_status(new_status:SchemaShippingStatus, order_id:uuid.UUID, user:Users=Depends(require_admin), db:Session=Depends(get_db)) -> ModelShippingStatus:
     try:

@@ -47,6 +47,9 @@ async def get_ticket_type_by_id(id: uuid.UUID, db: Session = Depends(get_db)) ->
         raise HTTPException(status_code=404, detail="Ticket type not found")
     return ticket_type
 
+# FRONTEND: not currently called by i-dolly-frontend. A manager can create a
+# ticket tier (TicketTypesService.create -> POST /add) but has no UI to edit
+# or delete one afterward.
 @router.put("/update/{id}", response_model=TicketTypeRead)
 async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> TicketType:
     try:
@@ -58,6 +61,7 @@ async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, cur
     CacheService.delete_cached_concert_detail(result.concert_id)
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
