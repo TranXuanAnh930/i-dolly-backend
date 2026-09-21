@@ -1,14 +1,17 @@
 import uuid
 from typing import Literal
 
-from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
+from app.celery_app import celery_app
+from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
 from app.db.models.talent import ManagementCompany
-from app.schema.identity import ManagerCreate
+from app.exception.common import BadRequestError, NotFoundError
+from app.schema.identity import ManagerCreate, UserRole
+from app.schema.shared import NotificationType
 from app.services.shared.notification_service import NotificationService
-from app.utils.email_sender import send_email
+from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import create_password_reset_token, verify_rtoken_and_get_user_id
 
@@ -26,7 +29,7 @@ class UserService:
         return True
 
     @staticmethod
-    def reset_password_process(db: Session, email: str, background_tasks:BackgroundTasks) -> Literal[True]:
+    def reset_password_process(db: Session, email: str) -> Literal[True]:
         # Always returns True, whether or not the email is registered — the
         # router gives the same generic response either way, so this endpoint
         # can't be used to enumerate which emails have an account. Only the
@@ -34,18 +37,13 @@ class UserService:
         user = db.query(Users).filter(Users.email == email).first()
         if user:
             token = create_password_reset_token(user.id)
-            email_body = f"""
-                Hi {user.email},
-                This is I-Dolly.
-                Thank you for using our service. We received a request to reset your password. If you did not make this request, please ignore this email.
-                Your password reset token is:
-
-                {token}
-
-                This token is valid for only 15 minutes. Please use it to reset your password. If you have any questions, please contact our support team.
-
-            """
-            background_tasks.add_task(send_email, user.email, "Reset password", email_body)
+            # Points at the frontend's own /reset-password page (not this API
+            # directly, unlike email_verification_process's link) since that
+            # page is what actually calls POST /profile/set-password with the
+            # token — the fan clicks through, never copy-pastes anything.
+            link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
+            email_body = EmailTemplate.RESET_PASSWORD.render(email=user.email, link=link)
+            celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.RESET_PASSWORD.subject, email_body])
         return True
 
     @staticmethod
@@ -67,7 +65,7 @@ class UserService:
         # A security notice, not the reset-request email above (that one only
         # queues a token, before we know a reset ever actually completes) —
         # carries no order/ticket/lottery_entry/concert FK, just user_id.
-        NotificationService.create_notification(db, user.id, "password_reset")
+        NotificationService.create_notification(db, user.id, NotificationType.password_reset)
         db.commit()
         db.refresh(user)
         return True
@@ -77,30 +75,34 @@ class UserService:
         user = db.get(Users, user_id)
         if not user:
             return None
-        if user.is_admin:
+        # role is the source of truth for require_admin (architecture.md's own note) — checking/
+        # setting only the deprecated is_admin column here left this endpoint unable to actually
+        # grant admin access. is_admin is still set alongside role, not removed, since it isn't
+        # dropped yet (database-design.md §4's two-step migration plan) and UserOut still reads it.
+        if user.role == UserRole.admin:
             return False
+        user.role = UserRole.admin
         user.is_admin = True
         db.commit()
         db.refresh(user)
         return True
 
     @staticmethod
-    def create_manager_user(db: Session, data: ManagerCreate) -> Users | Literal["email_taken", "company_not_found"]:
+    def create_manager_user(db: Session, data: ManagerCreate) -> Users:
         """Admin-only counterpart to self-register — creates a brand new
         role='manager' account tied to a company in one call, rather than
         promoting an already-registered fan (which /make-admin does for admins,
-        but with no company concept). Returns a short string sentinel for the
-        two distinct failure modes, matching this file's other multi-way-failure
-        functions (architecture.md SS2)."""
+        but with no company concept). Raises BadRequestError for a taken email,
+        NotFoundError for a missing company — see app/exception/common.py."""
         if db.query(Users).filter(Users.email == data.email).first():
-            return "email_taken"
+            raise BadRequestError("Email already registered")
         if not db.get(ManagementCompany, data.company_id):
-            return "company_not_found"
+            raise NotFoundError("Management company not found")
         new_user = Users(
             name=data.name,
             email=data.email,
             hashed_password=hash_password(data.password),
-            role="manager",
+            role=UserRole.manager,
             company_id=data.company_id,
             is_verified=False,
         )

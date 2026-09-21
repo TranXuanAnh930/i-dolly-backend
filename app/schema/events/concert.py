@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +10,13 @@ from app.schema.events.lottery_preference import LotteryPreferenceRead
 from app.schema.events.ticket_type import TicketTypeRead
 from app.schema.events.venue import VenueRead
 
+
+class ConcertStatus(str, Enum):
+    scheduled = "scheduled"
+    on_sale = "on_sale"
+    sold_out = "sold_out"
+    completed = "completed"
+    cancelled = "cancelled"
 
 class ConcertBase(BaseModel):
     venue_id: uuid.UUID
@@ -22,12 +30,12 @@ class ConcertCreate(ConcertBase):
     company_id: uuid.UUID
 
 class ConcertUpdate(ConcertBase):
-    status: str | None = None  # 'scheduled' | 'on_sale' | 'sold_out' | 'completed' | 'cancelled'
+    status: ConcertStatus | None = None
 
 class ConcertRead(ConcertBase):
     id: uuid.UUID
     company_id: uuid.UUID
-    status: str
+    status: ConcertStatus
     created_at: datetime
     updated_at: datetime
 
@@ -57,7 +65,7 @@ class EventsPageRead(BaseModel):
 
 # An idol actually performing at the concert — a group credit expands to
 # that group's current members, a solo credit is just that one idol
-# (concert_service.get_concert_detail does the expansion/dedup; this is
+# (concert_service.get_concert_detail_public does the expansion/dedup; this is
 # only the shape the lineup list needs, not a full IdolRead).
 class LineupIdol(BaseModel):
     id: uuid.UUID

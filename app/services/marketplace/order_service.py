@@ -1,10 +1,9 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from app.cache.cache_service import delete_cached_products
+from app.cache.cache_service import CacheService
 from app.db.models.identity import Users
 from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product, ShippingAddress, ShippingStatus
 from app.exception.checkout import (
@@ -14,6 +13,7 @@ from app.exception.checkout import (
     PaymentAmountMismatch,
     UnsupportedGatewayError,
 )
+from app.exception.common import BadRequestError, NotFoundError
 from app.exception.db_triggers import (
     DuplicateIdempotencyKeyError,
     FanOnlyPurchaseError,
@@ -21,6 +21,7 @@ from app.exception.db_triggers import (
     commit_or_raise,
     flush_or_raise,
 )
+from app.schema.identity import UserRole
 from app.schema.marketplace import (
     ManagerOrderItemRead,
     ManagerOrderRead,
@@ -30,6 +31,7 @@ from app.schema.marketplace import (
     PaymentStatus,
 )
 from app.schema.marketplace import ShippingStatus as SchemaShippingStatus
+from app.schema.shared import NotificationType
 from app.services.marketplace.payment_service import PaymentService
 from app.services.marketplace.product_service import ProductService
 from app.services.shared.notification_service import NotificationService
@@ -42,7 +44,7 @@ class OrderService:
     @staticmethod
     def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate) -> Order:
         user = db.get(Users, user_id)
-        if not user or user.role != "fan":
+        if not user or user.role != UserRole.fan:
             # Primary check for trg_orders_fan_only — see FanOnlyPurchaseError's docstring.
             raise FanOnlyPurchaseError("Only fan accounts can check out")
         address = (db.query(ShippingAddress).filter(payment_data.shipping_address_id==ShippingAddress.id, ShippingAddress.user_id==user_id).first())
@@ -106,11 +108,11 @@ class OrderService:
                 item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
                 product.quantity-=item.quantity
             db.query(Cart).filter(Cart.user_id==payment.user_id, Cart.product_id.in_(product_ids)).delete()
-            NotificationService.create_notification(db, user_id, "order_confirmation", order_id=order.id)
+            NotificationService.create_notification(db, user_id, NotificationType.order_confirmation, order_id=order.id)
 
         commit_or_raise(db)  # trg_orders_fan_only / chk_products_capacity backstop
         if payment.status == PaymentStatus.success:
-            delete_cached_products()
+            CacheService.delete_cached_products()
         db.refresh(order)
         return order
 
@@ -125,24 +127,21 @@ class OrderService:
         return order
 
     @staticmethod
-    def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | Literal[False]:
-        order = (
+    def fetch_single_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | None:
+        return (
             db.query(Order)
             .filter(Order.id==order_id, Order.user_id==user_id)
             .options(selectinload(Order.items))
             .first()
         )
-        if not order:
-            return False
-        return order
 
     @staticmethod
-    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order | Literal[False] | None:
+    def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order:
         order = OrderService.fetch_single_placed_order(db, user_id, order_id)
         if not order:
-            return None
+            raise NotFoundError("Order not found")
         if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
-            return False
+            raise BadRequestError("Order is already shipped and cannot be cancelled")
         order.status = OrderStatus.cancelled
         order.shippingstatus.status = SchemaShippingStatus.cancelled
         db.commit()
@@ -151,16 +150,16 @@ class OrderService:
 
     @staticmethod
     def get_user_shipping_status(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> ShippingStatus | None:
-        ship_status = db.query(Order).filter(Order.user_id==user_id, Order.id==order_id).options(selectinload(Order.shippingstatus)).first()
-        if not ship_status:
-            return None
-        return ship_status.shippingstatus
+        order = db.query(Order).filter(Order.user_id==user_id, Order.id==order_id).options(selectinload(Order.shippingstatus)).first()
+        return order.shippingstatus if order else None
 
     @staticmethod
-    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID) -> ShippingStatus | None:
+    def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID) -> ShippingStatus:
         order_shippingstatus = db.query(ShippingStatus).filter(ShippingStatus.order_id==order_id).first()
-        if not order_shippingstatus or order_shippingstatus.status == SchemaShippingStatus.cancelled:
-            return None
+        if not order_shippingstatus:
+            raise NotFoundError("Order not found")
+        if order_shippingstatus.status == SchemaShippingStatus.cancelled:
+            raise BadRequestError("Order is cancelled and its shipping status can no longer be updated")
         order_shippingstatus.status = new_status
         db.commit()
         db.refresh(order_shippingstatus)

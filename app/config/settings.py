@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     DATABASE_NAME : str
     DATABASE_USER : str
     DATABASE_PWD : str
-    SENDGRID_API_KEY : str
     FROM_EMAIL : str
+    RESEND_API_KEY : str
 
-    # Dev convenience only. `.env.example`'s SENDGRID_API_KEY is a placeholder, so a real send
+    # Dev convenience only. `.env.example`'s RESEND_API_KEY is a placeholder, so a real send
     # always fails locally — when true, send_email() prints the email body (verification/reset
     # tokens included) to the console instead. Never set true in production.
     DEBUG: bool = True

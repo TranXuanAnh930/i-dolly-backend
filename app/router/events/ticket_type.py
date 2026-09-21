@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.cache_service import CacheService
 from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.events import TicketType
 from app.db.models.identity import Users
@@ -24,11 +25,13 @@ router = APIRouter(prefix="/ticket_types", tags=["Ticket Types"])
 @router.post("/add", response_model=TicketTypeRead)
 async def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> TicketType:
     try:
-        return TicketTypeService.add_ticket_type(db, data, current_user)
+        result = TicketTypeService.add_ticket_type(db, data, current_user)
     except TriggerViolationError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_concert_detail(data.concert_id)  # its parent concert's ticket_types list just grew
+    return result
 
 @router.get("/concert/{concert_id}", response_model=List[TicketTypeRead])
 async def list_ticket_types(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[TicketType]:
@@ -44,19 +47,26 @@ async def get_ticket_type_by_id(id: uuid.UUID, db: Session = Depends(get_db)) ->
         raise HTTPException(status_code=404, detail="Ticket type not found")
     return ticket_type
 
+# FRONTEND: not currently called by i-dolly-frontend. A manager can create a
+# ticket tier (TicketTypesService.create -> POST /add) but has no UI to edit
+# or delete one afterward.
 @router.put("/update/{id}", response_model=TicketTypeRead)
 async def update_existing_ticket_type(id: uuid.UUID, data: TicketTypeUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> TicketType:
     try:
-        return TicketTypeService.update_ticket_type(db, id, data, current_user)
+        result = TicketTypeService.update_ticket_type(db, id, data, current_user)
     except TriggerViolationError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_concert_detail(result.concert_id)
+    return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_ticket_type(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
-        TicketTypeService.delete_ticket_type(db, id, current_user)
+        result = TicketTypeService.delete_ticket_type(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_concert_detail(result.concert_id)
     return MessageResponse(msg="Ticket type deleted successfully")

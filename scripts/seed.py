@@ -35,9 +35,13 @@ If the app container isn't up yet, this starts a temporary one just for the
 seed run:
     docker compose run --rm app python scripts/seed.py
 
-All seeded user accounts share the password: Password123!
+All seeded user accounts share one password — SEED_PASSWORD from the environment if set,
+otherwise the default below. Set SEED_PASSWORD before seeding anything but a throwaway local dev
+DB: this script's default is public (committed to this file), so a deploy seeded without
+overriding it is an admin account anyone reading the repo can log into.
 """
 import asyncio
+import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -83,7 +87,7 @@ from app.db.session import session as SessionLocal
 from app.utils.hashing import hash_password
 from app.utils.storage import get_storage
 
-SEED_PASSWORD = "Password123!"
+SEED_PASSWORD = os.environ.get("SEED_PASSWORD", "Password123!")
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 

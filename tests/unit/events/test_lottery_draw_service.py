@@ -2,7 +2,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, TicketType
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 
 # ─────────────────────────────────────────────────────────────
 # Id sentinels — see test_services.py's own note: plain MagicMock-based
@@ -236,9 +239,9 @@ class TestDrawLottery:
         )
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
+        with pytest.raises(BadRequestError):
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
-        assert result == "no_open_campaigns"
         db.commit.assert_not_called()
 
     def test_entries_still_open_rejects_whole_draw(self):
@@ -254,9 +257,9 @@ class TestDrawLottery:
         )
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
+        with pytest.raises(BadRequestError):
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
-        assert result == "campaign_not_ended"
         assert campaign.status == "open"  # untouched
         db.commit.assert_not_called()
 
@@ -272,9 +275,8 @@ class TestDrawLottery:
         )
         other_manager = make_mock_user(role="manager", company_id=OTHER_COMPANY_ID)
 
-        result = LotteryDrawService.draw_lottery(db, other_manager, CONCERT_ID)
-
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            LotteryDrawService.draw_lottery(db, other_manager, CONCERT_ID)
 
     def test_fan_role_is_forbidden(self):
         """_user_scope_violation used to check `role == "user"` — a typo,
@@ -294,9 +296,8 @@ class TestDrawLottery:
         )
         fan = make_mock_user(role="fan", company_id=None)
 
-        result = LotteryDrawService.draw_lottery(db, fan, CONCERT_ID)
-
-        assert result == "forbidden"
+        with pytest.raises(ForbiddenError):
+            LotteryDrawService.draw_lottery(db, fan, CONCERT_ID)
 
     def test_no_ticket_types_for_concert(self):
         from app.services.events.lottery_draw_service import LotteryDrawService
@@ -304,9 +305,8 @@ class TestDrawLottery:
         db = make_mock_db(concert=make_mock_concert(), ticket_types=[], campaigns=[], preferences=[], entries=[])
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
-
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
     def test_concert_not_found(self):
         from app.services.events.lottery_draw_service import LotteryDrawService
@@ -314,6 +314,5 @@ class TestDrawLottery:
         db = make_mock_db(concert=None)
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        result = LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
-
-        assert result == "not_found"
+        with pytest.raises(NotFoundError):
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)

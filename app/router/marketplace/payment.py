@@ -15,10 +15,13 @@ from app.utils.paypal_client import verify_webhook_signature
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
 
+# FRONTEND: not currently called by i-dolly-frontend — PaymentService only
+# ever calls the order/ticket-scoped status checks and the PayPal capture
+# below, never this bulk "all payments" read.
 @router.patch("/status/all", response_model=list[PaymentResponse])
 async def check_payment_status_all(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> list[Payment]:
     payment = PaymentService.fetch_all_payments(db, user.id)
-    if payment is None:
+    if not payment:
         raise HTTPException(status_code=404, detail="Payment not found!")
     return payment
 

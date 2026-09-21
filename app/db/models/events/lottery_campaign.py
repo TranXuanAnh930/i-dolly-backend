@@ -5,8 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
-
-campaign_status_enum = Enum("open", "drawn", "completed", "cancelled", name="campaign_status_enum")
+from app.schema.events.lottery_campaign import CampaignStatus
 
 
 class LotteryCampaign(Base):
@@ -22,7 +21,7 @@ class LotteryCampaign(Base):
     # it records when the campaign WAS drawn, not a scheduled target.
     draw_at = Column(DateTime(timezone=True), nullable=True)
     payment_deadline_hours = Column(Integer, nullable=False, server_default="48")
-    status = Column(campaign_status_enum, nullable=False, server_default="open")
+    status = Column(Enum(CampaignStatus, name="campaign_status_enum"), nullable=False, server_default="open")
     # Per-campaign, data-driven cap — raise it for a specific campaign via an
     # UPDATE, no migration needed (database-design.md's note on this table).
     max_entries_per_user = Column(Integer, nullable=False, server_default="1")

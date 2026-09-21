@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -8,6 +7,7 @@ from app.db.models.identity import Users
 from app.exception.common import BadRequestError, NotFoundError
 from app.exception.db_triggers import commit_or_raise
 from app.schema.events import LotteryPreferenceSet
+from app.schema.events.ticket_type import SaleMethod
 
 
 class LotteryPreferenceService:
@@ -30,7 +30,7 @@ class LotteryPreferenceService:
             tt = db.get(TicketType, tt_id)
             if not tt or tt.concert_id != data.concert_id:
                 raise NotFoundError("Concert or ticket type not found, or a ticket type doesn't belong to this concert")
-            if tt.sale_method != "lottery":
+            if tt.sale_method != SaleMethod.lottery:
                 raise BadRequestError("Can only rank lottery-sale ticket types")
         db.query(LotteryPreference).filter(
             LotteryPreference.concert_id == data.concert_id,
@@ -49,16 +49,13 @@ class LotteryPreferenceService:
         return rows
 
     @staticmethod
-    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryPreference] | Literal[False]:
-        result = (
+    def get_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryPreference]:
+        return (
             db.query(LotteryPreference)
             .filter(LotteryPreference.concert_id == concert_id, LotteryPreference.user_id == current_user.id)
             .order_by(LotteryPreference.rank)
             .all()
         )
-        if not result:
-            return False
-        return result
 
     @staticmethod
     def clear_my_preferences(db: Session, concert_id: uuid.UUID, current_user: Users) -> bool:

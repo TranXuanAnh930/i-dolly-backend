@@ -9,19 +9,23 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import Category
 from app.deps.auth import require_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
 from app.schema.marketplace import CategoryBase, CategoryRead, CategoryUpdate
 from app.services.marketplace.category_service import CategoryService
 
 router = APIRouter(prefix="/categories", tags=["Category"])
 
+# FRONTEND: not currently called by i-dolly-frontend. No service class for
+# this entity exists there at all — the whole /categories router is unused.
 @router.post("/add", response_model=MessageResponse)
 async def add_new_category(category:CategoryBase, db:Session=Depends(get_db), current_user:Users = Depends(require_admin)) -> MessageResponse:
-    db_category = CategoryService.add_categories(db, category)
-    if not db_category:
-        raise HTTPException(status_code=400, detail="Invalid input")
+    CategoryService.add_categories(db, category)
     return MessageResponse(msg="Category added successfully")
 
+# FRONTEND: not currently called by i-dolly-frontend. A product's category
+# shows up in the UI only as the resolved `category` name string already
+# embedded in ProductRead — this standalone list is unused.
 @router.get("/all", response_model=List[CategoryRead])
 async def see_categories(_:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> list[Category]:
     result = CategoryService.get_categories(db)
@@ -29,13 +33,16 @@ async def see_categories(_:None=Depends(rate_limit(10,60,ip_key)), db:Session=De
         raise HTTPException(status_code=404, detail="No categories found")
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.put("/update", response_model=MessageResponse)
 async def update_existing_category(new_category:CategoryUpdate, id:uuid.UUID, db:Session=Depends(get_db), current_user:Users=Depends(require_admin)) -> MessageResponse:
-    db_category = CategoryService.update_category(db, id, new_category)
-    if not db_category:
-        raise HTTPException(status_code=404, detail="Category not found")
+    try:
+        CategoryService.update_category(db, id, new_category)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     return MessageResponse(msg="Category updated successfully")
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_category(id:uuid.UUID, db:Session=Depends(get_db), current_user:Users=Depends(require_admin)) -> MessageResponse:
     result = CategoryService.delete_category(db, id)

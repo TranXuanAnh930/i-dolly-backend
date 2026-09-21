@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -17,7 +17,7 @@ class ShippingAddress(Base):
     address_line1 = Column(String, nullable=False)
     address_line2 = Column(String,nullable=True)
     city = Column(String, nullable=False)
-    postal_code = Column(Integer, nullable=False)
+    postal_code = Column(String, nullable=False)
     state = Column(String, nullable=False)
     country = Column(String, nullable=False)
 

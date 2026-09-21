@@ -1,10 +1,17 @@
 import uuid
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel
 
 from app.schema.events.lottery_campaign import LotteryCampaignRead
 
+
+class LotteryEntryStatus(str, Enum):
+    pending = "pending"
+    won = "won"
+    lost = "lost"
+    expired = "expired"
 
 class LotteryEntryApply(BaseModel):
     campaign_id: uuid.UUID
@@ -13,7 +20,7 @@ class LotteryEntryRead(BaseModel):
     id: uuid.UUID
     campaign_id: uuid.UUID
     user_id: uuid.UUID
-    status: str
+    status: LotteryEntryStatus
     created_at: datetime
     drawn_at: datetime | None
     # Embedded (via the ORM relationship of the same name, itself embedding

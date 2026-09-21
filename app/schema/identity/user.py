@@ -1,9 +1,14 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from enum import Enum
 
 from pydantic import BaseModel, EmailStr, Field
 
+
+class UserRole(str, Enum):
+    admin = "admin"
+    manager = "manager"
+    fan = "fan"
 
 class User(BaseModel):
     name : str = Field(..., min_length=1, max_length=100)
@@ -14,7 +19,7 @@ class UserCreate(User):
 
 class UserOut(User):
     id : uuid.UUID
-    role : Literal["admin", "manager", "fan"]
+    role : UserRole
     company_id : uuid.UUID | None = None
     is_active : bool = True
     is_admin : bool = False

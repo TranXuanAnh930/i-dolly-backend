@@ -19,8 +19,10 @@ from app.exception.checkout import (
     PaymentFailedError,
     UnsupportedGatewayError,
 )
+from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
-from app.schema.marketplace.order import ManagerOrdersPageRead, Order
+from app.schema.identity import UserRole
+from app.schema.marketplace.order import ManagerOrdersPageRead, Order, OrderStatus
 from app.schema.marketplace.payment import PaymentCreate
 from app.schema.marketplace.shipping import ShippingStatus as SchemaShippingStatus
 from app.services.marketplace.order_service import OrderService
@@ -32,10 +34,11 @@ router = APIRouter(prefix="/order", tags=["Order"])
 async def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     try:
         order = OrderService.checkout(db, user.id, data)
-        email_body = EmailTemplate.ORDER_PLACED.render(
-            email=user.email, order_id=order.id, total=order.total_price, status=order.status.value
-        )
-        celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.ORDER_PLACED.subject, email_body])
+        if order.status != OrderStatus.cancelled:  # a declined mock payment cancels the order outright — no confirmation email for that
+            email_body = EmailTemplate.ORDER_PLACED.render(
+                email=user.email, order_id=order.id, total=order.total_price, status=order.status.value
+            )
+            celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.ORDER_PLACED.subject, email_body])
         return order
     # Order matters here: PaymentFailedError, InsufficientStockError,
     # PaymentAmountMismatch and UnsupportedGatewayError all subclass
@@ -66,7 +69,7 @@ async def get_manager_orders_page_data(
     # company_id passed — only an admin (no single company of their own)
     # may pick a different one, same trust boundary as every other manager
     # settings page's write endpoints.
-    scoped_company_id = current_user.company_id if current_user.role == "manager" else company_id
+    scoped_company_id = current_user.company_id if current_user.role == UserRole.manager else company_id
     return OrderService.get_manager_orders_page(db, scoped_company_id, page, limit)
 
 @router.get("/fetch_placed_order", response_model=List[Order])
@@ -76,6 +79,9 @@ async def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:No
         raise HTTPException(status_code=404, detail="No orders found")
     return order
 
+# FRONTEND: not currently called by i-dolly-frontend. There's no order-
+# detail drilldown page — OrderService only calls checkout(), fetchAll()
+# (/fetch_placed_order) and getManagerOrdersPage().
 @router.get("/single_placed_order/{order_id}", response_model=Order)
 async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     order = OrderService.fetch_single_placed_order(db, user.id, order_id)
@@ -83,15 +89,17 @@ async def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
+# FRONTEND: not currently called by i-dolly-frontend — no "cancel order" UI
+# exists for a fan.
 @router.patch("/cancel/{order_id}", response_model=Order)
 async def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> OrderModel:
-    order = OrderService.cancel_placed_order(db, user.id, order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found!")
-    if order is False:
-        raise HTTPException(status_code=400, detail="Order is already shipped and cannot be cancelled")
-    return order
+    try:
+        return OrderService.cancel_placed_order(db, user.id, order_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
+# FRONTEND: not currently called by i-dolly-frontend — no shipping-status
+# view exists for a fan.
 @router.get("/shipping_status/{order_id}", response_model=None)
 async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> ModelShippingStatus:
     shipstat = OrderService.get_user_shipping_status(db, user.id, order_id)
@@ -99,9 +107,11 @@ async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_use
         raise HTTPException(status_code=404, detail="Order not found or not authorized")
     return shipstat
 
+# FRONTEND: not currently called by i-dolly-frontend — ManagerOrdersPage
+# lists orders but has no control to update a shipping status.
 @router.patch("/update_shipping_status/{order_id}", response_model=None)
 async def update_status(new_status:SchemaShippingStatus, order_id:uuid.UUID, user:Users=Depends(require_admin), db:Session=Depends(get_db)) -> ModelShippingStatus:
-    order = OrderService.update_shipping_status(db, new_status, order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found/is cancelled")
-    return order
+    try:
+        return OrderService.update_shipping_status(db, new_status, order_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e

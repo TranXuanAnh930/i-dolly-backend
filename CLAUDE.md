@@ -22,7 +22,7 @@ documented — including what's unfinished — over one that looks superficially
 ## 3. Tech stack
 
 FastAPI + Pydantic v2, PostgreSQL via SQLAlchemy 2.0 + Alembic, Redis (caching + rate limiting),
-JWT auth, a mock payment gateway (real gateway integration is next-phase work), SendGrid,
+JWT auth, a mock payment gateway (real gateway integration is next-phase work), Resend,
 a local/S3 image-storage abstraction, Docker
 Compose for local dev. Full detail, versions, and reasoning: **`docs/architecture.md`** §1.
 

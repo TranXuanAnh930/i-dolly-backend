@@ -1,5 +1,5 @@
 import uuid
-from typing import Literal
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -22,12 +22,16 @@ from app.schema.events import (
     ConcertCreate,
     ConcertDetailRead,
     ConcertPerformerAssign,
+    ConcertStatus,
     ConcertUpdate,
     EventsPageRead,
     LineupIdol,
     ManagerEventsPageRead,
     PerformingGroupMini,
 )
+from app.schema.events.lottery_entry import LotteryEntryStatus
+from app.schema.events.ticket import TicketStatus
+from app.schema.identity import UserRole
 
 # Once a concert has gone on sale (or further), fans may already hold
 # tickets or lottery entries against its date/capacity — a manager silently
@@ -37,7 +41,7 @@ from app.schema.events import (
 # live event" rule as delete_concert's soft-delete below. Also reused as-is
 # by ticket_type_service for the same reason on a ticket type's own
 # capacity (total_quantity).
-_EVENT_OPEN_STATUSES = {"on_sale", "sold_out", "completed"}
+_EVENT_OPEN_STATUSES = {ConcertStatus.on_sale, ConcertStatus.sold_out, ConcertStatus.completed}
 
 class ConcertService:
 
@@ -47,7 +51,7 @@ class ConcertService:
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
-        return current_user.role == "manager" and current_user.company_id != company_id
+        return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
     def add_concert(db: Session, concert: ConcertCreate, current_user: Users) -> Concert:
@@ -64,11 +68,8 @@ class ConcertService:
         return db_concert
 
     @staticmethod
-    def get_concerts(db: Session) -> list[Concert] | Literal[False]:
-        result = db.query(Concert).all()
-        if not result:
-            return False
-        return result
+    def get_concerts(db: Session) -> list[Concert]:
+        return db.query(Concert).all()
 
     @staticmethod
     def get_concert(db: Session, id: uuid.UUID) -> Concert | None:
@@ -82,7 +83,7 @@ class ConcertService:
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
             raise ForbiddenError("Managers can only manage concerts for their own company")
         if (
-            current_user.role == "manager"
+            current_user.role == UserRole.manager
             and db_concert.status in _EVENT_OPEN_STATUSES
             and (
                 data.event_datetime != db_concert.event_datetime
@@ -118,7 +119,7 @@ class ConcertService:
             raise NotFoundError("Concert not found")
         if ConcertService._manager_scope_violation(current_user, db_concert.company_id):
             raise ForbiddenError("Managers can only manage concerts for their own company")
-        db_concert.status = "cancelled"
+        db_concert.status = ConcertStatus.cancelled
         db.commit()
         db.refresh(db_concert)
         return db_concert
@@ -145,18 +146,12 @@ class ConcertService:
         return db_link
 
     @staticmethod
-    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer] | Literal[False]:
-        result = db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
-        if not result:
-            return False
-        return result
+    def get_performers(db: Session, concert_id: uuid.UUID) -> list[ConcertPerformer]:
+        return db.query(ConcertPerformer).filter(ConcertPerformer.concert_id == concert_id).all()
 
     @staticmethod
-    def get_all_performers(db: Session) -> list[ConcertPerformer] | Literal[False]:
-        result = db.query(ConcertPerformer).all()
-        if not result:
-            return False
-        return result
+    def get_all_performers(db: Session) -> list[ConcertPerformer]:
+        return db.query(ConcertPerformer).all()
 
     @staticmethod
     def remove_performer(db: Session, id: uuid.UUID, current_user: Users) -> ConcertPerformer:
@@ -173,10 +168,10 @@ class ConcertService:
     # --- page-shaped reads (see idol_service.py's equivalent comment) ---
 
     @staticmethod
-    def get_events_page(db: Session) -> EventsPageRead | Literal[False]:
+    def get_events_page(db: Session) -> EventsPageRead | None:
         concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
         if not concerts:
-            return False
+            return None
         return EventsPageRead(concerts=concerts)
 
     @staticmethod
@@ -188,11 +183,18 @@ class ConcertService:
             color_hex=idol.color.hex_code if idol.color else None,
         )
 
+    # Split from the old single get_concert_detail: everything here is identical for every
+    # viewer (including guests), so it's the unit CacheService.get_cached_concert_detail caches
+    # verbatim — has_ticket/has_won_lottery/entered_campaign_ids/my_lottery_preferences stay at
+    # their False/empty schema defaults here on purpose. get_personalization below computes
+    # those per-viewer fields separately, and the router (get_concert_detail_by_id) merges them
+    # onto this result uncached, so a cached response never leaks one fan's ticket/lottery
+    # state to another.
     @staticmethod
-    def get_concert_detail(db: Session, id: uuid.UUID, current_user: Users | None = None) -> ConcertDetailRead | Literal[False]:
+    def get_concert_detail_public(db: Session, id: uuid.UUID) -> ConcertDetailRead | None:
         concert = db.query(Concert).options(joinedload(Concert.venue)).filter(Concert.id == id).first()
         if not concert:
-            return False
+            return None
         ticket_types = db.query(TicketType).filter(TicketType.concert_id == id).all()
         performers = (
             db.query(ConcertPerformer)
@@ -260,55 +262,10 @@ class ConcertService:
         for campaign in lottery_campaigns:
             campaign.entry_count = entry_counts.get(campaign.id, 0)
 
-        # Only meaningful for a logged-in viewer — a guest gets False/empty for
-        # all four rather than the endpoint requiring auth, since the rest of
-        # this page is public. "Bought" means an actually-paid ticket, not a
-        # reserved or abandoned checkout; a lottery ticket has lottery_entry_id
-        # set on the Ticket row it creates, so `paid`/`used` here already
-        # covers a fan who won and paid, on top of a straight direct-sale
-        # purchase.
-        has_ticket = False
-        has_won_lottery = False
-        entered_campaign_ids = []
-        my_lottery_preferences = []
-        if current_user:
-            has_ticket = (
-                db.query(Ticket)
-                .join(TicketType, Ticket.ticket_type_id == TicketType.id)
-                .filter(
-                    TicketType.concert_id == id,
-                    Ticket.user_id == current_user.id,
-                    Ticket.status.in_(["paid", "used"]),
-                )
-                .first()
-                is not None
-            )
-            has_won_lottery = (
-                db.query(LotteryEntry)
-                .join(LotteryCampaign, LotteryEntry.campaign_id == LotteryCampaign.id)
-                .join(TicketType, LotteryCampaign.ticket_type_id == TicketType.id)
-                .filter(
-                    TicketType.concert_id == id,
-                    LotteryEntry.user_id == current_user.id,
-                    LotteryEntry.status == "won",
-                )
-                .first()
-                is not None
-            )
-            if campaign_ids:
-                entered_campaign_ids = [
-                    row[0]
-                    for row in db.query(LotteryEntry.campaign_id)
-                    .filter(LotteryEntry.user_id == current_user.id, LotteryEntry.campaign_id.in_(campaign_ids))
-                    .all()
-                ]
-            my_lottery_preferences = (
-                db.query(LotteryPreference)
-                .filter(LotteryPreference.concert_id == id, LotteryPreference.user_id == current_user.id)
-                .order_by(LotteryPreference.rank)
-                .all()
-            )
-
+        # has_ticket/has_won_lottery/entered_campaign_ids/my_lottery_preferences are deliberately
+        # left at their ConcertDetailRead defaults (False/[]/[]/[]) — this bundle is public and
+        # cacheable precisely because it never depends on who's asking. get_personalization below
+        # computes those four fields per request, never cached.
         return ConcertDetailRead(
             concert=concert,
             venue=concert.venue,
@@ -317,11 +274,58 @@ class ConcertService:
             performing_groups=performing_groups,
             lottery_campaigns=lottery_campaigns,
             direct_sale_campaigns=direct_sale_campaigns,
-            has_ticket=has_ticket,
-            has_won_lottery=has_won_lottery,
-            entered_campaign_ids=entered_campaign_ids,
-            my_lottery_preferences=my_lottery_preferences,
         )
+
+    # The four fields ConcertDetailRead defaults to False/empty for a guest. "Bought" means an
+    # actually-paid ticket, not a reserved or abandoned checkout; a lottery ticket has
+    # lottery_entry_id set on the Ticket row it creates, so `paid`/`used` here already covers a
+    # fan who won and paid, on top of a straight direct-sale purchase. campaign_ids is passed in
+    # rather than re-queried — the caller already has it from the (possibly cached)
+    # lottery_campaigns list, and re-deriving it here would be a second query for data the
+    # public bundle already fetched.
+    @staticmethod
+    def get_personalization(db: Session, id: uuid.UUID, current_user: Users, campaign_ids: list[uuid.UUID]) -> dict[str, Any]:
+        has_ticket = (
+            db.query(Ticket)
+            .join(TicketType, Ticket.ticket_type_id == TicketType.id)
+            .filter(
+                TicketType.concert_id == id,
+                Ticket.user_id == current_user.id,
+                Ticket.status.in_([TicketStatus.paid, TicketStatus.used]),
+            )
+            .first()
+            is not None
+        )
+        has_won_lottery = (
+            db.query(LotteryEntry)
+            .join(LotteryCampaign, LotteryEntry.campaign_id == LotteryCampaign.id)
+            .join(TicketType, LotteryCampaign.ticket_type_id == TicketType.id)
+            .filter(
+                TicketType.concert_id == id,
+                LotteryEntry.user_id == current_user.id,
+                LotteryEntry.status == LotteryEntryStatus.won,
+            )
+            .first()
+            is not None
+        )
+        entered_campaign_ids = [
+            row[0]
+            for row in db.query(LotteryEntry.campaign_id)
+            .filter(LotteryEntry.user_id == current_user.id, LotteryEntry.campaign_id.in_(campaign_ids))
+            .all()
+        ] if campaign_ids else []
+        my_lottery_preferences = (
+            db.query(LotteryPreference)
+            .filter(LotteryPreference.concert_id == id, LotteryPreference.user_id == current_user.id)
+            .order_by(LotteryPreference.rank)
+            .all()
+        )
+        return {
+            "has_ticket": has_ticket,
+            "has_won_lottery": has_won_lottery,
+            "entered_campaign_ids": entered_campaign_ids,
+            "my_lottery_preferences": my_lottery_preferences,
+        }
 
     # --- manager/admin settings page (see idol_service.py's equivalent
     # comment — an empty list here is a normal state, not a 404).

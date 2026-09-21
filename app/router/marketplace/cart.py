@@ -8,6 +8,7 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import Cart
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
 from app.schema.common import MessageResponse
 from app.schema.marketplace import CartDetailRead, CartItem
@@ -18,14 +19,9 @@ router = APIRouter(prefix="/cart", tags=["Cart"])
 @router.post("/add_cart", response_model=None)
 async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db:Session=Depends(get_db)) -> Cart:
     try:
-        cart = CartService.add_to_cart(db, cart_item, user.id)
-    except TriggerViolationError as e:
+        return CartService.add_to_cart(db, cart_item, user.id)
+    except (TriggerViolationError, ServiceError) as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    if cart is None:
-        raise HTTPException(status_code=404, detail="Insufficient stock or product not found")
-    if cart is False:
-        raise HTTPException(status_code=404, detail="User not found")
-    return cart
 
 @router.get("/see_cart", response_model=CartDetailRead)
 async def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> CartDetailRead:

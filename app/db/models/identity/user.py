@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
+from app.schema.identity.user import UserRole
 
 
 class Users(Base):
@@ -16,7 +17,7 @@ class Users(Base):
     email = Column(String, unique=True,index=True, nullable=False)
     is_active = Column(Boolean, server_default=func.true(), nullable=False)
     is_admin = Column(Boolean, server_default=func.false(), nullable=False)  # deprecated, superseded by role — kept until app code no longer reads it (CLAUDE.md Section 5)
-    role = Column(Enum("admin", "manager", "fan", name="user_role_enum"), nullable=False, server_default="fan")
+    role = Column(Enum(UserRole, name="user_role_enum"), nullable=False, server_default="fan")
     company_id = Column(UUID(as_uuid=True), ForeignKey("management_companies.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # set only when role='manager'; enforced in service layer, not a DB constraint
     hashed_password = Column(String, nullable=False)
     is_verified = Column(Boolean, server_default=func.false(), nullable=False)

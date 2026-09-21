@@ -15,9 +15,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
-
-ticket_tier_enum = Enum("vip", "premium", "regular", name="ticket_tier_enum")
-sale_method_enum = Enum("lottery", "direct", name="sale_method_enum")
+from app.schema.events.ticket_type import SaleMethod, TicketTier
 
 
 class TicketType(Base):
@@ -26,11 +24,11 @@ class TicketType(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
-    tier = Column(ticket_tier_enum, nullable=False)
+    tier = Column(Enum(TicketTier, name="ticket_tier_enum"), nullable=False)
     price = Column(Numeric(10, 2), nullable=False)
     total_quantity = Column(Integer, nullable=False)
     sold_quantity = Column(Integer, nullable=False, server_default="0")
-    sale_method = Column(sale_method_enum, nullable=False, server_default="lottery")
+    sale_method = Column(Enum(SaleMethod, name="sale_method_enum"), nullable=False, server_default="lottery")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (

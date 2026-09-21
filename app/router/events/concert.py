@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.cache.cache_service import CacheService
 from app.cache.rate_limit import ip_key, rate_limit
 from app.celery_app import celery_app
 from app.db.models.events import Concert, ConcertPerformer
@@ -34,9 +35,12 @@ router = APIRouter(prefix="/concerts", tags=["Concerts"])
 @router.post("/add", response_model=ConcertRead)
 async def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Concert:
     try:
-        return ConcertService.add_concert(db, concert, current_user)
+        result = ConcertService.add_concert(db, concert, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_events_page()
+    CacheService.delete_cached_manager_events_page()
+    return result
 
 @router.get("/all", response_model=List[ConcertRead])
 async def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Concert]:
@@ -47,20 +51,29 @@ async def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Sessi
 
 @router.get("/events-page", response_model=EventsPageRead)
 async def get_events_page_data(db: Session = Depends(get_db)) -> EventsPageRead:
-    result = ConcertService.get_events_page(db)
+    result = CacheService.get_cached_events_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/manager-events-page", response_model=ManagerEventsPageRead)
 async def get_manager_events_page_data(db: Session = Depends(get_db)) -> ManagerEventsPageRead:
-    return ConcertService.get_manager_events_page(db)
+    return CacheService.get_cached_manager_events_page(db)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
 async def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), db: Session = Depends(get_db)) -> ConcertDetailRead:
-    result = ConcertService.get_concert_detail(db, id, current_user)
+    # The cached part (concert/venue/ticket_types/lineup/campaigns) is identical for every
+    # viewer, guest or fan. has_ticket/has_won_lottery/entered_campaign_ids/
+    # my_lottery_preferences are always computed fresh, never cached — merging a logged-in
+    # fan's own state onto a cache hit is safe; caching it would leak one fan's state to
+    # whoever's request happens to hit the same cache entry next.
+    result = CacheService.get_cached_concert_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Concert not found")
+    if current_user:
+        campaign_ids = [campaign.id for campaign in result.lottery_campaigns]
+        personalization = ConcertService.get_personalization(db, id, current_user, campaign_ids)
+        result = result.model_copy(update=personalization)
     return result
 
 @router.get("/{id}", response_model=ConcertRead)
@@ -73,9 +86,13 @@ async def get_concert_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Con
 @router.put("/update/{id}", response_model=ConcertRead)
 async def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Concert:
     try:
-        return ConcertService.update_concert(db, id, data, current_user)
+        result = ConcertService.update_concert(db, id, data, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_events_page()
+    CacheService.delete_cached_manager_events_page()
+    CacheService.delete_cached_concert_detail(id)
+    return result
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
@@ -88,6 +105,9 @@ async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(r
         ConcertService.delete_concert(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_events_page()
+    CacheService.delete_cached_manager_events_page()
+    CacheService.delete_cached_concert_detail(id)
     return MessageResponse(msg="Concert cancelled successfully")
 
 
@@ -96,13 +116,21 @@ async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(r
 # (concert, idol|group) pair it links. Scoped via the parent concert's
 # company_id (concert_service._manager_scope_violation).
 
+# FRONTEND: not currently called by i-dolly-frontend. A concert's lineup
+# shows up in the UI (EventDetailPage) only as data already embedded in
+# GET /concerts/{id}/detail — this join-table CRUD itself is unused (a
+# concert's performers must be assigned some other way today, e.g. directly
+# in the DB, since there's no frontend form for it).
 @router.post("/performers/assign", response_model=ConcertPerformerRead)
 async def assign_concert_performer(data: ConcertPerformerAssign, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> ConcertPerformer:
     try:
-        return ConcertService.assign_performer(db, data, current_user)
+        result = ConcertService.assign_performer(db, data, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_concert_detail(data.concert_id)  # lineup/performing_groups changed
+    return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.get("/performers/concert/{concert_id}", response_model=List[ConcertPerformerRead])
 async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_performers(db, concert_id)
@@ -113,6 +141,7 @@ async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(g
 # Bulk read — lets a client that needs to know which concerts feature a
 # given idol/group (e.g. a group's detail page) fetch every performer link
 # in one request instead of looping over every concert.
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.get("/performers/all", response_model=List[ConcertPerformerRead])
 async def list_all_concert_performers(db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_all_performers(db)
@@ -120,12 +149,14 @@ async def list_all_concert_performers(db: Session = Depends(get_db)) -> list[Con
         raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/performers/{id}", response_model=MessageResponse)
 async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:
-        ConcertService.remove_performer(db, id, current_user)
+        result = ConcertService.remove_performer(db, id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_concert_detail(result.concert_id)
     return MessageResponse(msg="Performer unassigned from concert successfully")
 
 

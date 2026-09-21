@@ -47,7 +47,7 @@ The `docs/` folder is the source of truth for anything not obvious from the code
 - **JWT** auth — short-lived access tokens + rotating refresh tokens, httponly cookies
 - **Mock payment gateway** for local dev, plus a **PayPal** integration (sandbox-verified for
   ticket checkout) — see [Known limitations](#known-limitations) for what's still unverified there
-- **SendGrid** for transactional email
+- **Resend** for transactional email
 - Local disk / S3-compatible object storage abstraction for idol/product images
 - **Docker Compose** for local dev; **GitHub Actions** for CI — a `lint` job (`ruff check .`) and
   a separate `test` job (Postgres + Redis services, Alembic migrations, pytest + coverage)
@@ -83,12 +83,6 @@ notifications above, the ETL/analytics pipeline, and a full audit trail on the P
 webhook paths: [`docs/project_status.md`](docs/project_status.md) §2 and §5.
 
 ## Known limitations
-- Caching is narrow in scope — only `GET /products/all` and `GET /products/store-page` read from
-  Redis (`app/cache/cache_service.py`); `/pagination` is a reasonable next candidate (bounded key
-  space) but not yet built, and `/filter`'s key space (free-text `name`, arbitrary price ranges) is
-  deliberately left uncached — caching it would mean paying for cache writes that almost never get
-  read back, and it hands an unauthenticated caller a way to fill Redis with junk keys for free. See
-  `docs/project_status.md` §4 item 21.
 - Rate-limit coverage now spans all 25 router files by an explicit tier policy
   (`docs/architecture.md` §3) rather than ad hoc per-route judgment — but the policy itself (which
   tier a route belongs to, and its exact limit/window) is a portfolio-scoped judgment call, not a
@@ -111,7 +105,7 @@ git clone https://github.com/TranXuanAnh930/i-dolly-backend.git
 cd i-dolly-backend
 cp .env.example .env
 ```
-Fill in `.env` — at minimum a JWT secret, and a SendGrid key if you want email flows to work end
+Fill in `.env` — at minimum a JWT secret, and a Resend key if you want email flows to work end
 to end (the app runs locally without a valid key, but email sending won't). The mock payment
 gateway needs no third-party keys; a PayPal Sandbox app's client id/secret are only needed if
 you want to exercise the real PayPal checkout path instead.

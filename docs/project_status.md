@@ -8,13 +8,17 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `a3f7c9e2b6d4`** (`add_password_reset_to_notification_type`) — 52 migrations, one
-linear chain, no branches. Applied and confirmed against a real Postgres instance:
-`alembic upgrade head` runs clean from empty, `alembic current` reports the head revision, and the
-`notifications` table/enum match the models. The notification feature was also exercised over real
-HTTP end to end (password reset → notification created → read → unread-count clears), and the
-per-route rate limiter was confirmed firing under load (a 30/60s budget returns `429` past the
-30th request).
+**Chain head: `bfadb696c92a`** (`change_shipping_postal_code_to_string`) — 56 migrations, one
+linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
+applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
+empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
+the models. The notification feature was also exercised over real HTTP end to end (password reset
+→ notification created → read → unread-count clears), and the per-route rate limiter was confirmed
+firing under load (a 30/60s budget returns `429` past the 30th request). The app is now also
+deployed against a real Supabase Postgres (§3) — migrations run clean there through the current
+head. The two most recent migrations (`54347349d0f2`, `bfadb696c92a` — item 5's schema-type fix)
+have only been verified statically (`py_compile`, `alembic`'s own revision-chain check) so far, not
+yet re-run against Supabase.
 
 All 18 domain tables from `database-design.md` plus the pre-existing e-commerce tables are
 migrated. `schema.sql`, cited throughout `database-design.md` as "the reference DDL," doesn't
@@ -67,7 +71,7 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 - **Email dispatch**: every transactional email — verification link, order placed, ticket
   confirmed, lottery win, lottery loss, lottery ticket payment confirmed — goes through
   `celery_app.send_task("app.tasks.email.send_email", ...)`, picked up by the worker task in
-  `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s SendGrid wrapper. Subject/body
+  `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s Resend wrapper. Subject/body
   text for each lives in `app/utils/email_templates.py`'s `EmailTemplate` enum (`.subject`,
   `.render(**fields)`) rather than inline at each call site. Replaces the original
   `BackgroundTasks.add_task` approach (verification email only) — that couldn't extend to
@@ -87,8 +91,17 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 
 ## 3. Verification method (and its limit)
 
-Most of this project has been built without a reachable live Postgres/network connection, so
-changes are verified with:
+~~Most of this project has been built without a reachable live Postgres/network connection~~ —
+**DONE**: the app is deployed to Render (API) with Supabase as the Postgres backend.
+`alembic upgrade head` runs clean against the real Supabase instance, the deployed app is live and
+reachable, and real endpoints have been exercised against it end to end — the PayPal Sandbox
+checkout in §7, confirmed both locally and against this same deployed Render app, is one specific
+example. The full `pytest` suite itself still runs locally against a disposable Postgres
+(`tests/integration/conftest.py`), not against the deployed Supabase database — that's a separate
+exercise from "the deployed app works end to end," not claimed here.
+
+Day-to-day local development still happens without a reachable live Postgres for most changes, so
+those are verified with:
 
 1. A full `py_compile` sweep across `app/`, `main.py`, and `alembic/`.
 2. An AST-based scan of every ORM model's `ForeignKey` targets and
@@ -96,16 +109,15 @@ changes are verified with:
 3. An AST-based scan of every intra-app `from app.X import Y` statement, confirming the imported
    name exists in its target module.
 
-Neither exercises real SQL or a running app. Where a live Postgres/Redis has been reachable, this
-has gone further: a full `pip install` + `import main` end to end, `pytest tests/unit` against
-real imports (not just syntax), and for the notifications feature specifically, a full
-`alembic upgrade head` from empty plus driving the feature over real HTTP (register → request a
-password reset → complete it → confirm the notification through `/notifications/mine`,
-`/unread-count`, and `/read`) and confirming the rate limiter under load (429s past budget). That
-run: 339/339 tests passed, no regressions. The rest of the schema — everything migrated before
-notifications — hasn't had the same live-HTTP treatment, only the static checks above.
-`alembic upgrade head` against a real Postgres, followed by hitting each endpoint, is still the
-outstanding step before treating any of this as production-verified.
+Neither exercises real SQL or a running app — a substitute for the deployment-level verification
+above, not a replacement for it, for whatever a given change hasn't separately exercised there.
+Locally, where a live Postgres/Redis has been reachable, verification has also gone further: a
+full `pip install` + `import main` end to end, `pytest tests/unit` against real imports (not just
+syntax), and for the notifications feature specifically, a full `alembic upgrade head` from empty
+plus driving the feature over real HTTP (register → request a password reset → complete it →
+confirm the notification through `/notifications/mine`, `/unread-count`, and `/read`) and
+confirming the rate limiter under load (429s past budget). That run: 339/339 tests passed, no
+regressions.
 
 **Integration tests used to run directly against the shared dev database** — the same one
 `app`/`worker`/`scripts/seed.py` use. Several tests asserted a table returns `404`/empty with zero
@@ -115,6 +127,23 @@ fail. Fixed at the root: `tests/conftest.py` now redirects `DATABASE_URL` onto a
 `tests/integration/conftest.py` drops, recreates, and fully migrates that database once per test
 session. `pytest tests` is now deterministic regardless of dev-DB state and never touches real
 data. `pytest tests/unit` needs no live Postgres at all — the redirect is a pure string rewrite.
+
+**Unit coverage pass (`pytest --cov=app`, 46% → substantially higher, 213 → 393 unit tests)**:
+filled in every events-domain service that had zero unit coverage (`ticket_type_service`,
+`lottery_campaign_service`, `direct_sale_campaign_service`, `lottery_entry_service`,
+`lottery_preference_service`, `concert_service`, `venue_service`), added `test_cache_service.py`
+(previously untested despite `CacheService` being the whole caching layer — its tests run against
+`tests/conftest.py`'s session-wide `fake_redis`, not a per-test mock, so a cache hit genuinely
+skips the wrapped service call and a delete genuinely clears the key), added
+`test_notification_service.py`, and filled in missing branches in the existing
+`product_service`/`payment_service`/`shipping_service`/`user_service` test files (`get_product_detail`'s
+recommendation logic, `finalize_paypal_payment`'s ticket/order branches, `verify_rtoken`, etc.).
+
+**Deliberately not covered here**: `ticket_service.checkout_ticket`/`checkout_won_ticket` and
+`order_service.checkout` — the `with_for_update()` pessimistic-locking paths behind item 1's
+overselling-race fix. `lottery_draw_service`, which uses the same locking pattern, already has its
+own dedicated test file; these two don't. Left out on purpose rather than gold-plated in a pass
+that was otherwise routine CRUD/RBAC coverage — see §5.
 
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
@@ -161,9 +190,14 @@ newly introduced.
    (§7). `finalize_paypal_payment` only does real work when `payment.status == pending`, so a
    duplicate or out-of-order webhook delivery is a no-op rather than a double-fulfillment — see
    §7 for why no separate event-id ledger was needed.
-5. **Minor schema type inconsistencies**: `OrderItem.price` is `Integer` while `Product.price` is
+5. ~~**Minor schema type inconsistencies**: `OrderItem.price` is `Integer` while `Product.price` is
    `Float` (truncates fractional prices in order history); `ShippingAddress.postal_code` is
-   `Integer`, which breaks for alphanumeric postal codes (UK, Canada, Japan).
+   `Integer`, which breaks for alphanumeric postal codes (UK, Canada, Japan)~~ — **FIXED**. Two
+   migrations (`54347349d0f2`, `bfadb696c92a`): `orders_items.price` → `Float`,
+   `shipping_addresses.postal_code` → `String`. Both widen an existing column, so no backfill is
+   needed; the matching Pydantic schemas (`OrderItem`, `ManagerOrderItemRead`, `ProductSaleRead`,
+   `ShippingBase`) were updated to match so the type fix doesn't get silently undone by
+   `response_model=`/request-body coercion at the HTTP boundary.
 6. ~~**CORS `allow_origins` is hardcoded**~~ — **FIXED**. `main.py` builds `origins` from a
    `CORS_ORIGINS` setting (comma-separated, default `http://localhost:8080`) — see
    `docs/deployment.md`.
@@ -200,12 +234,14 @@ newly introduced.
     documented anti-enumeration behavior (§4 item 18), and a missing required `idempotency_key`
     field (item 16). All were test bugs, not app bugs — every failure was the suite lagging behind
     landed service changes, fixed by updating the tests to match.
-12. **Seeded accounts share a hardcoded, publicly-committed password** — `scripts/seed.py`
-    creates an admin, three managers, and four fans all with the same password, written in plain
-    text in the file's own docstring. Fine for a throwaway local dev DB; not fine the moment
-    `scripts/seed.py` runs against a real deployed database — anyone reading the repo could then
-    log in as admin. Not fixed: randomize the seeded password before ever seeding a real
-    deployment, or don't seed it at all.
+12. ~~**Seeded accounts share a hardcoded, publicly-committed password**~~ — **FIXED**.
+    `scripts/seed.py` creates an admin, three managers, and twelve fans all with the same password
+    — now `SEED_PASSWORD` read from the environment (`os.environ.get("SEED_PASSWORD", ...)`), with
+    the old hardcoded string kept only as the local-dev fallback default. `.env.example` documents
+    the var (commented out, since it's optional and dev-only). Still on the deployer to actually set
+    it before ever running this script against a real database — this fixes the "committed to the
+    repo, silently the same everywhere" problem, not the "don't seed a real deployment with
+    guessable accounts at all" one, which is a separate judgment call for whoever deploys.
 13. ~~**An invalid `category_id` on a product write crashed with a raw 500**~~ — **FIXED**.
     `add_product`/`update_product`/`add_bulk_products` set `category_id` with no existence check,
     so a bad id raised an uncaught `IntegrityError` at commit instead of a 4xx. `update_product`
@@ -335,15 +371,419 @@ newly introduced.
     its own import and recursed into itself instead of ever sending anything; and
     `app/celery_app.py`'s `include` list never listed the new `app.tasks.email` module, so a worker
     would never discover the task at all.
+28. **Extended Redis caching past the product list to every other unauthenticated, unpersonalized
+    page-shaped read**: `GET /concerts/events-page`, `GET /idols/members-page`,
+    `GET /groups/groups-page`, `GET /venues/all`, `GET /idol_colors/all`. Same shape as the
+    existing product cache (`app/cache/cache_service.py`): msgpack-serialized, 5-minute TTL
+    (`_TTL_SECONDS`), invalidated on every add/update/delete/reactivate that can change the cached
+    page, called from the router right after the mutating service call succeeds — not from inside
+    the service, since `cache_service.py` already imports these services for the read side, and a
+    service importing back would be a circular import. `groups-page`'s `member_count` and
+    `members-page`'s active-groups filter each depend on the *other* domain's rows, so an idol
+    add/update/delete/reactivate invalidates both caches, and so does a group
+    add/update/delete/reactivate. Venue/idol-color edits do **not** invalidate `events-page`'s
+    embedded `VenueRead`/an idol's embedded color hex — accepted staleness (up to 5 minutes) on
+    cosmetic, non-money fields, same trade-off the product cache already made and documented in
+    item 21, not chased further here.
+29. **Extended the same caching to every manager/admin settings page**: `GET
+    /idols/manager-idols-page`, `GET /idols/manager-idol-form-page`, `GET
+    /groups/manager-groups-page`, `GET /concerts/manager-events-page`, `GET
+    /products/manager-products-page`, `GET /products/manager-product-form-page`, `GET
+    /management_companies/all`. Same TTL+invalidate-on-write shape as item 28; these never 404 on
+    an empty result (a brand-new company's empty product list is a normal state), so there's no
+    `None` branch to cache around, unlike the store-facing pages. The two products pages
+    are the only ones keyed by `company_id` (`products:manager_products_page:<company_id|"all">`)
+    since they're the only ones scoped — a manager's cached page must never leak into another
+    company's, or into the admin's unfiltered view. Their `company_id` isn't a column on `Product`
+    itself (resolved indirectly through `album_details`/`merch_details`), so invalidation clears
+    every company's key via `redis_client.keys(...)` rather than computing which one a given write
+    actually touched — an O(N) scan, fine at this project's key count, not something a
+    high-traffic deployment would want unchanged. Idol/group/idol-color mutations cross-invalidate
+    into whichever manager pages embed their rows (the idol/group form dropdowns, the color
+    picker), same reasoning as item 28's members/groups cross-invalidation. **Separately noticed,
+    not fixed here**: none of these seven manager/admin GET endpoints actually check
+    `require_manager_or_admin`/`require_admin` — no auth dependency at all, unlike every mutating
+    endpoint on the same resources. Caching makes an unauthenticated read of this data cheaper,
+    not more exposed than it already was; flagging so it doesn't get missed as this list is
+    extended further.
+30. ~~**`POST /order/checkout` emailed "your order has been placed" even on a declined mock
+    payment**~~ — **FIXED**. `OrderService.checkout` correctly gates the in-app
+    `order_confirmation` notification on `payment.status == PaymentStatus.success`, but the
+    router's `EmailTemplate.ORDER_PLACED` dispatch had no such gate — it fired on any non-exception
+    return, and a decline (`simulate_succ=false`) doesn't raise, it just sets `order.status =
+    cancelled` and returns normally. Found while writing up the checkout flow for the monolith
+    README; fixed by skipping the email when `order.status == OrderStatus.cancelled`. The
+    equivalent ticket path (`ticket_service.checkout_ticket`) never had this bug — its email
+    dispatch already lives inside the same `if payment.status == PaymentStatus.success:` block as
+    the notification, in the service rather than the router.
+31. **Extended the same caching to the idol/group detail pages**: `GET /idols/{id}/detail`,
+    `GET /groups/{id}/detail`. Same TTL+invalidate-on-write shape as items 28/29, but per-id keyed
+    (`idols:detail:<id>`, `groups:detail:<id>`) rather than one shared key, since each id is its own
+    cache entry. An idol's detail page embeds its group and its siblings (other idols sharing its
+    `group_id`); a group's detail page embeds every member's idol data — so a write to either side
+    can invalidate detail pages keyed by ids the write has no direct handle on (renaming a group
+    must bust the cache of idols the update endpoint never sees an id for). Rather than resolve
+    which ids share a `group_id` before every write, `CacheService.delete_cached_idol_details`/
+    `CacheService.delete_cached_group_details` each clear their whole namespace via
+    `redis_client.keys(...)`, same O(N)-scan tradeoff as item 29's manager-products invalidation —
+    called together from every idol and group mutation (add/update/delete/reactivate/image-upload),
+    since either side's write can affect both caches.
+32. **Converted `cache_service.py` from a flat module of functions to `class CacheService` (all
+    `@staticmethod`s)**, matching the router/service-layer convention documented in
+    `architecture.md` §2 item 2 — every caller across 9 files now imports `CacheService` and calls
+    `CacheService.get_cached_x(...)`/`CacheService.delete_cached_x(...)` instead of importing each
+    function by name. While sweeping for leftover direct `redis_client` calls outside
+    `cache_service.py`, found two in `products.py` (`add_new_product`, `add_new_product_with_detail`)
+    that called `redis_client.delete("products:list")` directly instead of going through
+    `CacheService.delete_cached_products()` — which also clears `products:store_page`. Both spots
+    only cleared the `/products/all` cache, so a product added through either endpoint left the
+    store page's cached product list stale for up to 5 minutes; now fixed as a side effect of
+    routing both through `CacheService`. `rate_limit.py`'s direct `redis_client.incr`/`expire`/`ttl`
+    calls were deliberately left alone — fixed-window rate limiting is a different concern from
+    page caching and has no `CacheService` equivalent to route through.
+33. **Cached `GET /products/{id}/detail` and `GET /concerts/{id}/detail`**, both reported by the
+    frontend as hot paths (`ProductDetailPage.vue`/`EventDetailPage.vue`). The product one is a
+    straight extension of item 31's shape: `products:<id>:detail`, invalidated (namespace-wide,
+    same fan-out reasoning as idol/group details — recommendations pull from every other product)
+    from every product mutation endpoint.
+
+    The concert one is not that simple: `ConcertDetailRead` bundles `has_ticket`/
+    `has_won_lottery`/`entered_campaign_ids`/`my_lottery_preferences` alongside the public
+    concert/venue/ticket-types/lineup/campaigns data, and those four fields are per-viewer —
+    caching the response verbatim would let one fan's cache hit leak another fan's ticket/lottery
+    state. Fixed by splitting `concert_service.get_concert_detail` (removed) into
+    `get_concert_detail_public` (concert/venue/ticket_types/lineup/performing_groups/campaigns
+    only, personalized fields left at their False/empty schema defaults — this is the part
+    `CacheService.get_cached_concert_detail` caches under `concerts:<id>:detail`) and
+    `get_personalization` (the four per-viewer fields, computed fresh on every request, never
+    cached). `get_concert_detail_by_id` merges them with `result.model_copy(update=...)` only
+    when a fan is logged in; a guest gets the cached bundle as-is. Chosen over the simpler
+    alternative (skip the cache entirely for logged-in fans) because it keeps the cache-hit rate
+    for logged-in traffic too, at the cost of one small uncached query per request for ticket/
+    lottery state — same shape as `get_cached_store_page`.
+
+    Unlike the idol/group namespace-wide invalidation, every write that can change a concert's
+    cached bundle (the concert itself, one of its ticket types, a lottery/direct-sale campaign,
+    a performer credit) already knows its own `concert_id` (or can resolve it via
+    `TicketTypeService.get_ticket_type` for campaigns, which only have `ticket_type_id`), so
+    `CacheService.delete_cached_concert_detail(concert_id)` is a precise single-key delete wired
+    into `concert.py` (update/cancel/assign-performer/unassign-performer),
+    `ticket_type.py` (add/update/delete), `lottery_campaign.py`, and `direct_sale_campaign.py`
+    (add/update/delete on both).
+
+    **Known, accepted gap, not fixed here**: `TicketType.sold_quantity` and a lottery campaign's
+    `entry_count`/`status` change during ticket purchase (`ticket_service`, `payment_service`) and
+    lottery draw (`lottery_draw_service`, run async in a Celery worker) — neither invalidates this
+    cache, so a concert's displayed availability/entry-count can lag up to 5 minutes after a
+    purchase or draw. Deliberately not chased into those flows here: unlike item 21's product-cache
+    bug, this never risks overselling (the actual capacity check in `ticket_service`/
+    `payment_service` reads live DB state, not the cache) — it's a display-only staleness, same
+    category as item 28's accepted venue/idol-color staleness, just flagged explicitly since it
+    touches ticket availability rather than a cosmetic field.
+34. **Integration coverage pass**, run against a real Postgres+Redis (the pre-existing local
+    `i-dolly-backend` Docker Compose project's `postgres`/`redis` containers, driven via the
+    already-built `i-dolly-backend-app` image rather than a fresh env — every test in this item was
+    actually executed, not just statically verified, which is the first time that's been possible
+    for integration tests in a session without a live DB otherwise reachable, per §3). Added
+    `tests/integration/identity/test_profile.py` (`/profile/me`, `/change-password`,
+    `/forgot-password`, `/set-password`, `/logout`, `/make-admin`, `/create-manager`) and
+    `test_account.py` (`/account/refresh`, `/verify-request`, `/verify`);
+    `tests/integration/events/test_venues.py` (full `/venues` CRUD); `tests/integration/shared/
+    test_notifications.py` (all four `/notifications/*` endpoints, seeded with a direct
+    `type="password_reset"` row — the one notification type needing no order/ticket/lottery_entry/
+    concert FK); `tests/integration/marketplace/test_payment.py` (`/payment/status/*`, plus
+    `/payment/paypal/capture` and `/payment/paypal/webhook` with `create_order`/`capture_order`/
+    `verify_webhook_signature` mocked — no real PayPal sandbox call). Extended
+    `tests/integration/test_permissions.py` (reusing its existing `Factory`) with
+    `/lottery_preferences/*`, `/lottery_entries/*` beyond `/apply`, and `/tickets/*` beyond
+    `/checkout`.
+
+    **Found and fixed along the way**: `UserService.promote_admin` (backing `/profile/make-admin`)
+    only ever set the deprecated `is_admin` column, never `role` — but `require_admin` checks
+    `role`, which `database-design.md`/`architecture.md` already document as the actual source of
+    truth. So promoting a user through the only endpoint that does it left them just as unable to
+    reach admin routes as before. Now sets both (still sets `is_admin` too, since that column isn't
+    dropped yet). Caught by a regression test in `test_profile.py`
+    (`test_make_admin_promotes_role_not_just_the_deprecated_flag`) that asserts the promoted user's
+    *existing* access token gains admin access immediately, since `role` is read fresh from the DB
+    per request rather than baked into the token. The two unit tests that exercised the old
+    `is_admin`-only check (`test_user_service.py`) were updated to match.
+
+    **Not covered here, still open**: group/idol CRUD *success* paths as an actual authenticated
+    manager/admin (`test_permissions.py`'s `Factory` has no `group()` builder, and every existing
+    group/idol test — in the domain-split `test_main` files — only reaches the 401/403/404 RBAC
+    boundary, never a real 200). `/payment/status/order/{id}`'s found-case (needs a full
+    product/cart/shipping-address chain behind a real `/order/checkout`, not built here — only its
+    401/404 paths are covered). See §5 for both.
+35. **`Object | Literal[False]` → `Object | None` across every plain-read service method**
+    (~60 methods, 23 service files plus `cache_service.py`). `None` is Python's actual "nothing
+    here" value and what `db.get(...)`/`.first()` already return on a miss, so a read wrapping one
+    of those no longer needs a second falsy value meaning the same thing — see the updated
+    convention note in `architecture.md` §2. Multi-value sentinels that happen to include `False`
+    alongside other string outcomes (`product_service.update_product`'s
+    `Literal[False, "forbidden", "price_locked", "category_not_found"]` and similar) were left
+    alone on purpose — that's a different, still-valid pattern (`architecture.md` §2's "private
+    multi-value helper" case), not the one this item touched. Every caller checking `if not
+    result:` needed no change (`None` and `False` are both falsy); routers/tests using `is False`
+    explicitly were updated to `is None`.
+
+    **Found two real collisions along the way** — cases where `False` and `None` had already been
+    doing two *different* jobs in the same function, which the rename would have silently merged
+    into one, losing information callers relied on:
+    - `OrderService.cancel_placed_order` returned `None` for "order not found" and `False` for
+      "found, but already shipped" — `order.py`'s router turned these into 404 vs 400
+      respectively. Fixed by raising `BadRequestError` for the "already shipped" case instead of
+      returning a second falsy value, matching the exception-hierarchy convention item 199 of
+      `architecture.md` already documents for this; the router now catches `ServiceError` for that
+      endpoint.
+    - `CartService.add_to_cart` returned `None` for "insufficient stock / product not found" and
+      `False` for "user not found" (not reachable in practice — `user_id` always comes from an
+      already-validated `get_current_user`, but the router still branched on it). Same fix:
+      `NotFoundError` instead of a second falsy value.
+
+    Neither collision was caught by a test — nothing exercised the "already shipped" 400 path or
+    the (practically unreachable) "user not found" path, so a mechanical rename would have quietly
+    turned both `HTTPException` branches into dead code without a single red test. Found instead by
+    reading each router's own `is False`/`is None` branches during review, before running anything.
+    Confirmed clean afterward: 393/393 unit, 232/232 integration (the latter against the real
+    Postgres/Redis stack per item 34).
+
+36. **Hardcoded value-set strings → `class X(str, Enum)` across identity/events/shared, matching
+    the pattern `OrderStatus`/`PaymentStatus`/`ShippingStatus` already used in marketplace.** Before
+    this, only marketplace had real Python enum classes backing its status columns; every other
+    domain used a bare SQLAlchemy `Enum("a", "b", "c", name=...)` with no Python-side type, and
+    service code compared against raw string literals scattered across call sites (`current_user.
+    role == "manager"`, `ticket.status = "paid"`, `NotificationService.create_notification(db,
+    user_id, "order_confirmation", ...)`, etc.) — a typo in any of them would have been a silent
+    no-op or an `IntegrityError` at commit, not a caught-at-the-boundary validation error. New
+    classes, one per model column, each living in the schema file that already owns that field's
+    Read/Update model (see `architecture.md` §2): `UserRole` (`schema/identity/user.py`),
+    `TicketTier`/`SaleMethod` (`schema/events/ticket_type.py`), `ConcertStatus`
+    (`schema/events/concert.py`), `CampaignStatus` (`schema/events/lottery_campaign.py`),
+    `DirectSaleCampaignStatus` (`schema/events/direct_sale_campaign.py`), `LotteryEntryStatus`
+    (`schema/events/lottery_entry.py`), `TicketStatus` (`schema/events/ticket.py`),
+    `NotificationStatus`/`NotificationType` (`schema/shared/notification.py`), and `ReleaseFormat`
+    (`schema/marketplace/album_detail.py`). Every model `Column` now wires the matching class in
+    (`Column(Enum(TicketStatus, name="ticket_status_enum"))`) instead of a bare inline value list;
+    `server_default=` stays the plain string label since that's DDL text, not a Python default —
+    no migration needed, the underlying Postgres enum types and labels are unchanged. Every
+    comparison and assignment across the touched service/router files (~30 files: every
+    `_manager_scope_violation` helper, `require_admin`/`require_manager_or_admin`, checkout/payment/
+    lottery-draw status transitions, every `NotificationService.create_notification(...,
+    notification_type=...)` call site) now uses the enum member instead of a raw string. Deliberately
+    left alone: the sentinel-return strings the previous item's note already carves out (`Literal[
+    "forbidden", "not_found"]` and similar multi-way function results — not a model column's value
+    set) and every test file, since `str, Enum` members compare equal to plain strings and existing
+    tests already mix literal strings with enum members for the fields that already had them
+    (`OrderStatus`/`PaymentStatus`) — extending this to ~280 test-file occurrences across 22 files
+    would have been pure churn with no behavior change. Confirmed clean: 393/393 unit, 232/232
+    integration (real Postgres/Redis stack per item 34).
+
+37. **Closed the remaining gap item 23 left open: six service methods that still returned a
+    `Literal["forbidden", "not_found", ...]` sentinel instead of raising, because they didn't go
+    through the old `_raise_for`/`_raise_for_link` router helper item 23's sweep was scoped to.**
+    Converted to the same `NotFoundError`/`ForbiddenError`/`BadRequestError` hierarchy as everywhere
+    else: `UserService.create_manager_user`, `ProductService.add_product_with_detail`/
+    `update_product`/`set_product_image`/`delete_product`/`get_product_sales_page`, and
+    `LotteryDrawService.draw_lottery` (called from `app/tasks/lottery.py`'s Celery task, not a
+    router — an uncaught `ServiceError` there just fails the task, which is strictly more
+    informative than the string sentinel nothing was reading before, since `PUT
+    /concerts/lottery-draw/{id}` is fire-and-forget and never inspected the task's return value).
+    `draw_lottery`'s return type was `-> dict` even though every early-return was a bare string
+    that didn't match `dict` either — now `-> LotteryResult`, built as a real
+    `LotteryResult(...)` instance on success instead of an untyped dict literal. Every router
+    caller now does the one-line `except ServiceError as e: raise HTTPException(status_code=e.
+    status_code, detail=str(e)) from e` instead of a chain of `if result == "...":` checks.
+    One deliberate status-code change: `add_product_with_detail`'s `category_not_found`/
+    `owner_not_found` (a bad FK reference in the POST body) moved from 400 to 404, matching how
+    every other "referenced row doesn't exist" case in this codebase is already handled
+    (`concert_service.add_concert`, `lottery_campaign_service.add_campaign`, etc. all raise
+    `NotFoundError` for exactly this shape) — nothing tested the old 400, so this was a real
+    inconsistency being fixed, not a documented contract being broken; `artist_inactive` stayed
+    `BadRequestError`/400 (a state issue, not a missing reference) and `forbidden`/`price_locked`
+    stayed `ForbiddenError`/403, both unchanged from before.
+
+    Deliberately NOT touched: `idol_service._validate_refs` — still sentinel-returning, and still
+    should be. It's a private helper whose callers (`add_idol`/`update_idol`) need to inspect and
+    sometimes override its result (`update_idol` treats `"group_inactive"` as a non-error when the
+    idol was already in that group before it got deactivated) before deciding it's an error, which
+    an immediately-`raise`d exception can't express — `docs/architecture.md` §2 already documents
+    this as the one legitimate exception to the "raise, don't return a sentinel" rule, not an
+    oversight. Its sentinel values themselves were still a bare `Literal["company_not_found", ...]`
+    though, so as a follow-up they're now a local `class _RefIssue(str, Enum)` next to the helper
+    in `idol_service.py` — not `app/schema/`, since this isn't a model column's value set, just a
+    private helper's own multi-way result compared against in two places (`add_idol`/`update_idol`).
+    Same motivation as item 36's enum sweep (a typo in a member name is a caught `AttributeError`,
+    not a string that silently never matches an `if error == "...":` branch) applied to the one
+    sentinel-returning case item 36 didn't reach because it wasn't a `Column`. No behavior change —
+    confirmed via the existing `add_idol`/`update_idol` tests, which already asserted on the public
+    `NotFoundError`/`BadRequestError` raised around this helper, not on its internal return value:
+    393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
+
+38. **Simplified ~33 genuine read methods that re-checked a result already known to be falsy or
+    non-`None`, adding a branch that could never behave differently from just returning the query.**
+    Two shapes:
+    - A bare `list[X]`-returning read (`result = db.query(X)...all(); if not result: return None;
+      return result`) collapsed to `return db.query(X)...all()`, typed `-> list[X]:` instead of
+      `list[X] | None`. `.all()` already returns `[]`, never `None`, and `[]` is exactly as falsy as
+      `None` was to the router's existing `if not result: raise HTTPException(404, ...)` — so this
+      is a pure simplification, not a behavior change, for every router except one (below).
+    - A single-object read that was only `db_x = db.get(X, id); if not db_x: return None; return
+      db_x` (no other logic in between) collapsed to `return db.get(X, id)` directly. Stays typed
+      `X | None` — unlike the list case, `.get()`/`.first()` genuinely can return `None`.
+    26 files: `concert_service` (`get_concerts`/`get_performers`/`get_all_performers`),
+    `idol_service.get_idols`, `group_service.get_groups`, `venue_service.get_venues`,
+    `ticket_type_service.get_ticket_types`, `lottery_campaign_service.get_campaigns`,
+    `direct_sale_campaign_service.get_campaigns`, `lottery_entry_service`
+    (`get_my_entries`/`get_entries_for_campaign` — kept their existing `NotFoundError`/
+    `ForbiddenError` pre-checks, only the final list return was simplified),
+    `lottery_preference_service.get_my_preferences`, `management_company_service.get_companies`,
+    `position_service` (`get_positions`/`get_idol_positions`/`get_all_idol_positions`),
+    `idol_color_service.get_idol_colors`, `merch_detail_service.get_merch_details`,
+    `album_detail_service.get_album_details`, `genre_service`
+    (`get_genres`/`get_album_genres`/`get_all_album_genres`), `category_service.get_categories`,
+    `product_service.list_of_products`, `payment_service`
+    (`fetch_payment_status`/`fetch_ticket_payment_status`/`fetch_all_payments`),
+    `order_service.fetch_single_placed_order` (and `get_user_shipping_status`, rewritten as a
+    one-line ternary since it projects `.shippingstatus` off the queried row rather than returning
+    the row itself), `shipping_service` (`fetch_address`/`get_address_by_id`),
+    `notification_service.get_my_notifications`, `ticket_service.get_my_tickets`.
+
+    **Deliberately NOT touched**: any read that wraps its query result in a bigger Pydantic object
+    before returning (`get_events_page`, `get_members_page`, `get_group_detail`, `get_idol_detail`,
+    `get_groups_page`, `get_concert_detail_public`, `get_store_page`, `get_product_detail`,
+    `cart_service.see_cart`, `product_service.search_product`). A Pydantic model instance has no
+    `__bool__`/`__len__` and is always truthy, so `if not entity: return None` in front of building
+    one is the *only* way the router can tell "nothing here" from "found" — collapsing that check
+    away would silently turn every empty result into a 200 with a half-built page instead of a 404.
+    Same reasoning for `authenticate_user`/`verify_refresh_token` (real validation logic between the
+    query and the return, not a redundant re-check) and the private helpers `idol_service.
+    _validate_refs`/`ticket_service._existing_live_ticket`/`_unresolved_lottery_entry`.
+
+    **Found one real bug while auditing router callers for the list-shape change**:
+    `router/marketplace/payment.py::check_payment_status_all` checked `if payment is None:` against
+    `fetch_all_payments`'s result — correct against the old `list[Payment] | None`, but silently
+    wrong against the new `list[Payment]` (an empty list is never `None`, so a user with zero
+    payments would have gotten a 200 with `[]` instead of the intended 404). Fixed to `if not
+    payment:`, matching every sibling router's own check. Every other caller (routers and
+    `CacheService`'s own wrappers around `list_of_products`/`get_venues`/`get_idol_colors`/
+    `get_companies`) already used a falsy check, not an `is None` check, so needed no change.
+
+    Test fallout: every `test_*_empty` unit test for a converted list-returning method asserted
+    `result is None`; all ~27 switched to `result == []` (behavior at the HTTP boundary is
+    identical — `[]` and `None` are both still falsy to the router's `if not result:`). Confirmed
+    clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
+
+    Every test asserting the old sentinel value (`test_lottery_draw_service.py` ×6,
+    `test_product_service.py` ×4, `test_user_service.py` ×3) switched to `pytest.raises(...)`.
+    Confirmed clean: 393/393 unit, 232/232 integration (real Postgres/Redis stack per item 34).
+
+40. ~~**Unit tests were sending real emails through SendGrid**~~ — **FIXED**. Two compounding bugs:
+    - `app/utils/email_sender.py::send_email` only used `settings.DEBUG` to print a dev banner —
+      it still called the real SendGrid API afterward regardless, on the assumption that a local
+      `SENDGRID_API_KEY` is always a placeholder so the real send just fails harmlessly. That
+      assumption doesn't hold once a real key is configured locally (e.g. to test the email flow
+      end to end), which is exactly this project's actual local setup: `DEBUG=true` *and* a real
+      key. Fixed by `return`ing right after the dev-banner print instead of falling through.
+    - `tests/unit/events/test_lottery_draw_service.py`'s win/loss tests never mocked
+      `celery_app.send_task` (unlike `test_user_service.py`/`test_auth_service.py`, which already
+      did), so every winner/loser `draw_lottery` produces enqueues a real `LOTTERY_WON`/
+      `LOTTERY_LOST` email task — which, with a real worker consuming the same Redis broker and
+      the `send_email` bug above, gets actually delivered. Fixed at the root rather than patching
+      that one file: a new autouse fixture in `tests/unit/conftest.py` mocks
+      `app.celery_app.celery_app.send_task` for every unit test, so no test — this one or a future
+      one — can reach a real Celery dispatch regardless of whether it remembers to mock it itself.
+      Same defense-in-depth reasoning as `tests/conftest.py`'s existing `fake_redis` patch.
+
+    Verified by temporarily poisoning `sendgrid.SendGridAPIClient.send` to raise if ever called
+    and running the full unit suite — 393/393 passed, confirming nothing reaches it. `docs/`
+    doesn't have a way to verify the second fix (`send_email`'s DEBUG short-circuit) against a live
+    SendGrid account from here; reasoned safe instead, since no test exercises `email_sender.py`
+    directly and the change only ever short-circuits a branch that previously either silently
+    failed (placeholder key) or shouldn't have run at all (real key, which was the actual bug).
+
+41. ~~**Migrated transactional email from SendGrid to Resend**~~ — **FIXED**. `app/utils/email_sender.py`
+    now calls `resend.Emails.send(...)` instead of `SendGridAPIClient.send(...)`; same `send_email(to_email,
+    subject, body)` signature, same `settings.DEBUG` dev short-circuit (item 40). `Settings.SENDGRID_API_KEY`
+    is gone, replaced by `RESEND_API_KEY`; `FROM_EMAIL` is unchanged but now must be on a
+    Resend-verified domain (or the sandbox `onboarding@resend.dev`) rather than an arbitrary address.
+    `requirements.txt`, `.env.example`, CI (`.github/workflows/test.yml`'s two `SENDGRID_API_KEY`
+    secret refs), and `render.yaml` all updated to match.
+
+    While updating `render.yaml`, found a pre-existing gap unrelated to this migration: the
+    `i-dolly-backend-worker` service's `envVars` never included `SENDGRID_API_KEY`/`FROM_EMAIL` at
+    all (only the web service had them), even though the worker is the process that actually runs
+    `app.tasks.email.send_email` and `Settings` has no default for that key — so the worker
+    container should have failed to boot on Render whenever it was last (re)deployed from this
+    config. Added `RESEND_API_KEY`/`FROM_EMAIL`/`DEBUG` to the worker's `envVars` as part of this
+    change; worth confirming on the next real Render deploy that the worker was actually getting
+    these some other way (e.g. set by hand in the dashboard, out of sync with this exported file).
+
+    Verification: `py_compile` + `ruff check --select F401,F811,F821` clean; full unit suite
+    (393/393) unaffected, since the autouse `celery_app.send_task` mock from item 40 stops any
+    test from reaching `email_sender.py` at all. No live Resend account available from here to
+    smoke-test an actual delivery — same caveat as item 40's SendGrid verification.
+
+    **Follow-up**: bought `i-dolly-app.site` (Cloudflare Registrar) and verified `mail.i-dolly-app.site`
+    as a Resend sending domain — DKIM (TXT), two SPF-related CNAMEs (`rsend.mail`/`send.mail`
+    pointing at Resend's `forge.rmta.net` infrastructure), and a DMARC TXT (`_dmarc`, `p=none`), all
+    added via Cloudflare DNS with the two CNAMEs set to "DNS only" (a proxied/orange-cloud CNAME
+    would have broken verification, since Cloudflare's proxy only speaks HTTP(S)). `.env`'s
+    `FROM_EMAIL` updated to `noreply@mail.i-dolly-app.site` — also fixes a bad prior value
+    (`i-dolly-backend.onrender.com`, a bare hostname with no `@`, not a valid email address at all).
+    With the domain verified, sends are no longer sandbox-restricted to the Resend account owner's
+    own inbox — this closes out the "no live account to test against" caveat above for local/manual
+    testing, though CI and the deployed Render services still only have a placeholder/unset key
+    unless `RESEND_API_KEY`/`FROM_EMAIL` are updated there too (`render.yaml`'s `sync: false` means
+    Render's dashboard, not this file, holds the real values).
+
+42. ~~**Email bodies were plain text sent under Resend's `html` param**~~ — **FIXED**.
+    `app/utils/email_sender.py`'s `resend.Emails.send(...)` call has always passed `body` as the
+    `html` field (true since the SendGrid→Resend migration in item 41), but every
+    `EmailTemplate` body in `app/utils/email_templates.py` was plain text with `\n\n` separators —
+    HTML collapses bare newlines to spaces, so every email would have rendered as one run-on
+    paragraph with no line breaks, and the verification/reset links would have shown as bare
+    unclickable URL text instead of a link. Converted all seven templates
+    (`EMAIL_VERIFICATION`, `ORDER_PLACED`, `TICKET_CONFIRMED`, `LOTTERY_WON`, `LOTTERY_LOST`,
+    `LOTTERY_PAYMENT_CONFIRMED`, `RESET_PASSWORD`) to real HTML: `<p>` per paragraph, `<br>` for
+    same-paragraph line breaks, `<a href="{link}">` for the verification/reset links. Every
+    interpolated field is either an `EmailStr` validated at the schema boundary (`{email}`) or a
+    server-generated value (ids, prices, an HMAC-signed `{link}` token) — none are arbitrary user
+    text, so no HTML-escaping was needed on the placeholders themselves.
+
+    Verification: `py_compile` + `ruff check --select F401,F811,F821` clean; full unit suite
+    (393/393) — the one test that inspects email body content
+    (`test_user_service.py::test_reset_password_process`) only asserts the link substring is
+    present, which still holds verbatim inside the new `<a href="...">` markup.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 
+- **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
+  only reaches the RBAC/wiring boundary (401 unauthenticated, 403 wrong role/company, 404
+  not-found-in-empty-table); none proves an actual authenticated manager/admin successfully
+  creates/updates/deletes their own company's group or idol over real HTTP. `test_permissions.py`'s
+  `Factory` would need a `group()` builder (mirrors its existing `idol()`) to build this cheaply.
+- **`/payment/status/order/{id}`'s found-case** — only its 401/404 paths are integration-tested
+  (item 34); a real found-case needs a full product/category/shipping-address chain behind an
+  actual `/order/checkout` call, not built yet. The equivalent ticket-side endpoint
+  (`/payment/status/ticket/{id}`) is fully covered, since a real ticket is cheap to stand up
+  (concert/venue/ticket_type/campaign, already had a `Factory` shape to reuse).
+- **Unit tests for the checkout concurrency/locking paths** (`ticket_service.checkout_ticket`/
+  `checkout_won_ticket`, `order_service.checkout`) — the interview-defensible part of item 1's
+  overselling-race fix (why the row lock has to be held for the whole operation, why UUID-ordering
+  the `order_service` lock acquisition prevents deadlock). Per this project's own convention for
+  this category of logic, that reasoning needs to come from actually writing the tests, not from
+  having them handed over already passing — see the coverage pass note in §3 for what *was*
+  covered in the same session this gap was identified.
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.
-- **The direct/"reservation" (non-lottery) checkout flow** — the schema supports it
-  (`ticket_types.sale_method = 'direct'`), but only the lottery path has a sequence diagram
-  (`database-design.md` §5.2) and only `tickets`' admin-only manual-issue endpoint exists so far.
+- ~~**The direct/"reservation" (non-lottery) checkout flow**~~ — **DONE**:
+  `TicketService.checkout_ticket` (`POST /tickets/checkout`) is the real direct-sale purchase
+  path — checks `ticket_types.sale_method == 'direct'`, an open `DirectSaleCampaign` window,
+  remaining stock, and the same one-live-ticket-per-concert/unresolved-lottery-standing gates the
+  lottery path uses, then locks and pays the same way `checkout_won_ticket` does. `add_ticket`
+  (admin-only manual issue) remains a separate stopgap, used for the lottery-draw path only.
 - **The draw job's actual runtime** — **decided: manager-triggered**, not a Celery Beat scheduled
   task — see §8 for the full plan. The Celery skeleton (`app/celery_app.py`, broker on Redis)
   stays unused for this specific job as a result; it may still end up used for winner-notification
@@ -405,8 +845,8 @@ duplicated logic. Re-running it against an already-resolved payment is a no-op
 mechanism, not a separate event-id table.
 
 **What shipped**:
-1. `app/config/settings.py`: `PAYPAL_CLIENT_ID`/`SECRET`, `PAYPAL_MODE`, `PAYPAL_WEBHOOK_ID`,
-   `BASE_URL`. No new dependency beyond `httpx`.
+1. `app/config/settings.py`: `PAYPAL_CLIENT_ID`/`SECRET`, `PAYPAL_MODE`, `PAYPAL_WEBHOOK_ID`.
+   No new dependency beyond `httpx`.
 2. `app/utils/paypal_client.py`: `get_access_token()` (OAuth2 client-credentials, cached
    in-process), `create_order()`, `capture_order()`, `verify_webhook_signature()` (posts back to
    PayPal's own verify-webhook-signature endpoint rather than reimplementing cert-chain
@@ -432,11 +872,12 @@ times the webhook re-delivers, with no second table to maintain.
 
 **Verified**: a real PayPal Sandbox ticket checkout end-to-end (create order → approve → capture
 → `Payment`/`Ticket` flip to success/paid), confirmed both locally and against the deployed
-Render app (so `PAYPAL_MODE`/`BASE_URL`/`FRONTEND_BASE_URL`/CORS are wired correctly there too).
+Render app (so `PAYPAL_MODE`/`FRONTEND_BASE_URL`/CORS are wired correctly there too).
+~~The order-flow (marketplace) checkout hasn't been run end-to-end against real PayPal~~ —
+**DONE**: run against real PayPal Sandbox the same way as the ticket flow, same
+create-order → approve → capture → `Payment`/`Order` success sequence.
 
 **Not yet verified — known limitations**:
-- The order-flow (marketplace) checkout hasn't been run end-to-end against real PayPal — only the
-  ticket flow has. Same code shape, reviewed but not observed working.
 - The webhook path has never received a real or simulated delivery — both a real ngrok tunnel and
   PayPal's own simulator show zero incoming requests, which matches a known PayPal pattern of
   silently dropping delivery to tunnel-flagged domains rather than a confirmed bug in the handler.

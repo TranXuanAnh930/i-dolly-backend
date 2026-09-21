@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -6,6 +6,7 @@ from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user, require_admin
 from app.deps.db import get_db
+from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
 from app.schema.identity import (
     ChangePasswordRequest,
@@ -31,12 +32,12 @@ async def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_
     return MessageResponse(msg="Password changed succesfully")
 
 @router.post("/forgot-password", response_model=MessageResponse)
-async def forgot_password(payload:ForgotPasswordRequest, background_tasks:BackgroundTasks, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
+async def forgot_password(payload:ForgotPasswordRequest, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
     # Always the same generic response, whether or not the email is
     # registered — reset_password_process no-ops silently for an unknown
     # email, so this endpoint can't be used to enumerate accounts.
-    UserService.reset_password_process(db, payload.email, background_tasks)
-    return MessageResponse(msg="If that email is registered, a reset token has been sent")
+    UserService.reset_password_process(db, payload.email)
+    return MessageResponse(msg="If that email is registered, a password reset link has been sent")
 
 @router.post("/set-password", response_model=MessageResponse)
 async def set_new_password(payload:SetPasswordRequest, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
@@ -47,6 +48,8 @@ async def set_new_password(payload:SetPasswordRequest, _:None=Depends(rate_limit
         raise HTTPException(status_code=404, detail="user not found")
     return MessageResponse(msg="password changed successfully")
 
+# FRONTEND: not currently called by i-dolly-frontend — no admin-promotion
+# UI exists anywhere (an admin account has to be made some other way today).
 @router.post("/make-admin", response_model=MessageResponse)
 async def make_admin(payload:MakeAdminRequest, current_user:Users=Depends(require_admin), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> MessageResponse:
     result = UserService.promote_admin(db, payload.user_id)
@@ -58,12 +61,10 @@ async def make_admin(payload:MakeAdminRequest, current_user:Users=Depends(requir
 
 @router.post("/create-manager", response_model=UserOut)
 async def create_manager(payload:ManagerCreate, current_user:Users=Depends(require_admin), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> Users:
-    result = UserService.create_manager_user(db, payload)
-    if result == "email_taken":
-        raise HTTPException(status_code=400, detail="E-mail already registered")
-    if result == "company_not_found":
-        raise HTTPException(status_code=404, detail="Management company not found")
-    return result
+    try:
+        return UserService.create_manager_user(db, payload)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(request:Request, db:Session=Depends(get_db)) -> JSONResponse:
@@ -77,6 +78,8 @@ async def logout(request:Request, db:Session=Depends(get_db)) -> JSONResponse:
     response.delete_cookie("refresh_token")
     return response
 
+# FRONTEND: not currently called by i-dolly-frontend — Account Settings has
+# no "delete my account" action.
 @router.delete("/delete", response_model=MessageResponse)
 async def delete_existing_user(current_user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> MessageResponse:
     result = UserService.delete_user(db, current_user.id)

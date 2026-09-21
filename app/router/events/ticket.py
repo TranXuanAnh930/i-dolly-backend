@@ -29,6 +29,7 @@ from app.schema.events import (
     TicketUpdate,
     WonTicketCheckoutCreate,
 )
+from app.schema.identity import UserRole
 from app.services.events.ticket_service import TicketService
 
 # add/update/delete below stay the ADMIN-ONLY stopgap until the lottery
@@ -74,6 +75,9 @@ async def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheck
         db.rollback()
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
+# FRONTEND: not currently called by i-dolly-frontend. Tickets are only ever
+# created through /tickets/checkout or /tickets/{id}/checkout — this generic
+# admin-only create (and the single-get/update/delete below) are unused.
 @router.post("/add", response_model=TicketRead)
 async def add_new_ticket(data: TicketCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
     try:
@@ -103,15 +107,17 @@ async def get_concert_sales(
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.get("/{id}", response_model=TicketRead)
 async def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> Ticket:
     ticket = TicketService.get_ticket(db, id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    if current_user.role not in ("admin", "manager") and ticket.user_id != current_user.id:
+    if current_user.role not in (UserRole.admin, UserRole.manager) and ticket.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You can only view your own tickets")
     return ticket
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.put("/update/{id}", response_model=TicketRead)
 async def update_existing_ticket(id: uuid.UUID, data: TicketUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
     try:
@@ -119,6 +125,7 @@ async def update_existing_ticket(id: uuid.UUID, data: TicketUpdate, current_user
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
+# FRONTEND: not currently called by i-dolly-frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
 async def delete_existing_ticket(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:
