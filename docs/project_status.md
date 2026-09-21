@@ -724,6 +724,38 @@ newly introduced.
     test from reaching `email_sender.py` at all. No live Resend account available from here to
     smoke-test an actual delivery — same caveat as item 40's SendGrid verification.
 
+    **Follow-up**: bought `i-dolly-app.site` (Cloudflare Registrar) and verified `mail.i-dolly-app.site`
+    as a Resend sending domain — DKIM (TXT), two SPF-related CNAMEs (`rsend.mail`/`send.mail`
+    pointing at Resend's `forge.rmta.net` infrastructure), and a DMARC TXT (`_dmarc`, `p=none`), all
+    added via Cloudflare DNS with the two CNAMEs set to "DNS only" (a proxied/orange-cloud CNAME
+    would have broken verification, since Cloudflare's proxy only speaks HTTP(S)). `.env`'s
+    `FROM_EMAIL` updated to `noreply@mail.i-dolly-app.site` — also fixes a bad prior value
+    (`i-dolly-backend.onrender.com`, a bare hostname with no `@`, not a valid email address at all).
+    With the domain verified, sends are no longer sandbox-restricted to the Resend account owner's
+    own inbox — this closes out the "no live account to test against" caveat above for local/manual
+    testing, though CI and the deployed Render services still only have a placeholder/unset key
+    unless `RESEND_API_KEY`/`FROM_EMAIL` are updated there too (`render.yaml`'s `sync: false` means
+    Render's dashboard, not this file, holds the real values).
+
+42. ~~**Email bodies were plain text sent under Resend's `html` param**~~ — **FIXED**.
+    `app/utils/email_sender.py`'s `resend.Emails.send(...)` call has always passed `body` as the
+    `html` field (true since the SendGrid→Resend migration in item 41), but every
+    `EmailTemplate` body in `app/utils/email_templates.py` was plain text with `\n\n` separators —
+    HTML collapses bare newlines to spaces, so every email would have rendered as one run-on
+    paragraph with no line breaks, and the verification/reset links would have shown as bare
+    unclickable URL text instead of a link. Converted all seven templates
+    (`EMAIL_VERIFICATION`, `ORDER_PLACED`, `TICKET_CONFIRMED`, `LOTTERY_WON`, `LOTTERY_LOST`,
+    `LOTTERY_PAYMENT_CONFIRMED`, `RESET_PASSWORD`) to real HTML: `<p>` per paragraph, `<br>` for
+    same-paragraph line breaks, `<a href="{link}">` for the verification/reset links. Every
+    interpolated field is either an `EmailStr` validated at the schema boundary (`{email}`) or a
+    server-generated value (ids, prices, an HMAC-signed `{link}` token) — none are arbitrary user
+    text, so no HTML-escaping was needed on the placeholders themselves.
+
+    Verification: `py_compile` + `ruff check --select F401,F811,F821` clean; full unit suite
+    (393/393) — the one test that inspects email body content
+    (`test_user_service.py::test_reset_password_process`) only asserts the link substring is
+    present, which still holds verbatim inside the new `<a href="...">` markup.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
