@@ -71,7 +71,7 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 - **Email dispatch**: every transactional email — verification link, order placed, ticket
   confirmed, lottery win, lottery loss, lottery ticket payment confirmed — goes through
   `celery_app.send_task("app.tasks.email.send_email", ...)`, picked up by the worker task in
-  `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s SendGrid wrapper. Subject/body
+  `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s Resend wrapper. Subject/body
   text for each lives in `app/utils/email_templates.py`'s `EmailTemplate` enum (`.subject`,
   `.render(**fields)`) rather than inline at each call site. Replaces the original
   `BackgroundTasks.add_task` approach (verification email only) — that couldn't extend to
@@ -702,6 +702,60 @@ newly introduced.
     directly and the change only ever short-circuits a branch that previously either silently
     failed (placeholder key) or shouldn't have run at all (real key, which was the actual bug).
 
+41. ~~**Migrated transactional email from SendGrid to Resend**~~ — **FIXED**. `app/utils/email_sender.py`
+    now calls `resend.Emails.send(...)` instead of `SendGridAPIClient.send(...)`; same `send_email(to_email,
+    subject, body)` signature, same `settings.DEBUG` dev short-circuit (item 40). `Settings.SENDGRID_API_KEY`
+    is gone, replaced by `RESEND_API_KEY`; `FROM_EMAIL` is unchanged but now must be on a
+    Resend-verified domain (or the sandbox `onboarding@resend.dev`) rather than an arbitrary address.
+    `requirements.txt`, `.env.example`, CI (`.github/workflows/test.yml`'s two `SENDGRID_API_KEY`
+    secret refs), and `render.yaml` all updated to match.
+
+    While updating `render.yaml`, found a pre-existing gap unrelated to this migration: the
+    `i-dolly-backend-worker` service's `envVars` never included `SENDGRID_API_KEY`/`FROM_EMAIL` at
+    all (only the web service had them), even though the worker is the process that actually runs
+    `app.tasks.email.send_email` and `Settings` has no default for that key — so the worker
+    container should have failed to boot on Render whenever it was last (re)deployed from this
+    config. Added `RESEND_API_KEY`/`FROM_EMAIL`/`DEBUG` to the worker's `envVars` as part of this
+    change; worth confirming on the next real Render deploy that the worker was actually getting
+    these some other way (e.g. set by hand in the dashboard, out of sync with this exported file).
+
+    Verification: `py_compile` + `ruff check --select F401,F811,F821` clean; full unit suite
+    (393/393) unaffected, since the autouse `celery_app.send_task` mock from item 40 stops any
+    test from reaching `email_sender.py` at all. No live Resend account available from here to
+    smoke-test an actual delivery — same caveat as item 40's SendGrid verification.
+
+    **Follow-up**: bought `i-dolly-app.site` (Cloudflare Registrar) and verified `mail.i-dolly-app.site`
+    as a Resend sending domain — DKIM (TXT), two SPF-related CNAMEs (`rsend.mail`/`send.mail`
+    pointing at Resend's `forge.rmta.net` infrastructure), and a DMARC TXT (`_dmarc`, `p=none`), all
+    added via Cloudflare DNS with the two CNAMEs set to "DNS only" (a proxied/orange-cloud CNAME
+    would have broken verification, since Cloudflare's proxy only speaks HTTP(S)). `.env`'s
+    `FROM_EMAIL` updated to `noreply@mail.i-dolly-app.site` — also fixes a bad prior value
+    (`i-dolly-backend.onrender.com`, a bare hostname with no `@`, not a valid email address at all).
+    With the domain verified, sends are no longer sandbox-restricted to the Resend account owner's
+    own inbox — this closes out the "no live account to test against" caveat above for local/manual
+    testing, though CI and the deployed Render services still only have a placeholder/unset key
+    unless `RESEND_API_KEY`/`FROM_EMAIL` are updated there too (`render.yaml`'s `sync: false` means
+    Render's dashboard, not this file, holds the real values).
+
+42. ~~**Email bodies were plain text sent under Resend's `html` param**~~ — **FIXED**.
+    `app/utils/email_sender.py`'s `resend.Emails.send(...)` call has always passed `body` as the
+    `html` field (true since the SendGrid→Resend migration in item 41), but every
+    `EmailTemplate` body in `app/utils/email_templates.py` was plain text with `\n\n` separators —
+    HTML collapses bare newlines to spaces, so every email would have rendered as one run-on
+    paragraph with no line breaks, and the verification/reset links would have shown as bare
+    unclickable URL text instead of a link. Converted all seven templates
+    (`EMAIL_VERIFICATION`, `ORDER_PLACED`, `TICKET_CONFIRMED`, `LOTTERY_WON`, `LOTTERY_LOST`,
+    `LOTTERY_PAYMENT_CONFIRMED`, `RESET_PASSWORD`) to real HTML: `<p>` per paragraph, `<br>` for
+    same-paragraph line breaks, `<a href="{link}">` for the verification/reset links. Every
+    interpolated field is either an `EmailStr` validated at the schema boundary (`{email}`) or a
+    server-generated value (ids, prices, an HMAC-signed `{link}` token) — none are arbitrary user
+    text, so no HTML-escaping was needed on the placeholders themselves.
+
+    Verification: `py_compile` + `ruff check --select F401,F811,F821` clean; full unit suite
+    (393/393) — the one test that inspects email body content
+    (`test_user_service.py::test_reset_password_process`) only asserts the link substring is
+    present, which still holds verbatim inside the new `<a href="...">` markup.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
@@ -791,8 +845,8 @@ duplicated logic. Re-running it against an already-resolved payment is a no-op
 mechanism, not a separate event-id table.
 
 **What shipped**:
-1. `app/config/settings.py`: `PAYPAL_CLIENT_ID`/`SECRET`, `PAYPAL_MODE`, `PAYPAL_WEBHOOK_ID`,
-   `BASE_URL`. No new dependency beyond `httpx`.
+1. `app/config/settings.py`: `PAYPAL_CLIENT_ID`/`SECRET`, `PAYPAL_MODE`, `PAYPAL_WEBHOOK_ID`.
+   No new dependency beyond `httpx`.
 2. `app/utils/paypal_client.py`: `get_access_token()` (OAuth2 client-credentials, cached
    in-process), `create_order()`, `capture_order()`, `verify_webhook_signature()` (posts back to
    PayPal's own verify-webhook-signature endpoint rather than reimplementing cert-chain
@@ -818,7 +872,7 @@ times the webhook re-delivers, with no second table to maintain.
 
 **Verified**: a real PayPal Sandbox ticket checkout end-to-end (create order → approve → capture
 → `Payment`/`Ticket` flip to success/paid), confirmed both locally and against the deployed
-Render app (so `PAYPAL_MODE`/`BASE_URL`/`FRONTEND_BASE_URL`/CORS are wired correctly there too).
+Render app (so `PAYPAL_MODE`/`FRONTEND_BASE_URL`/CORS are wired correctly there too).
 ~~The order-flow (marketplace) checkout hasn't been run end-to-end against real PayPal~~ —
 **DONE**: run against real PayPal Sandbox the same way as the ticket flow, same
 create-order → approve → capture → `Payment`/`Order` success sequence.

@@ -14,7 +14,7 @@ projects:
       envVars:
       - key: DEBUG
         sync: false
-      - key: SENDGRID_API_KEY
+      - key: RESEND_API_KEY
         sync: false
       - key: FROM_EMAIL
         sync: false
@@ -89,6 +89,15 @@ projects:
       - key: DATABASE_NAME
         sync: false
       - key: DATABASE_URL
+        sync: false
+      # RESEND_API_KEY/FROM_EMAIL/DEBUG were missing here before the Resend migration — this
+      # worker is the process that actually runs app.tasks.email.send_email, and Settings has no
+      # default for RESEND_API_KEY, so without these the worker container fails to boot entirely.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - key: DEBUG
         sync: false
       region: singapore
       dockerContext: .

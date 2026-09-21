@@ -890,7 +890,7 @@ sequenceDiagram
     participant API as Lottery API
     participant DB as Postgres
     participant Job as Lottery draw job
-    participant Email as Notification (SendGrid)
+    participant Email as Notification (Resend)
 
     Fan->>API: Rank tier preferences for a concert (e.g. 1st VIP, 2nd Premium, 3rd Regular)
     API->>DB: Upsert lottery_preferences rows
