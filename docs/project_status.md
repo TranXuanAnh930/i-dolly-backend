@@ -817,6 +817,11 @@ newly introduced.
   task — see §8 for the full plan. The Celery skeleton (`app/celery_app.py`, broker on Redis)
   stays unused for this specific job as a result; it may still end up used for winner-notification
   dispatch (a separate concern from the draw itself, see §8).
+- **No sweep job for expired unpaid lottery-won tickets** — designed in `database-design.md`
+  §5.2's sequence diagram, not built; the one place this is even lazily discovered today
+  (`PaymentService.finalize_paypal_payment`) only covers one narrow path to it. Full writeup,
+  including why it's explicitly out of scope for the new checkout/lottery-draw concurrency tests:
+  §8's "Known limitation" note.
 - **UI messaging** for "you can't apply to this lottery because you haven't ranked that tier yet"
   — the application is correctly rejected server-side; there's no client-facing nudge designed.
 - **`idols.real_name`** — deliberately left unmodeled.
@@ -986,5 +991,24 @@ discretion on timing), or also require `now() >= draw_at` (trigger becomes "conf
 discretion)? Leaning toward the former; changes what `draw_at` means in the schema's story, so
 not decided speculatively here.
 
-**Verification**: same standing gap as §3 — implemented and unit/integration-tested, but not yet
-confirmed with a real multi-fan draw against a live Postgres.
+**Verification**: implemented and unit/integration-tested; the concurrency guard specifically
+(the `with_for_update()` locking described above) is now confirmed against a real live Postgres —
+`tests/integration/events/test_lottery_concurrency.py` races two concurrent `draw_lottery` calls
+for the same concert and confirms exactly one wins, the loser correctly finds no open campaign
+left, and `sold_quantity`/ticket/won-entry counts stay consistent (§4 item 1's regression writeup
+has the full context — that same test-writing pass is what caught a real oversell bug elsewhere in
+checkout). Still open: a full multi-fan draw (more than the 3 candidates per tier that race test
+seeds) hasn't been exercised against a live Postgres.
+
+**Known limitation — no sweep job for expired unpaid tickets** (`database-design.md` §5.2's
+sequence diagram, "Sweep job for expired unpaid tickets"): a fan who wins the lottery but never
+pays before `tickets.payment_deadline_at` should have that slot released
+(`tickets.status='expired'`, `ticket_types.sold_quantity -= 1`, optionally re-drawn from the lost
+pool) so it doesn't sit held forever. The only place this is even checked today is
+`PaymentService.finalize_paypal_payment`'s lazy discovery (its own comment: "no sweep job exists
+yet ... so this is the one place that does it") — which only fires if someone happens to hit that
+specific PayPal-finalize path for that exact ticket; nothing else ever reads
+`payment_deadline_at`. Not built, not scheduled anywhere — see §5's deferred list. **Excluded from
+the concurrency tests added alongside item 1's fix** (`test_orders_concurrency.py`,
+`test_lottery_concurrency.py`): those race `order_service.checkout` and `draw_lottery`, both real
+code paths — a sweep job that doesn't exist yet has nothing to race.
