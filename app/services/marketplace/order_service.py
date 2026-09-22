@@ -116,7 +116,13 @@ class OrderService:
 
         commit_or_raise(db)  # trg_orders_fan_only / chk_products_capacity backstop
         if payment.status == PaymentStatus.success:
+            # Both, not just the first: product.quantity was decremented above,
+            # and that stock figure is embedded in the per-product detail
+            # payload (ProductCard.quantity) as well as the list/store-page
+            # ones — busting only the latter leaves the detail page quoting
+            # pre-purchase stock while the grid shows the real number.
             CacheService.delete_cached_products()
+            CacheService.delete_cached_product_details()
         db.refresh(order)
         return order
 

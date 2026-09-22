@@ -202,11 +202,12 @@ class TestPaymentService:
 
 class TestFinalizePaypalPayment:
 
-    def _mock_ticket_type(self, sale_method="direct", total_quantity=10, sold_quantity=0):
+    def _mock_ticket_type(self, sale_method="direct", total_quantity=10, sold_quantity=0, concert_id=DEFAULT_ID):
         tt = MagicMock()
         tt.sale_method = sale_method
         tt.total_quantity = total_quantity
         tt.sold_quantity = sold_quantity
+        tt.concert_id = concert_id
         return tt
 
     def _mock_ticket(self, id=DEFAULT_ID, user_id=DEFAULT_ID, status="pending_payment", payment_deadline_at=None):
@@ -262,7 +263,8 @@ class TestFinalizePaypalPayment:
         with patch(
             "app.services.marketplace.payment_service.capture_order",
             return_value={"status": "COMPLETED"},
-        ), patch.object(CacheService, "delete_cached_products") as mock_invalidate, \
+        ), patch.object(CacheService, "delete_cached_concert_detail") as mock_invalidate_concert, \
+           patch.object(CacheService, "delete_cached_products") as mock_invalidate_products, \
            patch("app.services.marketplace.payment_service.NotificationService.create_notification") as mock_notify:
             result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
 
@@ -270,7 +272,11 @@ class TestFinalizePaypalPayment:
         assert ticket.status == "paid"
         assert ticket_type.sold_quantity == 4
         mock_notify.assert_called_once()
-        mock_invalidate.assert_called_once()
+        # A ticket sale moves ticket_types[].sold_quantity, which lives in the
+        # cached concert detail — and touches no product stock, so the product
+        # caches are deliberately left alone rather than needlessly rebuilt.
+        mock_invalidate_concert.assert_called_once_with(ticket_type.concert_id)
+        mock_invalidate_products.assert_not_called()
         db.commit.assert_called_once()
         assert result == payment
 

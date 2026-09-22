@@ -49,7 +49,35 @@ def _recreate_test_database() -> None:
     command.upgrade(Config("alembic.ini"), "head")
 
 
+def _assert_app_session_targets_test_database() -> None:
+    """Guard the redirect above actually took effect on the engine the tests
+    write through.
+
+    tests/conftest.py rewrites DATABASE_URL, but that only lands if it runs
+    before app.config.settings is first imported — and app/db/session.py binds
+    its engine once, at ITS first import, from whatever settings resolved to
+    then. The concurrency harness (tests/integration/_concurrency.py) seeds
+    fixtures straight through that engine, so if the ordering ever breaks,
+    the suite silently seeds, races against and mutates the REAL database
+    instead of this one. That is not hypothetical: it is how a batch of
+    `cat-<uuid>`/`product-<uuid>` rows, racer users and their orders ended up
+    in the dev database. Cheap assert, loud failure, right after the point
+    where the test database is known to exist.
+    """
+    from app.db.session import engine
+
+    bound = engine.url.database
+    if not (bound and bound.endswith("_test")):
+        raise RuntimeError(
+            f"app.db.session is bound to {bound!r}, which is not a _test database — "
+            "the integration suite would read and write real data. Check that "
+            "tests/conftest.py's DATABASE_URL redirect runs before anything imports "
+            "app.config.settings."
+        )
+
+
 _recreate_test_database()
+_assert_app_session_targets_test_database()
 
 
 @pytest.fixture(autouse=True)

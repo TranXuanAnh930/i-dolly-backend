@@ -32,10 +32,11 @@ from app.schema.events import (
 from app.schema.identity import UserRole
 from app.services.events.ticket_service import TicketService
 
-# add/update/delete below stay the ADMIN-ONLY stopgap until the lottery
-# draw job exists (see TicketCreate's docstring and database-design.md
-# §7.4). Fans buy direct-sale tickets through /checkout, and can only read
-# their own tickets otherwise.
+# add/update/delete below are ADMIN-ONLY manual escape hatches (see
+# TicketCreate's docstring and database-design.md §7.4) — lottery-won tickets
+# are issued by the draw job itself (app/tasks/lottery.py), not through these.
+# Fans buy direct-sale tickets through /checkout, and can only read their own
+# tickets otherwise.
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
 
 @router.post("/checkout", response_model=TicketRead)
