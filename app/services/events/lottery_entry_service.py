@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, Ticket, TicketType
 from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
-from app.exception.db_triggers import commit_or_raise
-from app.schema.events import LotteryEntryApply
+from app.exception.db_triggers import commit_or_raise, flush_or_raise
+from app.schema.events import LotteryEntryApply, LotteryEntryApplyBatch
 from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
 
@@ -25,10 +25,18 @@ class LotteryEntryService:
         return current_user.role == UserRole.manager and current_user.company_id != company_id
 
     @staticmethod
-    def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry:
-        if current_user.role != UserRole.fan:
-            raise ForbiddenError("Only fan accounts can apply to a lottery")  # primary check for trg_lottery_entries_fan_only
-        campaign = db.get(LotteryCampaign, data.campaign_id)
+    def _stage_entry(db: Session, campaign_id: uuid.UUID, current_user: Users) -> LotteryEntry:
+        """Every rule apply_to_lottery enforces, plus the INSERT — but no
+        commit, so the caller owns the transaction boundary. Shared by the
+        single and batch entry points so the two can't drift apart.
+
+        Flushes rather than commits: the triggers still fire per row, and a
+        later tier in the same batch sees the rows staged before it (so the cap
+        check below counts them). Nothing is durable until the caller commits,
+        which is what makes the batch all-or-nothing — an exception here leaves
+        the transaction uncommitted, and get_db's close() discards it.
+        """
+        campaign = db.get(LotteryCampaign, campaign_id)
         if not campaign:
             raise NotFoundError("Lottery campaign not found")
         ticket_type = db.get(TicketType, campaign.ticket_type_id)
@@ -71,17 +79,44 @@ class LotteryEntryService:
         # trg_lottery_entries_cap: existing entries for this (campaign, user) < max_entries_per_user.
         existing_count = (
             db.query(LotteryEntry)
-            .filter(LotteryEntry.campaign_id == data.campaign_id, LotteryEntry.user_id == current_user.id)
+            .filter(LotteryEntry.campaign_id == campaign_id, LotteryEntry.user_id == current_user.id)
             .count()
         )
         if existing_count >= campaign.max_entries_per_user:
             raise BadRequestError("You've already used all your entries for this campaign")
 
-        db_entry = LotteryEntry(campaign_id=data.campaign_id, user_id=current_user.id)
+        db_entry = LotteryEntry(campaign_id=campaign_id, user_id=current_user.id)
         db.add(db_entry)
-        commit_or_raise(db)  # backstop for trg_lottery_entries_fan_only/_cap/_require_preference
+        flush_or_raise(db)  # backstop for trg_lottery_entries_fan_only/_cap/_require_preference
+        return db_entry
+
+    @staticmethod
+    def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry:
+        if current_user.role != UserRole.fan:
+            raise ForbiddenError("Only fan accounts can apply to a lottery")  # primary check for trg_lottery_entries_fan_only
+        db_entry = LotteryEntryService._stage_entry(db, data.campaign_id, current_user)
+        commit_or_raise(db)
         db.refresh(db_entry)
         return db_entry
+
+    @staticmethod
+    def apply_to_lotteries(db: Session, data: LotteryEntryApplyBatch, current_user: Users) -> list[LotteryEntry]:
+        """Batch counterpart to apply_to_lottery. Every tier is validated and
+        staged first, then a single commit makes them durable together — so a
+        fan either gets every tier they submitted or none of them, never the
+        partial state a per-tier client loop leaves behind when one call fails
+        partway through.
+        """
+        if current_user.role != UserRole.fan:
+            raise ForbiddenError("Only fan accounts can apply to a lottery")
+        entries = [
+            LotteryEntryService._stage_entry(db, campaign_id, current_user)
+            for campaign_id in data.campaign_ids
+        ]
+        commit_or_raise(db)
+        for entry in entries:
+            db.refresh(entry)
+        return entries
 
     @staticmethod
     def get_my_entries(db: Session, current_user: Users) -> list[LotteryEntry]:

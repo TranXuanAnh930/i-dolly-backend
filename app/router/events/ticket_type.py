@@ -40,6 +40,9 @@ async def list_ticket_types(concert_id: uuid.UUID, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="No ticket types found for this concert")
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend — a tier's fields reach
+# the UI embedded in GET /concerts/{id}/detail (ticket_types[]), so nothing
+# needs to resolve a bare ticket_type_id on its own any more.
 @router.get("/{id}", response_model=TicketTypeRead)
 async def get_ticket_type_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> TicketType:
     ticket_type = TicketTypeService.get_ticket_type(db, id)

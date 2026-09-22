@@ -43,6 +43,10 @@ async def add_new_group(group: GroupCreate, current_user: Users = Depends(requir
     CacheService.delete_cached_manager_idol_form_page()
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend — the idols store that
+# called it was deleted. Group lists come from /groups/groups-page,
+# /groups/manager-groups-page, or embedded in the store/members bundles
+# (StorePageRead.groups, MembersPageRead).
 @router.get("/all", response_model=List[GroupRead])
 async def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Group]:
     result = GroupService.get_groups(db)

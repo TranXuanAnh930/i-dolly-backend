@@ -76,6 +76,10 @@ async def add_new_idol(
     CacheService.delete_cached_group_details()  # its group's members list just grew
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend — the idols store that
+# called it was deleted once every view it fed moved to a page bundle. The
+# Members grid uses /idols/members-page, the manager table
+# /idols/manager-idols-page.
 @router.get("/all", response_model=List[IdolRead])
 async def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Idol]:
     result = IdolService.get_idols(db)
