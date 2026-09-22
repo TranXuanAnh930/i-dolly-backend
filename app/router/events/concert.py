@@ -179,6 +179,11 @@ async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(
     if ConcertService._manager_scope_violation(current_user, concert.company_id):
         raise HTTPException(status_code=403, detail="Managers can only manage concerts for their own company")
 
+    # Every manager at this company gets a lottery_draw_triggered notification
+    # here, synchronously — see notify_managers_of_draw_trigger's own comment
+    # for why this can't wait for the Celery task to finish.
+    ConcertService.notify_managers_of_draw_trigger(db, concert)
+
     # Fire-and-forget from here on: the actual draw (LotteryResult) runs
     # async in a Celery worker — see app/tasks/lottery.py /
     # lottery_draw_service.draw_lottery. This response is just a queued

@@ -9,6 +9,8 @@ from app.exception.db_triggers import commit_or_raise, flush_or_raise
 from app.schema.events import LotteryEntryApply, LotteryEntryApplyBatch
 from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
+from app.schema.shared import NotificationType
+from app.services.shared.notification_service import NotificationService
 
 _LIVE_TICKET_STATUSES = (TicketStatus.reserved, TicketStatus.pending_payment, TicketStatus.paid, TicketStatus.used)
 
@@ -88,6 +90,11 @@ class LotteryEntryService:
         db_entry = LotteryEntry(campaign_id=campaign_id, user_id=current_user.id)
         db.add(db_entry)
         flush_or_raise(db)  # backstop for trg_lottery_entries_fan_only/_cap/_require_preference
+        # lottery_registered: confirms the entry landed, same commit as the
+        # row it describes (notification_service.create_notification's own
+        # convention) — previously the only NotificationType with no
+        # producer anywhere (project_status.md's notifications note).
+        NotificationService.create_notification(db, current_user.id, NotificationType.lottery_registered, lottery_entry_id=db_entry.id)
         return db_entry
 
     @staticmethod
