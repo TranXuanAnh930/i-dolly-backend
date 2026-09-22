@@ -12,8 +12,9 @@ from app.db.models.events import Concert
 from app.db.models.identity import Users
 from app.db.session import session
 from app.schema.events import LotteryResult
-from app.services.events.lottery_draw_service import LotteryDrawService
 from app.services.events.concert_service import ConcertService
+from app.services.events.lottery_draw_service import LotteryDrawService
+
 
 @celery_app.task(name="app.tasks.lottery.draw_lottery")
 def draw_lottery_task(concert_id: str, user_id: str) -> LotteryResult:
