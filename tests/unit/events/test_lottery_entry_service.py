@@ -185,7 +185,9 @@ class TestApplyToLottery:
 
         result = LotteryEntryService.apply_to_lottery(db, data, make_mock_fan())
 
-        db.add.assert_called_once()
+        # Two adds: the entry itself, plus the lottery_registered notification
+        # _stage_entry now creates in the same transaction.
+        assert db.add.call_count == 2
         db.commit.assert_called_once()
         assert result is not None
 
@@ -241,7 +243,9 @@ class TestApplyToLotteriesBatch:
         result = LotteryEntryService.apply_to_lotteries(db, data, make_mock_fan())
 
         assert len(result) == 3
-        assert db.add.call_count == 3
+        # 2 adds per tier: the entry itself, plus its lottery_registered
+        # notification (_stage_entry creates both in the same transaction).
+        assert db.add.call_count == 6
         # One commit for the whole submission, not one per tier — that's what
         # makes it all-or-nothing, and what keeps it to a single rate-limit slot.
         db.commit.assert_called_once()
@@ -281,7 +285,9 @@ class TestApplyToLotteriesBatch:
         # The first tier was staged, but never committed — get_db's close()
         # discards the transaction, so the fan ends up with no entries at all
         # rather than the partial state a per-tier client loop would leave.
-        db.add.assert_called_once()
+        # 2 adds: the first tier's entry plus its notification; the second
+        # tier fails its preference check before ever reaching db.add.
+        assert db.add.call_count == 2
         db.commit.assert_not_called()
 
     def test_rejects_duplicate_campaign_ids(self):

@@ -9,6 +9,8 @@ class NotificationType(str, Enum):
     order_confirmation = "order_confirmation"
     ticket_confirmation = "ticket_confirmation"
     lottery_registered = "lottery_registered"
+    lottery_draw_triggered = "lottery_draw_triggered"
+    lottery_draw_failed = "lottery_draw_failed"
     lottery_result = "lottery_result"
     lottery_payment_reminder = "lottery_payment_reminder"
     lottery_payment_confirmation = "lottery_payment_confirmation"

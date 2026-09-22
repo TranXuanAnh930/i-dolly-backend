@@ -8,17 +8,25 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `bfadb696c92a`** (`change_shipping_postal_code_to_string`) — 56 migrations, one
-linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
+**Chain head: `d3a9e5f1c8b7`** (`add_lottery_draw_failed_to_notification_type`) — 58 migrations,
+one linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
 applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
 empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
 the models. The notification feature was also exercised over real HTTP end to end (password reset
 → notification created → read → unread-count clears), and the per-route rate limiter was confirmed
 firing under load (a 30/60s budget returns `429` past the 30th request). The app is now also
 deployed against a real Supabase Postgres (§3) — migrations run clean there through the current
-head. The two most recent migrations (`54347349d0f2`, `bfadb696c92a` — item 5's schema-type fix)
-have only been verified statically (`py_compile`, `alembic`'s own revision-chain check) so far, not
-yet re-run against Supabase.
+head. `54347349d0f2` and `bfadb696c92a` (item 5's schema-type fix) have only been verified
+statically (`py_compile`, `alembic`'s own revision-chain check) so far, not yet re-run against
+Supabase. `c7f2a4d8e1b5` and `d3a9e5f1c8b7` *were* re-run against a throwaway Postgres database
+(the seed/verification pattern used throughout this doc): `alembic upgrade head` from empty landed
+clean each time, and `enum_range(NULL::notification_type_enum)` confirmed `lottery_draw_triggered`/
+`lottery_draw_failed` present — see the Notifications bullet in §2 below for the three new
+producers these added. `d3a9e5f1c8b7`'s producer specifically was exercised past just the enum:
+calling `draw_lottery_task` directly against that same database with a concert whose lottery
+campaign hadn't closed yet confirmed the `BadRequestError` propagates out of the task (so Celery
+still records `FAILURE`, not a silent success) *and* the manager's `lottery_draw_failed` row lands,
+in one run.
 
 All 18 domain tables from `database-design.md` plus the pre-existing e-commerce tables are
 migrated. `schema.sql`, cited throughout `database-design.md` as "the reference DDL," doesn't
@@ -57,15 +65,26 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   Idol portraits and product covers are procedural placeholder art pushed through the real
   `get_storage().save()` pipeline — see `tests/fixtures/README.md`.
 - **Notifications** (`app/db/models/shared/notification.py`): a `notifications` table
-  (`database-design.md` §3.19) covering 8 event types, one nullable FK per referenced entity kind.
+  (`database-design.md` §3.19) covering 10 event types, one nullable FK per referenced entity kind.
   Producers fire inline (no cron/Beat job): `order_service.checkout()`,
-  `ticket_service.checkout_ticket()`/`checkout_won_ticket()`, `user_service.verify_rtoken()`, and
+  `ticket_service.checkout_ticket()`/`checkout_won_ticket()`, `user_service.verify_rtoken()`,
   `lottery_draw_service.draw_lottery()` (result for every winner and loser, plus a payment
-  reminder for winners, fired at draw time rather than on a schedule closer to the deadline).
-  Every write lands in the same commit as the event it describes. Fan-facing API:
+  reminder for winners, fired at draw time rather than on a schedule closer to the deadline),
+  `lottery_entry_service._stage_entry()` (`lottery_registered`, fired the moment a fan's entry is
+  staged — shared by the single and batch apply endpoints, same commit as the entry itself),
+  `concert_service.notify_managers_of_draw_trigger()` (`lottery_draw_triggered`, fired from the
+  `PUT /concerts/lottery-draw/{id}` router the moment a manager/admin presses draw — every manager
+  at the concert's own company gets one, not just whoever clicked, since the draw itself is
+  fire-and-forget onto a Celery worker and this is the only record any of them get that one is now
+  in flight), and `concert_service.notify_managers_of_draw_failure()` (`lottery_draw_failed`,
+  called from `draw_lottery_task`'s own `except Exception` block in `app/tasks/lottery.py` —
+  rolls back, notifies the same audience as the trigger notification, then re-raises the original
+  exception so the task still surfaces as a Celery `FAILURE` rather than silently looking like a
+  success; see §8's updated Notifications note). Every
+  write lands in the same commit as the event it describes. Fan-facing API:
   `GET /notifications/mine`, `GET /notifications/unread-count` (polled, no WebSocket/SSE layer),
   `POST /notifications/{id}/read`, `POST /notifications/read-all` — self-scoped, rate-limited.
-  `lottery_registered`/`event_reminder` still have no producer. `notifications.status`/`sent_at`
+  `event_reminder` still has no producer. `notifications.status`/`sent_at`
   sit at `pending`/`null` forever regardless — that pair tracks a push-to-inbox step this table
   itself doesn't drive (see Email dispatch below, a separate path).
 - **Email dispatch**: every transactional email — verification link, order placed, ticket
@@ -980,6 +999,20 @@ the draw's commit costs nothing and buys atomicity. Win and loss also each dispa
 one-time notice at draw time, not a recurring deadline-proximity reminder, which stays out of
 scope. A reproducible/auditable draw (logging a seed + candidate snapshot per rank) was considered
 and intentionally not built — nothing in this project's scope models a dispute process.
+
+A separate `lottery_draw_triggered` notification fires earlier and outside this transaction
+entirely — from the router, at the moment the manager/admin presses draw
+(`ConcertService.notify_managers_of_draw_trigger`, §2's Notifications bullet), before the Celery
+task above even runs. It tells every manager at the company a draw is now in flight.
+
+If the task itself then raises — the entries-not-closed-yet check, a closed-campaign race from a
+double-click, a real bug — `draw_lottery_task` (`app/tasks/lottery.py`) catches it, rolls back,
+looks the concert back up (the local `Concert` object from inside `draw_lottery` is gone once it
+raised), and calls `ConcertService.notify_managers_of_draw_failure` for a `lottery_draw_failed`
+notification to the same audience, before re-raising the original exception unchanged — so the
+failure notification and Celery's own `FAILURE` task state both still happen, neither replaces the
+other. There's still no *success*-completion signal beyond polling `GET /concerts/{id}/detail` for
+a campaign's `status` to flip to `drawn` — only the failure side has a push-style notification now.
 
 **Placement**: `app/services/events/lottery_draw_service.py`, not folded into
 `lottery_campaign_service.py` — the draw is a meaningfully different concern (touching
