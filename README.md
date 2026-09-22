@@ -47,7 +47,7 @@ The `docs/` folder is the source of truth for anything not obvious from the code
 - **JWT** auth — short-lived access tokens + rotating refresh tokens, httponly cookies
 - **Mock payment gateway** for local dev, plus a **PayPal** integration (sandbox-verified for
   ticket checkout) — see [Known limitations](#known-limitations) for what's still unverified there
-- **SendGrid** for transactional email
+- **Resend** for transactional email
 - Local disk / S3-compatible object storage abstraction for idol/product images
 - **Docker Compose** for local dev; **GitHub Actions** for CI — a `lint` job (`ruff check .`) and
   a separate `test` job (Postgres + Redis services, Alembic migrations, pytest + coverage)
@@ -105,7 +105,7 @@ git clone https://github.com/TranXuanAnh930/i-dolly-backend.git
 cd i-dolly-backend
 cp .env.example .env
 ```
-Fill in `.env` — at minimum a JWT secret, and a SendGrid key if you want email flows to work end
+Fill in `.env` — at minimum a JWT secret, and a Resend key if you want email flows to work end
 to end (the app runs locally without a valid key, but email sending won't). The mock payment
 gateway needs no third-party keys; a PayPal Sandbox app's client id/secret are only needed if
 you want to exercise the real PayPal checkout path instead.

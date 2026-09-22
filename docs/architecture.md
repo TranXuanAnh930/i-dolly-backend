@@ -26,12 +26,12 @@ How the codebase is organized and the conventions new code should follow. For th
 - **bcrypt** via passlib for password hashing.
 - A `mock` payment gateway (`PaymentGateway.mock`, driven by `simulate_succ`) plus PayPal;
   `PaymentGateway` stays an enum so a future gateway has somewhere to slot in.
-- **SendGrid** for transactional email, sent from the `app.tasks.email.send_email` Celery task —
+- **Resend** for transactional email, sent from the `app.tasks.email.send_email` Celery task —
   not `BackgroundTasks`, so a non-request-scoped caller (`lottery_draw_service.draw_lottery`, also
   a Celery task) can send mail too. Subject/body text for each email lives in
   `app/utils/email_templates.py`'s `EmailTemplate` enum, not inlined at the call site. With
   `settings.DEBUG=true`, email bodies (including verification/reset tokens) print to the console
-  instead of sending, since `.env.example`'s `SENDGRID_API_KEY` is a placeholder — must stay
+  instead of sending, since `.env.example`'s `RESEND_API_KEY` is a placeholder — must stay
   `false` in production.
 - **boto3** (only imported when `STORAGE_BACKEND=s3`) for S3-compatible image storage — see §3.
 - Docker Compose (`app` + `postgres:16` + `redis`) for local dev; the Dockerfile runs
