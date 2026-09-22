@@ -22,9 +22,10 @@ from app.services.talent.idol_color_service import IdolColorService
 # a manager shouldn't be able to break another company's data.
 router = APIRouter(prefix="/idol_colors", tags=["Idol Colors"])
 
-# FRONTEND: not currently called by i-dolly-frontend. IdolColorsService
-# only ever calls the inherited getAllPublic() (GET /idol_colors/all) —
-# there's no color-management UI, so create/update/delete are unused.
+# FRONTEND: not currently called by i-dolly-frontend — and neither is anything
+# else on this router. The frontend's IdolColorsService was deleted along with
+# the idols store that was its only caller; a color reaches the UI embedded in
+# the page bundles instead (ProductCard.artist.color_hex, MembersPageRead).
 @router.post("/add", response_model=IdolColorRead)
 async def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
     db_color = IdolColorService.add_idol_color(db, color)
@@ -33,6 +34,7 @@ async def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depen
     CacheService.delete_cached_manager_products_pages()  # ManagerProductFormPage's colors dropdown is embedded there too
     return db_color
 
+# FRONTEND: not currently called by i-dolly-frontend (see the note above).
 @router.get("/all", response_model=List[IdolColorRead])
 async def list_idol_colors(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[IdolColor]:
     result = CacheService.get_cached_idol_colors(db)

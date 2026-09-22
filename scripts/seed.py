@@ -216,6 +216,12 @@ def seed_ready_to_draw_lottery(db, concert, tt_vip, tt_premium, tt_regular, grou
 
 def seed(db):
     now = datetime.now(timezone.utc)
+    # Fixed (not "now + N days") — concert_sakura's and concert_kessho's
+    # lottery campaigns close on this date (see the lottery section below),
+    # and both concerts' event_datetime are set relative to it further down
+    # so the concert always happens after its own lottery closes, regardless
+    # of what "now" is when this script actually runs.
+    LOTTERY_ENTRY_CLOSE_DEC = datetime(2026, 12, 15, tzinfo=timezone.utc)
 
     # --- management companies -------------------------------------------
     nova = ManagementCompany(
@@ -523,8 +529,13 @@ def seed(db):
         company_id=nova.id, venue_id=crescent_hall.id,
         title="Sakura Prism: Hanabi Ranman Tour - Tokyo",
         description="Sakura Prism's hometown stop on the Hanabi Ranman Tour.",
-        capacity=11000, event_datetime=now + timedelta(days=30),
-        doors_open_at=now + timedelta(days=30, hours=-1), status="on_sale",
+        capacity=11000,
+        # Relative to LOTTERY_ENTRY_CLOSE_DEC, not "now" — this concert's own
+        # lottery campaign (see the lottery section below) closes entries on
+        # that fixed date, and the concert has to happen after that
+        # regardless of when this script actually runs.
+        event_datetime=LOTTERY_ENTRY_CLOSE_DEC + timedelta(days=14),
+        doors_open_at=LOTTERY_ENTRY_CLOSE_DEC + timedelta(days=14, hours=-1), status="on_sale",
     )
     concert_nagisa = Concert(
         company_id=nova.id, venue_id=grove_hall.id,
@@ -537,8 +548,12 @@ def seed(db):
         company_id=starlight.id, venue_id=starlight_dome.id,
         title="Kessho Stars: Starlight Oath Tour - Osaka",
         description="Kessho Stars' arena show built around their anime tie-in discography.",
-        capacity=28000, event_datetime=now + timedelta(days=45),
-        doors_open_at=now + timedelta(days=45, hours=-1), status="scheduled",
+        capacity=28000,
+        # Same reasoning as concert_sakura above — relative to the fixed
+        # lottery close date, not "now". A different offset than sakura's so
+        # the two don't land on the same calendar day.
+        event_datetime=LOTTERY_ENTRY_CLOSE_DEC + timedelta(days=21),
+        doors_open_at=LOTTERY_ENTRY_CLOSE_DEC + timedelta(days=21, hours=-1), status="scheduled",
     )
     concert_yozora = Concert(
         company_id=kuroyuri.id, venue_id=harbor_point.id,
@@ -629,24 +644,24 @@ def seed(db):
     tt_sakura_premium_lottery = tt(concert_sakura, "premium", 7500, 6000)
     tt_sakura_regular_direct = tt(concert_sakura, "regular", 9000, 2000, sale_method="direct")
 
-    tt(concert_nagisa, "vip", 11000, 250)
-    tt(concert_nagisa, "regular", 5500, 4000)
+    tt_nagisa_vip = tt(concert_nagisa, "vip", 11000, 250)
+    tt_nagisa_regular_lottery = tt(concert_nagisa, "regular", 5500, 4000)
     tt_nagisa_regular_direct = tt(concert_nagisa, "regular", 6800, 1500, sale_method="direct")
 
     tt_kessho_vip_direct = tt(concert_kessho, "vip", 21500, 200, sale_method="direct")
     tt_kessho_premium_lottery = tt(concert_kessho, "premium", 10000, 700)
     tt_kessho_regular_lottery = tt(concert_kessho, "regular", 6000, 800)
 
-    tt(concert_yozora, "vip", 16000, 500)
-    tt(concert_yozora, "premium", 8000, 25000)
+    tt_yozora_vip = tt(concert_yozora, "vip", 16000, 500)
+    tt_yozora_premium_lottery = tt(concert_yozora, "premium", 8000, 25000)
     tt_yozora_regular_direct = tt(concert_yozora, "regular", 9800, 3500, sale_method="direct")
 
-    tt(concert_program, "vip", 17000, 450)
-    tt(concert_program, "premium", 8300, 8000)
+    tt_program_vip = tt(concert_program, "vip", 17000, 450)
+    tt_program_premium_lottery = tt(concert_program, "premium", 8300, 8000)
     tt_program_regular_direct = tt(concert_program, "regular", 10500, 2500, sale_method="direct")
 
-    tt(concert_solo_showcase, "vip", 24000, 800)
-    tt(concert_solo_showcase, "premium", 11500, 40000)
+    tt_showcase_vip = tt(concert_solo_showcase, "vip", 24000, 800)
+    tt_showcase_premium_lottery = tt(concert_solo_showcase, "premium", 11500, 40000)
     tt_showcase_regular_direct = tt(concert_solo_showcase, "regular", 13500, 4000, sale_method="direct")
 
     # Deliberately small capacities — 12 applicants against vip=3/premium=3/
@@ -669,20 +684,25 @@ def seed(db):
     db.flush()
 
     # --- direct sale campaigns: every direct-sale ticket type needs one now
-    # (ticket_service.checkout_ticket) or it's simply unpurchasable — already
-    # on sale, staying open through each concert's own event_datetime.
-    for ticket_type, concert in [
-        (tt_sakura_regular_direct, concert_sakura),
-        (tt_nagisa_regular_direct, concert_nagisa),
-        (tt_kessho_vip_direct, concert_kessho),
-        (tt_yozora_regular_direct, concert_yozora),
-        (tt_program_regular_direct, concert_program),
-        (tt_showcase_regular_direct, concert_solo_showcase),
+    # (ticket_service.checkout_ticket) or it's simply unpurchasable. Fixed
+    # calendar dates rather than "now - 10 days" through each concert's own
+    # event_datetime — a relative sale_end_at tied to event_datetime quietly
+    # closes the window the moment that concert's date passes, which used to
+    # make POST /tickets/checkout untestable for whichever concert was
+    # soonest. This window is deliberately wide (open well before, and
+    # through the end of, every concert's event_datetime above) so direct
+    # ticket purchase stays exercisable regardless of when this script runs
+    # relative to those dates.
+    DIRECT_SALE_START = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    DIRECT_SALE_END = datetime(2026, 12, 31, tzinfo=timezone.utc)
+    for ticket_type in [
+        tt_sakura_regular_direct, tt_nagisa_regular_direct, tt_kessho_vip_direct,
+        tt_yozora_regular_direct, tt_program_regular_direct, tt_showcase_regular_direct,
     ]:
         db.add(DirectSaleCampaign(
             ticket_type_id=ticket_type.id,
-            sale_start_at=now - timedelta(days=10),
-            sale_end_at=concert.event_datetime,
+            sale_start_at=DIRECT_SALE_START,
+            sale_end_at=DIRECT_SALE_END,
             status="open",
         ))
     db.flush()
@@ -807,41 +827,114 @@ def seed(db):
     db.flush()
 
     # --- lottery: preferences, campaigns, entries ---------------------------
-    # concert_sakura / concert_kessho: light data, entry windows still open —
-    # for testing the apply/preference flow, not the draw itself.
-    # tt_sakura_premium_lottery and tt_kessho_premium_lottery previously had
-    # no campaign at all despite being sale_method="lottery" — filled in
-    # here too. concert_kessho has no lottery vip tier at all (vip is
-    # direct-sale only there — see the ticket types section).
+    # concert_sakura / concert_kessho / concert_nagisa / concert_yozora /
+    # concert_program / concert_solo_showcase: light data, entry windows
+    # still open — for testing the apply/preference flow, not the draw
+    # itself. Every lottery-designated ticket type across these six
+    # concerts previously had no campaign at all despite being
+    # sale_method="lottery" for the four added here (nagisa/yozora/program/
+    # solo_showcase) — there was nothing to apply to, so the apply flow was
+    # untestable for them. concert_kessho has no lottery vip tier at all
+    # (vip is direct-sale only there — see the ticket types section).
+    #
+    # entry_end_at is LOTTERY_ENTRY_CLOSE_DEC (defined at the top of seed(),
+    # a fixed December 2026 date) rather than "now + 5 days" — a relative
+    # close date meant these campaigns silently flipped from "still open" to
+    # "needs drawing" a few days after whoever seeded the DB ran this
+    # script, which is exactly the kind of moving-target fixture that's
+    # annoying to demo/test against. concert_sakura's/concert_kessho's own
+    # event_datetime are set relative to this same constant, so the concert
+    # always happens after its lottery closes.
     db.add_all([
         LotteryPreference(concert_id=concert_sakura.id, user_id=fan_alex.id, ticket_type_id=tt_sakura_vip.id, rank=1),
         LotteryPreference(concert_id=concert_sakura.id, user_id=fan_priya.id, ticket_type_id=tt_sakura_premium_lottery.id, rank=1),
         LotteryPreference(concert_id=concert_kessho.id, user_id=fan_priya.id, ticket_type_id=tt_kessho_premium_lottery.id, rank=1),
         LotteryPreference(concert_id=concert_kessho.id, user_id=fan_yuki.id, ticket_type_id=tt_kessho_regular_lottery.id, rank=1),
+        LotteryPreference(concert_id=concert_nagisa.id, user_id=fan_marco.id, ticket_type_id=tt_nagisa_vip.id, rank=1),
+        LotteryPreference(concert_id=concert_nagisa.id, user_id=fan_yuki.id, ticket_type_id=tt_nagisa_regular_lottery.id, rank=1),
+        LotteryPreference(concert_id=concert_yozora.id, user_id=fan_alex.id, ticket_type_id=tt_yozora_vip.id, rank=1),
+        LotteryPreference(concert_id=concert_yozora.id, user_id=fan_priya.id, ticket_type_id=tt_yozora_premium_lottery.id, rank=1),
+        LotteryPreference(concert_id=concert_program.id, user_id=fan_marco.id, ticket_type_id=tt_program_vip.id, rank=1),
+        LotteryPreference(concert_id=concert_program.id, user_id=fan_yuki.id, ticket_type_id=tt_program_premium_lottery.id, rank=1),
+        LotteryPreference(concert_id=concert_solo_showcase.id, user_id=fan_alex.id, ticket_type_id=tt_showcase_vip.id, rank=1),
+        LotteryPreference(concert_id=concert_solo_showcase.id, user_id=fan_priya.id, ticket_type_id=tt_showcase_premium_lottery.id, rank=1),
     ])
     db.flush()
 
     campaign_sakura_vip = LotteryCampaign(
         ticket_type_id=tt_sakura_vip.id,
-        entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
+        entry_start_at=now - timedelta(days=2), entry_end_at=LOTTERY_ENTRY_CLOSE_DEC,
         status="open",  # draw_at stays NULL — not drawn yet
     )
     campaign_sakura_regular = LotteryCampaign(
         ticket_type_id=tt_sakura_premium_lottery.id,
-        entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
+        entry_start_at=now - timedelta(days=2), entry_end_at=LOTTERY_ENTRY_CLOSE_DEC,
         status="open",  # draw_at stays NULL — not drawn yet
     )
     campaign_kessho_premium = LotteryCampaign(
         ticket_type_id=tt_kessho_premium_lottery.id,
-        entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
+        entry_start_at=now - timedelta(days=2), entry_end_at=LOTTERY_ENTRY_CLOSE_DEC,
         status="open",  # draw_at stays NULL — not drawn yet
     )
     campaign_kessho_regular = LotteryCampaign(
         ticket_type_id=tt_kessho_regular_lottery.id,
-        entry_start_at=now - timedelta(days=2), entry_end_at=now + timedelta(days=5),
+        entry_start_at=now - timedelta(days=2), entry_end_at=LOTTERY_ENTRY_CLOSE_DEC,
         status="open",  # draw_at stays NULL — not drawn yet
     )
-    db.add_all([campaign_sakura_vip, campaign_sakura_regular, campaign_kessho_premium, campaign_kessho_regular])
+    # nagisa/yozora/program/solo_showcase: entry_end_at is relative to each
+    # concert's OWN event_datetime (closes a week before showtime), not
+    # LOTTERY_ENTRY_CLOSE_DEC — those four concerts still happen well before
+    # December (event_datetime is "now + 15..50 days" for all of them, see
+    # the concerts section), so reusing the December date here would reopen
+    # the same "lottery closes after the concert" inconsistency that was
+    # just fixed for concert_sakura/concert_kessho by moving their dates
+    # instead. entry_start_at matches the sakura/kessho pattern above
+    # (already open as of "now").
+    campaign_nagisa_vip = LotteryCampaign(
+        ticket_type_id=tt_nagisa_vip.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_nagisa.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    campaign_nagisa_regular = LotteryCampaign(
+        ticket_type_id=tt_nagisa_regular_lottery.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_nagisa.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    campaign_yozora_vip = LotteryCampaign(
+        ticket_type_id=tt_yozora_vip.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_yozora.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    campaign_yozora_premium = LotteryCampaign(
+        ticket_type_id=tt_yozora_premium_lottery.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_yozora.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    campaign_program_vip = LotteryCampaign(
+        ticket_type_id=tt_program_vip.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_program.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    campaign_program_premium = LotteryCampaign(
+        ticket_type_id=tt_program_premium_lottery.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_program.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    campaign_showcase_vip = LotteryCampaign(
+        ticket_type_id=tt_showcase_vip.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_solo_showcase.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    campaign_showcase_premium = LotteryCampaign(
+        ticket_type_id=tt_showcase_premium_lottery.id,
+        entry_start_at=now - timedelta(days=2), entry_end_at=concert_solo_showcase.event_datetime - timedelta(days=7),
+        status="open",
+    )
+    db.add_all([
+        campaign_sakura_vip, campaign_sakura_regular, campaign_kessho_premium, campaign_kessho_regular,
+        campaign_nagisa_vip, campaign_nagisa_regular, campaign_yozora_vip, campaign_yozora_premium,
+        campaign_program_vip, campaign_program_premium, campaign_showcase_vip, campaign_showcase_premium,
+    ])
     db.flush()
 
     db.add_all([
@@ -853,6 +946,14 @@ def seed(db):
         # tt_kessho_regular_lottery — trg_lottery_entries_require_preference
         # correctly rejected the mismatch. Points at the matching campaign now.
         LotteryEntry(campaign_id=campaign_kessho_premium.id, user_id=fan_priya.id),
+        LotteryEntry(campaign_id=campaign_nagisa_vip.id, user_id=fan_marco.id),
+        LotteryEntry(campaign_id=campaign_nagisa_regular.id, user_id=fan_yuki.id),
+        LotteryEntry(campaign_id=campaign_yozora_vip.id, user_id=fan_alex.id),
+        LotteryEntry(campaign_id=campaign_yozora_premium.id, user_id=fan_priya.id),
+        LotteryEntry(campaign_id=campaign_program_vip.id, user_id=fan_marco.id),
+        LotteryEntry(campaign_id=campaign_program_premium.id, user_id=fan_yuki.id),
+        LotteryEntry(campaign_id=campaign_showcase_vip.id, user_id=fan_alex.id),
+        LotteryEntry(campaign_id=campaign_showcase_premium.id, user_id=fan_priya.id),
     ])
     db.flush()
 
@@ -899,8 +1000,9 @@ def seed(db):
     print("    POST /tickets/checkout (concert_countdown/concert_kessho_finale/concert_program_closing")
     print("    have no direct-sale tier at all)")
     print("  - 10 albums/singles/EPs with genres + cover art, 10 merch items (8 lightsticks + 2 group-branded), all owned")
-    print("  - 13 lottery campaigns: 4 light ones (still-open entry windows, sakura vip+premium, kessho premium+regular) plus")
-    print("    9 across 3 'ready to draw' concerts — one per company (Sakura Prism/Kessho Stars/Program:HEART),")
+    print("  - 21 lottery campaigns: 12 light ones (still-open entry windows, one per lottery ticket type across")
+    print("    sakura/kessho/nagisa/yozora/program/solo_showcase) plus 9 across 3 'ready to draw' concerts —")
+    print("    one per company (Sakura Prism/Kessho Stars/Program:HEART),")
     print("    vip/premium/regular each, entry window already closed — draw any of them via")
     print("    PUT /concerts/lottery-draw/{id} as that company's own manager, with the same 12 fans'")
     print("    preferences + entries feeding the cascade in all three")

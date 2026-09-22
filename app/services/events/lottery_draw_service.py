@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
+from app.cache.cache_service import CacheService
 from app.celery_app import celery_app
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, Ticket, TicketType
 from app.db.models.identity import Users
@@ -126,6 +127,12 @@ class LotteryDrawService:
             campaign.draw_at = datetime.now(timezone.utc)
 
         commit_or_raise(db)
+        # A draw moves three things the cached concert detail carries:
+        # lottery_campaigns[].status (open -> drawn), .draw_at, and
+        # ticket_types[].sold_quantity. Runs in the Celery worker, which shares
+        # the same Redis as the API, so this reaches the same cache entry the
+        # web process reads.
+        CacheService.delete_cached_concert_detail(concert_id)
 
         return LotteryResult(
             concert_id=concert_id,
