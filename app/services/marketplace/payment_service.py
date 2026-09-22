@@ -153,6 +153,7 @@ class PaymentService:
                     ticket.status = TicketStatus.expired
                     ticket_type.sold_quantity -= 1
                     commit_or_raise(db)
+                    CacheService.delete_cached_concert_detail(ticket_type.concert_id)  # released a seat
                     return None
 
             paypal_payment = capture_order(pg_order_id)
@@ -210,5 +211,14 @@ class PaymentService:
 
         commit_or_raise(db)
         if payment.status == PaymentStatus.success:
-            CacheService.delete_cached_products()
+            if payment.ticket_id:
+                # ticket_types[].sold_quantity moved (direct sale) — it's part
+                # of the cached concert detail bundle.
+                CacheService.delete_cached_concert_detail(ticket_type.concert_id)
+            else:
+                # Stock changed, so both the list/store-page caches AND every
+                # product detail page (ProductCard.quantity is embedded there
+                # too) are now stale.
+                CacheService.delete_cached_products()
+                CacheService.delete_cached_product_details()
         return payment

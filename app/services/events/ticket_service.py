@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
+from app.cache.cache_service import CacheService
 from app.celery_app import celery_app
 from app.db.models.events import Concert, DirectSaleCampaign, LotteryCampaign, LotteryEntry, Ticket, TicketType
 from app.db.models.identity import Users
@@ -88,12 +89,10 @@ class TicketService:
             .first()
         )
 
-    # The real direct-sale purchase path — add_ticket below stays the
-    # admin-only stopgap for the (still unbuilt) lottery draw job. Locks the
-    # ticket_type row for the whole operation and commits exactly once at the
-    # end (see create_ticket_payment's docstring) rather than order_service.
-    # checkout's lock-then-mid-flow-commit pattern, so this can't oversell a
-    # seat the way that function's own docs admit it can.
+    # The real direct-sale purchase path — add_ticket below is a separate
+    # admin-only manual creation path. Locks the ticket_type row for the whole
+    # operation and commits exactly once at the end (see create_ticket_payment's
+    # docstring), so two fans racing for the last seat can't both get one.
     @staticmethod
     def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate) -> Ticket:
         user = db.get(Users, user_id)
@@ -159,6 +158,11 @@ class TicketService:
                 )
                 celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
         commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert / chk_ticket_types_capacity backstop
+        # ticket_types[].sold_quantity is part of the cached concert detail
+        # bundle, so a seat sold here has to bust it — otherwise the event page
+        # keeps advertising the old availability (up to a sold-out tier still
+        # showing as buyable) until the TTL lapses.
+        CacheService.delete_cached_concert_detail(ticket_type.concert_id)
         db.refresh(ticket)
         return ticket
 
@@ -190,6 +194,7 @@ class TicketService:
             ticket.status = TicketStatus.expired
             ticket_type.sold_quantity -= 1
             commit_or_raise(db)
+            CacheService.delete_cached_concert_detail(ticket_type.concert_id)  # released a seat
             raise TicketNotPayableError("The payment deadline for this ticket has passed")
 
         total_amount = with_tax(float(ticket_type.price))

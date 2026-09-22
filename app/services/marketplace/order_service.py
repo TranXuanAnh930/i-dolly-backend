@@ -76,7 +76,11 @@ class OrderService:
                 if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > RESALE_CAP_QUANTITY:
                     raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the {RESALE_CAP_QUANTITY}-unit resale cap")
 
-        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().all()
+        # populate_existing() is required, not decorative: the resale-cap precheck above already
+        # loaded these same Product rows into the session's identity map unlocked, so without this
+        # the stock check below would silently read that stale pre-lock state instead of the row
+        # with_for_update() just locked — see project_status.md §4 item 1's "Regression" note.
+        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
         for product in products:
             item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
             if product.quantity < item.quantity:
@@ -112,7 +116,13 @@ class OrderService:
 
         commit_or_raise(db)  # trg_orders_fan_only / chk_products_capacity backstop
         if payment.status == PaymentStatus.success:
+            # Both, not just the first: product.quantity was decremented above,
+            # and that stock figure is embedded in the per-product detail
+            # payload (ProductCard.quantity) as well as the list/store-page
+            # ones — busting only the latter leaves the detail page quoting
+            # pre-purchase stock while the grid shows the real number.
             CacheService.delete_cached_products()
+            CacheService.delete_cached_product_details()
         db.refresh(order)
         return order
 

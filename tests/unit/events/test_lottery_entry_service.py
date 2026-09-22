@@ -185,9 +185,126 @@ class TestApplyToLottery:
 
         result = LotteryEntryService.apply_to_lottery(db, data, make_mock_fan())
 
-        db.add.assert_called_once()
+        # Two adds: the entry itself, plus the lottery_registered notification
+        # _stage_entry now creates in the same transaction.
+        assert db.add.call_count == 2
         db.commit.assert_called_once()
         assert result is not None
+
+# ───────────────────────────────────────────────────────────────
+# apply_to_lotteries (batch) — the rules themselves are apply_to_lottery's,
+# exercised above via the shared _stage_entry; what's specific here is the
+# transaction boundary: every tier staged first, one commit for all of them,
+# and nothing committed at all when any single tier is rejected.
+# ───────────────────────────────────────────────────────────────
+
+class TestApplyToLotteriesBatch:
+
+    def _db_allowing(self, max_entries_per_user=2):
+        from app.db.models.events import LotteryCampaign, LotteryEntry, LotteryPreference, TicketType
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({
+            LotteryCampaign: make_mock_campaign(max_entries_per_user=max_entries_per_user),
+            TicketType: make_mock_ticket_type(),
+        })
+
+        def query_side_effect(model, *cols):
+            q = MagicMock()
+            if model.__name__ == "Ticket":
+                q.join.return_value.filter.return_value.first.return_value = None
+            elif model is LotteryPreference:
+                q.filter.return_value.first.return_value = MagicMock()
+            elif model is LotteryEntry:
+                q.filter.return_value.count.return_value = 0
+            return q
+
+        db.query.side_effect = query_side_effect
+        return db
+
+    def test_manager_forbidden(self):
+        from app.schema.events import LotteryEntryApplyBatch
+        from app.services.events.lottery_entry_service import LotteryEntryService
+
+        db = MagicMock()
+        data = LotteryEntryApplyBatch(campaign_ids=[DEFAULT_ID])
+
+        with pytest.raises(ForbiddenError):
+            LotteryEntryService.apply_to_lotteries(db, data, make_mock_manager())
+        db.commit.assert_not_called()
+
+    def test_stages_every_tier_then_commits_once(self):
+        from app.schema.events import LotteryEntryApplyBatch
+        from app.services.events.lottery_entry_service import LotteryEntryService
+
+        db = self._db_allowing()
+        data = LotteryEntryApplyBatch(campaign_ids=[DEFAULT_ID, OTHER_ID, MISSING_ID])
+
+        result = LotteryEntryService.apply_to_lotteries(db, data, make_mock_fan())
+
+        assert len(result) == 3
+        # 2 adds per tier: the entry itself, plus its lottery_registered
+        # notification (_stage_entry creates both in the same transaction).
+        assert db.add.call_count == 6
+        # One commit for the whole submission, not one per tier — that's what
+        # makes it all-or-nothing, and what keeps it to a single rate-limit slot.
+        db.commit.assert_called_once()
+        assert db.flush.call_count == 3
+
+    def test_one_bad_tier_commits_nothing(self):
+        from app.db.models.events import LotteryCampaign, LotteryEntry, LotteryPreference, TicketType
+        from app.schema.events import LotteryEntryApplyBatch
+        from app.services.events.lottery_entry_service import LotteryEntryService
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({
+            LotteryCampaign: make_mock_campaign(max_entries_per_user=2),
+            TicketType: make_mock_ticket_type(),
+        })
+
+        # Second tier has no ranked preference — the require_preference rule
+        # rejects it after the first tier has already been staged.
+        preference_lookups = [MagicMock(), None]
+
+        def query_side_effect(model, *cols):
+            q = MagicMock()
+            if model.__name__ == "Ticket":
+                q.join.return_value.filter.return_value.first.return_value = None
+            elif model is LotteryPreference:
+                q.filter.return_value.first.side_effect = lambda: preference_lookups.pop(0)
+            elif model is LotteryEntry:
+                q.filter.return_value.count.return_value = 0
+            return q
+
+        db.query.side_effect = query_side_effect
+        data = LotteryEntryApplyBatch(campaign_ids=[DEFAULT_ID, OTHER_ID])
+
+        with pytest.raises(BadRequestError):
+            LotteryEntryService.apply_to_lotteries(db, data, make_mock_fan())
+
+        # The first tier was staged, but never committed — get_db's close()
+        # discards the transaction, so the fan ends up with no entries at all
+        # rather than the partial state a per-tier client loop would leave.
+        # 2 adds: the first tier's entry plus its notification; the second
+        # tier fails its preference check before ever reaching db.add.
+        assert db.add.call_count == 2
+        db.commit.assert_not_called()
+
+    def test_rejects_duplicate_campaign_ids(self):
+        import pydantic
+
+        from app.schema.events import LotteryEntryApplyBatch
+
+        with pytest.raises(pydantic.ValidationError):
+            LotteryEntryApplyBatch(campaign_ids=[DEFAULT_ID, DEFAULT_ID])
+
+    def test_rejects_empty_list(self):
+        import pydantic
+
+        from app.schema.events import LotteryEntryApplyBatch
+
+        with pytest.raises(pydantic.ValidationError):
+            LotteryEntryApplyBatch(campaign_ids=[])
 
 # ───────────────────────────────────────────────────────────────
 # get_my_entries / get_entries_for_campaign

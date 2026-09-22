@@ -42,6 +42,10 @@ async def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(
     CacheService.delete_cached_manager_events_page()
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend. The concerts store used
+# to pull this whole table just to answer single-concert lookups; it now caches
+# by id off GET /concerts/{id}. List views use /events-page (fans) and
+# /manager-events-page (managers/admins).
 @router.get("/all", response_model=List[ConcertRead])
 async def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Concert]:
     result = ConcertService.get_concerts(db)
@@ -174,6 +178,11 @@ async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(
         raise HTTPException(status_code=404, detail="Concert not found")
     if ConcertService._manager_scope_violation(current_user, concert.company_id):
         raise HTTPException(status_code=403, detail="Managers can only manage concerts for their own company")
+
+    # Every manager at this company gets a lottery_draw_triggered notification
+    # here, synchronously — see notify_managers_of_draw_trigger's own comment
+    # for why this can't wait for the Celery task to finish.
+    ConcertService.notify_managers_of_draw_trigger(db, concert)
 
     # Fire-and-forget from here on: the actual draw (LotteryResult) runs
     # async in a Celery worker — see app/tasks/lottery.py /

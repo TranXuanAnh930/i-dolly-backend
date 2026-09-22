@@ -17,11 +17,11 @@ from app.services.marketplace.album_detail_service import AlbumDetailService
 
 router = APIRouter(prefix="/album_details", tags=["Album Details"])
 
-# FRONTEND: not currently called by i-dolly-frontend. AlbumDetailsService
-# only ever calls the inherited getAllPublic() (GET /album_details/all,
-# used by the cart/order product-resolution flow) — create/single-get/
-# update/delete are unused (album products are created via
-# /products/add_with_detail instead).
+# FRONTEND: not currently called by i-dolly-frontend — and neither is anything
+# else on this router. The cart/order flow used to fetch /album_details/all and
+# merge it against /products/all client-side; it now reads the
+# /products/store-page bundle, which already embeds each product's album row.
+# Album products themselves are created via /products/add_with_detail.
 @router.post("/add", response_model=AlbumDetailRead)
 async def add_new_album_detail(data: AlbumDetailCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> AlbumDetail:
     try:
@@ -31,6 +31,7 @@ async def add_new_album_detail(data: AlbumDetailCreate, current_user: Users = De
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
+# FRONTEND: not currently called by i-dolly-frontend (see the note above).
 @router.get("/all", response_model=List[AlbumDetailRead])
 async def list_album_details(db: Session = Depends(get_db)) -> list[AlbumDetail]:
     result = AlbumDetailService.get_album_details(db)

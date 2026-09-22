@@ -18,6 +18,7 @@ from app.db.models.events import (
 from app.db.models.identity import Users
 from app.db.models.talent import Group, Idol, ManagementCompany
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
+from app.exception.db_triggers import commit_or_raise
 from app.schema.events import (
     ConcertCreate,
     ConcertDetailRead,
@@ -32,6 +33,8 @@ from app.schema.events import (
 from app.schema.events.lottery_entry import LotteryEntryStatus
 from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
+from app.schema.shared import NotificationType
+from app.services.shared.notification_service import NotificationService
 
 # Once a concert has gone on sale (or further), fans may already hold
 # tickets or lottery entries against its date/capacity — a manager silently
@@ -74,6 +77,42 @@ class ConcertService:
     @staticmethod
     def get_concert(db: Session, id: uuid.UUID) -> Concert | None:
         return db.get(Concert, id)
+
+    @staticmethod
+    def _manager_ids_for_company(db: Session, company_id: uuid.UUID) -> list[uuid.UUID]:
+        return [
+            row[0]
+            for row in db.query(Users.id).filter(Users.role == UserRole.manager, Users.company_id == company_id).all()
+        ]
+
+    @staticmethod
+    def notify_managers_of_draw_trigger(db: Session, concert: Concert) -> None:
+        """Fired the moment a manager (or admin) presses "draw" — the router's
+        own response is a bare "scheduled" ack, since the actual draw runs
+        async in a Celery worker (lottery_draw_service.draw_lottery), so this
+        notification is the only record any manager gets that a draw is now
+        in flight for this concert. Every manager at the concert's own
+        company is notified, not just whoever clicked, since nothing
+        server-side stops a second manager (or the same one) from
+        re-triggering the draw while it's still running — see
+        project_status.md's known-limitation note on this endpoint.
+        """
+        for manager_id in ConcertService._manager_ids_for_company(db, concert.company_id):
+            NotificationService.create_notification(db, manager_id, NotificationType.lottery_draw_triggered, concert_id=concert.id)
+        commit_or_raise(db)
+
+    @staticmethod
+    def notify_managers_of_draw_failure(db: Session, concert: Concert) -> None:
+        """Counterpart to notify_managers_of_draw_trigger for the unhappy
+        path — call this from draw_lottery_task's own exception handler
+        (app/tasks/lottery.py) once the failing session has been rolled back,
+        so this notification's own commit lands cleanly. Same audience as
+        the trigger notification: every manager at the concert's company,
+        not just whoever originally clicked.
+        """
+        for manager_id in ConcertService._manager_ids_for_company(db, concert.company_id):
+            NotificationService.create_notification(db, manager_id, NotificationType.lottery_draw_failed, concert_id=concert.id)
+        commit_or_raise(db)
 
     @staticmethod
     def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users) -> Concert:

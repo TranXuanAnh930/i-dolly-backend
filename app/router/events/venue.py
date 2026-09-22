@@ -19,15 +19,18 @@ from app.services.events.venue_service import VenueService
 # platform-level data, not owned by one company (database-design.md §3.7).
 router = APIRouter(prefix="/venues", tags=["Venues"])
 
-# FRONTEND: not currently called by i-dolly-frontend. VenuesService only
-# ever calls the inherited getAllPublic() (GET /venues/all) — there's no
-# venue-management UI, so create/single-get/update/delete are unused.
+# FRONTEND: not currently called by i-dolly-frontend — and neither is anything
+# else on this router. The frontend's VenuesService was deleted once its only
+# caller (the concerts store) stopped pulling /venues/all it never actually
+# read; venue data reaches the UI embedded in the concert bundles instead
+# (EventsPageRead.venue, ConcertDetailRead.venue).
 @router.post("/add", response_model=VenueRead)
 async def add_new_venue(venue: VenueCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Venue:
     result = VenueService.add_venue(db, venue)
     CacheService.delete_cached_venues()
     return result
 
+# FRONTEND: not currently called by i-dolly-frontend (see the note above).
 @router.get("/all", response_model=List[VenueRead])
 async def list_venues(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Venue]:
     result = CacheService.get_cached_venues(db)

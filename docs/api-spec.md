@@ -848,8 +848,9 @@ surface to the user.
 ### `GET /notifications/mine` 🔒 fan
 - Query: `unread_only` (bool, default `false`)
 - Response: `List[NotificationRead]` — `id`, `user_id`, `type`
-  (`"order_confirmation"|"ticket_confirmation"|"lottery_registered"|"lottery_result"|
-  "lottery_payment_reminder"|"lottery_payment_confirmation"|"event_reminder"|"password_reset"`),
+  (`"order_confirmation"|"ticket_confirmation"|"lottery_registered"|"lottery_draw_triggered"|
+  "lottery_draw_failed"|"lottery_result"|"lottery_payment_reminder"|"lottery_payment_confirmation"|
+  "event_reminder"|"password_reset"`),
   `order_id`/`ticket_id`/`lottery_entry_id`/`concert_id` (exactly one set, depending on `type`),
   `status`, `sent_at`, `is_read`, `read_at`, `created_at`
 - Errors: `404` if the fan has no notifications at all (not just none matching `unread_only`)

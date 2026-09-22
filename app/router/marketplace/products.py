@@ -30,6 +30,10 @@ from app.utils.storage import StorageError, get_storage
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
+# FRONTEND: not currently called by i-dolly-frontend. The catalog store used to
+# fetch this alongside /album_details/all and merge the two client-side; it now
+# reads /products/store-page, which embeds each product's album, resolved
+# artist and genres already.
 @router.get("/all", response_model=List[ProductRead])
 async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
     db_products = CacheService.get_cached_products(db)

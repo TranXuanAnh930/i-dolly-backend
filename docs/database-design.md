@@ -673,11 +673,16 @@ rather than only an enum value buried inside `album_details`.
 
 ### 3.19 `notifications` (new, added after this doc's original rounds)
 
-One row per notification event for one fan: `id`, `user_id` (FK, required), `type`
+One row per notification event for one user: `id`, `user_id` (FK, required), `type`
 (`notification_type_enum`: `order_confirmation` / `ticket_confirmation` / `lottery_registered` /
-`lottery_result` / `lottery_payment_reminder` / `lottery_payment_confirmation` / `event_reminder` /
-`password_reset` — the last added by migration `a3f7c9e2b6d4`, the only type with no order/ticket/
-lottery_entry/concert FK at all, since it's about the user alone),
+`lottery_draw_triggered` / `lottery_draw_failed` / `lottery_result` / `lottery_payment_reminder` /
+`lottery_payment_confirmation` / `event_reminder` / `password_reset` — `password_reset` (migration
+`a3f7c9e2b6d4`) is the only type with no order/ticket/lottery_entry/concert FK at all, since it's
+about the user alone; `lottery_draw_triggered` (migration `c7f2a4d8e1b5`) and `lottery_draw_failed`
+(migration `d3a9e5f1c8b7`) are the only types whose `user_id` is a manager rather than a fan —
+every manager at a concert's own company, fired when one of them presses the draw button and,
+respectively, when that scheduled draw errors out inside the Celery task instead of completing,
+both carrying `concert_id`),
 `status` (`notification_status_enum`: `pending` / `sent` / `failed` — the send-log side, updated by
 whichever job eventually emails it), `sent_at`, `is_read`/`read_at` (the in-app-feed side — a fan
 viewing/dismissing their notification list), `created_at`.

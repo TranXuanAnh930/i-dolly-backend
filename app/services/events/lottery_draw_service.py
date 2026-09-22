@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
+from app.cache.cache_service import CacheService
 from app.celery_app import celery_app
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, Ticket, TicketType
 from app.db.models.identity import Users
@@ -85,15 +86,12 @@ class LotteryDrawService:
                         # always carries lottery_entry_id, and the client tells
                         # the two apart by reading entries.status off the FK'd
                         # row, same as everywhere else "which of the four FKs is
-                        # set" already drives the meaning (database-design.md
-                        # §3.19), rather than a second notification type.
+                        # set" already drives the meaning rather than a second notification type.
                         NotificationService.create_notification(db, candidate.user_id, NotificationType.lottery_result, lottery_entry_id=candidate.id)
                         # Fired once, here, at draw time — not a scheduled
                         # nag closer to the deadline (that would need a cron/
                         # Celery Beat job, deliberately out of scope for this
-                        # phase, see project_status.md §5). new_ticket.id is
-                        # already populated (Ticket.id defaults client-side via
-                        # uuid.uuid4, no flush needed) by the time this runs.
+                        # phase).
                         NotificationService.create_notification(db, candidate.user_id, NotificationType.lottery_payment_reminder, ticket_id=new_ticket.id)
                         winner_email = emails_by_user_id.get(candidate.user_id)
                         if winner_email:
@@ -126,6 +124,12 @@ class LotteryDrawService:
             campaign.draw_at = datetime.now(timezone.utc)
 
         commit_or_raise(db)
+        # A draw moves three things the cached concert detail carries:
+        # lottery_campaigns[].status (open -> drawn), .draw_at, and
+        # ticket_types[].sold_quantity. Runs in the Celery worker, which shares
+        # the same Redis as the API, so this reaches the same cache entry the
+        # web process reads.
+        CacheService.delete_cached_concert_detail(concert_id)
 
         return LotteryResult(
             concert_id=concert_id,

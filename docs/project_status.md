@@ -8,17 +8,25 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `bfadb696c92a`** (`change_shipping_postal_code_to_string`) — 56 migrations, one
-linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
+**Chain head: `d3a9e5f1c8b7`** (`add_lottery_draw_failed_to_notification_type`) — 58 migrations,
+one linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
 applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
 empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
 the models. The notification feature was also exercised over real HTTP end to end (password reset
 → notification created → read → unread-count clears), and the per-route rate limiter was confirmed
 firing under load (a 30/60s budget returns `429` past the 30th request). The app is now also
 deployed against a real Supabase Postgres (§3) — migrations run clean there through the current
-head. The two most recent migrations (`54347349d0f2`, `bfadb696c92a` — item 5's schema-type fix)
-have only been verified statically (`py_compile`, `alembic`'s own revision-chain check) so far, not
-yet re-run against Supabase.
+head. `54347349d0f2` and `bfadb696c92a` (item 5's schema-type fix) have only been verified
+statically (`py_compile`, `alembic`'s own revision-chain check) so far, not yet re-run against
+Supabase. `c7f2a4d8e1b5` and `d3a9e5f1c8b7` *were* re-run against a throwaway Postgres database
+(the seed/verification pattern used throughout this doc): `alembic upgrade head` from empty landed
+clean each time, and `enum_range(NULL::notification_type_enum)` confirmed `lottery_draw_triggered`/
+`lottery_draw_failed` present — see the Notifications bullet in §2 below for the three new
+producers these added. `d3a9e5f1c8b7`'s producer specifically was exercised past just the enum:
+calling `draw_lottery_task` directly against that same database with a concert whose lottery
+campaign hadn't closed yet confirmed the `BadRequestError` propagates out of the task (so Celery
+still records `FAILURE`, not a silent success) *and* the manager's `lottery_draw_failed` row lands,
+in one run.
 
 All 18 domain tables from `database-design.md` plus the pre-existing e-commerce tables are
 migrated. `schema.sql`, cited throughout `database-design.md` as "the reference DDL," doesn't
@@ -57,15 +65,26 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   Idol portraits and product covers are procedural placeholder art pushed through the real
   `get_storage().save()` pipeline — see `tests/fixtures/README.md`.
 - **Notifications** (`app/db/models/shared/notification.py`): a `notifications` table
-  (`database-design.md` §3.19) covering 8 event types, one nullable FK per referenced entity kind.
+  (`database-design.md` §3.19) covering 10 event types, one nullable FK per referenced entity kind.
   Producers fire inline (no cron/Beat job): `order_service.checkout()`,
-  `ticket_service.checkout_ticket()`/`checkout_won_ticket()`, `user_service.verify_rtoken()`, and
+  `ticket_service.checkout_ticket()`/`checkout_won_ticket()`, `user_service.verify_rtoken()`,
   `lottery_draw_service.draw_lottery()` (result for every winner and loser, plus a payment
-  reminder for winners, fired at draw time rather than on a schedule closer to the deadline).
-  Every write lands in the same commit as the event it describes. Fan-facing API:
+  reminder for winners, fired at draw time rather than on a schedule closer to the deadline),
+  `lottery_entry_service._stage_entry()` (`lottery_registered`, fired the moment a fan's entry is
+  staged — shared by the single and batch apply endpoints, same commit as the entry itself),
+  `concert_service.notify_managers_of_draw_trigger()` (`lottery_draw_triggered`, fired from the
+  `PUT /concerts/lottery-draw/{id}` router the moment a manager/admin presses draw — every manager
+  at the concert's own company gets one, not just whoever clicked, since the draw itself is
+  fire-and-forget onto a Celery worker and this is the only record any of them get that one is now
+  in flight), and `concert_service.notify_managers_of_draw_failure()` (`lottery_draw_failed`,
+  called from `draw_lottery_task`'s own `except Exception` block in `app/tasks/lottery.py` —
+  rolls back, notifies the same audience as the trigger notification, then re-raises the original
+  exception so the task still surfaces as a Celery `FAILURE` rather than silently looking like a
+  success; see §8's updated Notifications note). Every
+  write lands in the same commit as the event it describes. Fan-facing API:
   `GET /notifications/mine`, `GET /notifications/unread-count` (polled, no WebSocket/SSE layer),
   `POST /notifications/{id}/read`, `POST /notifications/read-all` — self-scoped, rate-limited.
-  `lottery_registered`/`event_reminder` still have no producer. `notifications.status`/`sent_at`
+  `event_reminder` still has no producer. `notifications.status`/`sent_at`
   sit at `pending`/`null` forever regardless — that pair tracks a push-to-inbox step this table
   itself doesn't drive (see Email dispatch below, a separate path).
 - **Email dispatch**: every transactional email — verification link, order placed, ticket
@@ -158,6 +177,32 @@ newly introduced.
    `create_payment()` (non-committing), and commits once via `commit_or_raise()` — mirroring
    `ticket_service.checkout_ticket()`'s lock-hold-commit-once pattern for `ticket_type`/`sold_quantity`.
    Still open: the draw job (§8) needs the same guard designed in from the start.
+
+   **Regression found and fixed**: the lock above was real but silently ineffective for any
+   product in a resale-capped category (`categories.is_resale_capped` defaults `true()` at the DB
+   level — category.py:16 — so this was the common case, not an edge case). The resale-cap
+   pre-check a few lines earlier (`capped_products = db.query(Product).filter(...).all()`) reads
+   the same `Product` rows into the session's identity map *before* the real stock-check query's
+   `with_for_update()` runs. Postgres still took the row lock correctly, but SQLAlchemy returned
+   the stale pre-lock Python object instead of the freshly-locked row, so `product.quantity <
+   item.quantity` ran on stale data. Confirmed directly: racing 3 concurrent checkouts against
+   `quantity=1` on a capped category let all 3 "succeed," with final stock landing at `0` rather
+   than `-2` — a classic lost update, each thread reading the same stale `quantity=1` and each
+   independently writing `0`. Fixed by adding `.populate_existing()` to the `with_for_update()`
+   query, which forces SQLAlchemy to overwrite the identity-map copy with the freshly locked row.
+   Found and confirmed via the new concurrency tests below, not by inspection — the lock read
+   correctly on paper, so this needed real concurrent transactions against a real Postgres to
+   surface at all.
+
+   **Verification**: `tests/integration/marketplace/test_orders_concurrency.py` (two tests: an
+   oversell guard racing 3 checkouts against 1 unit of stock, and an exact-stock variant racing N
+   checkouts against N units to confirm the lock doesn't over-serialize either) and
+   `tests/integration/events/test_lottery_concurrency.py` (races 2 concurrent
+   `LotteryDrawService.draw_lottery` calls for the same concert, confirming the same
+   `with_for_update()` pattern there — item 8 below — actually serializes). Both use a shared
+   `tests/integration/_concurrency.py` harness (`threading.Barrier`-synchronized racer threads
+   against the real dockerized test Postgres, not mocked). Full suite reconfirmed clean after the
+   fix: 393/393 unit, 235/235 integration (232 pre-existing + these 3 new).
 2. ~~**The rate limiter's key doesn't include the route**~~ — **FIXED**. `ip_key`/`user_key`
    now fold `request.scope["route"].path` into the Redis key (`rate:ip:<route>:<ip>`), so
    endpoints sharing a `key_func` no longer share one counter.
@@ -768,13 +813,16 @@ newly introduced.
   actual `/order/checkout` call, not built yet. The equivalent ticket-side endpoint
   (`/payment/status/ticket/{id}`) is fully covered, since a real ticket is cheap to stand up
   (concert/venue/ticket_type/campaign, already had a `Factory` shape to reuse).
-- **Unit tests for the checkout concurrency/locking paths** (`ticket_service.checkout_ticket`/
-  `checkout_won_ticket`, `order_service.checkout`) — the interview-defensible part of item 1's
-  overselling-race fix (why the row lock has to be held for the whole operation, why UUID-ordering
-  the `order_service` lock acquisition prevents deadlock). Per this project's own convention for
-  this category of logic, that reasoning needs to come from actually writing the tests, not from
-  having them handed over already passing — see the coverage pass note in §3 for what *was*
-  covered in the same session this gap was identified.
+- ~~**Unit tests for the checkout concurrency/locking paths**~~ — **PARTLY DONE**, and as real
+  integration tests against a live Postgres rather than unit tests, which is the stronger form of
+  proof for this specific category of bug (see item 1's regression writeup in §4 — the bug was
+  invisible to inspection and only surfaced under genuine concurrent transactions).
+  `order_service.checkout` and `lottery_draw_service.draw_lottery` (item 8) are now covered —
+  `tests/integration/marketplace/test_orders_concurrency.py`,
+  `tests/integration/events/test_lottery_concurrency.py`. Still open: `ticket_service
+  .checkout_ticket`/`checkout_won_ticket` use the same lock-hold-commit-once pattern against
+  `ticket_type.sold_quantity` but have no equivalent race test yet — worth the same treatment
+  given item 1's fix shows this pattern can look correct and still have a bypassable lock.
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.
@@ -788,6 +836,11 @@ newly introduced.
   task — see §8 for the full plan. The Celery skeleton (`app/celery_app.py`, broker on Redis)
   stays unused for this specific job as a result; it may still end up used for winner-notification
   dispatch (a separate concern from the draw itself, see §8).
+- **No sweep job for expired unpaid lottery-won tickets** — designed in `database-design.md`
+  §5.2's sequence diagram, not built; the one place this is even lazily discovered today
+  (`PaymentService.finalize_paypal_payment`) only covers one narrow path to it. Full writeup,
+  including why it's explicitly out of scope for the new checkout/lottery-draw concurrency tests:
+  §8's "Known limitation" note.
 - **UI messaging** for "you can't apply to this lottery because you haven't ranked that tier yet"
   — the application is correctly rejected server-side; there's no client-facing nudge designed.
 - **`idols.real_name`** — deliberately left unmodeled.
@@ -947,6 +1000,20 @@ one-time notice at draw time, not a recurring deadline-proximity reminder, which
 scope. A reproducible/auditable draw (logging a seed + candidate snapshot per rank) was considered
 and intentionally not built — nothing in this project's scope models a dispute process.
 
+A separate `lottery_draw_triggered` notification fires earlier and outside this transaction
+entirely — from the router, at the moment the manager/admin presses draw
+(`ConcertService.notify_managers_of_draw_trigger`, §2's Notifications bullet), before the Celery
+task above even runs. It tells every manager at the company a draw is now in flight.
+
+If the task itself then raises — the entries-not-closed-yet check, a closed-campaign race from a
+double-click, a real bug — `draw_lottery_task` (`app/tasks/lottery.py`) catches it, rolls back,
+looks the concert back up (the local `Concert` object from inside `draw_lottery` is gone once it
+raised), and calls `ConcertService.notify_managers_of_draw_failure` for a `lottery_draw_failed`
+notification to the same audience, before re-raising the original exception unchanged — so the
+failure notification and Celery's own `FAILURE` task state both still happen, neither replaces the
+other. There's still no *success*-completion signal beyond polling `GET /concerts/{id}/detail` for
+a campaign's `status` to flip to `drawn` — only the failure side has a push-style notification now.
+
 **Placement**: `app/services/events/lottery_draw_service.py`, not folded into
 `lottery_campaign_service.py` — the draw is a meaningfully different concern (touching
 `LotteryCampaign`/`LotteryEntry`/`LotteryPreference`/`TicketType`/`Ticket`) from plain campaign
@@ -957,5 +1024,24 @@ discretion on timing), or also require `now() >= draw_at` (trigger becomes "conf
 discretion)? Leaning toward the former; changes what `draw_at` means in the schema's story, so
 not decided speculatively here.
 
-**Verification**: same standing gap as §3 — implemented and unit/integration-tested, but not yet
-confirmed with a real multi-fan draw against a live Postgres.
+**Verification**: implemented and unit/integration-tested; the concurrency guard specifically
+(the `with_for_update()` locking described above) is now confirmed against a real live Postgres —
+`tests/integration/events/test_lottery_concurrency.py` races two concurrent `draw_lottery` calls
+for the same concert and confirms exactly one wins, the loser correctly finds no open campaign
+left, and `sold_quantity`/ticket/won-entry counts stay consistent (§4 item 1's regression writeup
+has the full context — that same test-writing pass is what caught a real oversell bug elsewhere in
+checkout). Still open: a full multi-fan draw (more than the 3 candidates per tier that race test
+seeds) hasn't been exercised against a live Postgres.
+
+**Known limitation — no sweep job for expired unpaid tickets** (`database-design.md` §5.2's
+sequence diagram, "Sweep job for expired unpaid tickets"): a fan who wins the lottery but never
+pays before `tickets.payment_deadline_at` should have that slot released
+(`tickets.status='expired'`, `ticket_types.sold_quantity -= 1`, optionally re-drawn from the lost
+pool) so it doesn't sit held forever. The only place this is even checked today is
+`PaymentService.finalize_paypal_payment`'s lazy discovery (its own comment: "no sweep job exists
+yet ... so this is the one place that does it") — which only fires if someone happens to hit that
+specific PayPal-finalize path for that exact ticket; nothing else ever reads
+`payment_deadline_at`. Not built, not scheduled anywhere — see §5's deferred list. **Excluded from
+the concurrency tests added alongside item 1's fix** (`test_orders_concurrency.py`,
+`test_lottery_concurrency.py`): those race `order_service.checkout` and `draw_lottery`, both real
+code paths — a sweep job that doesn't exist yet has nothing to race.
