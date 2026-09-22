@@ -158,6 +158,32 @@ newly introduced.
    `create_payment()` (non-committing), and commits once via `commit_or_raise()` — mirroring
    `ticket_service.checkout_ticket()`'s lock-hold-commit-once pattern for `ticket_type`/`sold_quantity`.
    Still open: the draw job (§8) needs the same guard designed in from the start.
+
+   **Regression found and fixed**: the lock above was real but silently ineffective for any
+   product in a resale-capped category (`categories.is_resale_capped` defaults `true()` at the DB
+   level — category.py:16 — so this was the common case, not an edge case). The resale-cap
+   pre-check a few lines earlier (`capped_products = db.query(Product).filter(...).all()`) reads
+   the same `Product` rows into the session's identity map *before* the real stock-check query's
+   `with_for_update()` runs. Postgres still took the row lock correctly, but SQLAlchemy returned
+   the stale pre-lock Python object instead of the freshly-locked row, so `product.quantity <
+   item.quantity` ran on stale data. Confirmed directly: racing 3 concurrent checkouts against
+   `quantity=1` on a capped category let all 3 "succeed," with final stock landing at `0` rather
+   than `-2` — a classic lost update, each thread reading the same stale `quantity=1` and each
+   independently writing `0`. Fixed by adding `.populate_existing()` to the `with_for_update()`
+   query, which forces SQLAlchemy to overwrite the identity-map copy with the freshly locked row.
+   Found and confirmed via the new concurrency tests below, not by inspection — the lock read
+   correctly on paper, so this needed real concurrent transactions against a real Postgres to
+   surface at all.
+
+   **Verification**: `tests/integration/marketplace/test_orders_concurrency.py` (two tests: an
+   oversell guard racing 3 checkouts against 1 unit of stock, and an exact-stock variant racing N
+   checkouts against N units to confirm the lock doesn't over-serialize either) and
+   `tests/integration/events/test_lottery_concurrency.py` (races 2 concurrent
+   `LotteryDrawService.draw_lottery` calls for the same concert, confirming the same
+   `with_for_update()` pattern there — item 8 below — actually serializes). Both use a shared
+   `tests/integration/_concurrency.py` harness (`threading.Barrier`-synchronized racer threads
+   against the real dockerized test Postgres, not mocked). Full suite reconfirmed clean after the
+   fix: 393/393 unit, 235/235 integration (232 pre-existing + these 3 new).
 2. ~~**The rate limiter's key doesn't include the route**~~ — **FIXED**. `ip_key`/`user_key`
    now fold `request.scope["route"].path` into the Redis key (`rate:ip:<route>:<ip>`), so
    endpoints sharing a `key_func` no longer share one counter.
@@ -714,13 +740,16 @@ newly introduced.
   actual `/order/checkout` call, not built yet. The equivalent ticket-side endpoint
   (`/payment/status/ticket/{id}`) is fully covered, since a real ticket is cheap to stand up
   (concert/venue/ticket_type/campaign, already had a `Factory` shape to reuse).
-- **Unit tests for the checkout concurrency/locking paths** (`ticket_service.checkout_ticket`/
-  `checkout_won_ticket`, `order_service.checkout`) — the interview-defensible part of item 1's
-  overselling-race fix (why the row lock has to be held for the whole operation, why UUID-ordering
-  the `order_service` lock acquisition prevents deadlock). Per this project's own convention for
-  this category of logic, that reasoning needs to come from actually writing the tests, not from
-  having them handed over already passing — see the coverage pass note in §3 for what *was*
-  covered in the same session this gap was identified.
+- ~~**Unit tests for the checkout concurrency/locking paths**~~ — **PARTLY DONE**, and as real
+  integration tests against a live Postgres rather than unit tests, which is the stronger form of
+  proof for this specific category of bug (see item 1's regression writeup in §4 — the bug was
+  invisible to inspection and only surfaced under genuine concurrent transactions).
+  `order_service.checkout` and `lottery_draw_service.draw_lottery` (item 8) are now covered —
+  `tests/integration/marketplace/test_orders_concurrency.py`,
+  `tests/integration/events/test_lottery_concurrency.py`. Still open: `ticket_service
+  .checkout_ticket`/`checkout_won_ticket` use the same lock-hold-commit-once pattern against
+  `ticket_type.sold_quantity` but have no equivalent race test yet — worth the same treatment
+  given item 1's fix shows this pattern can look correct and still have a bypassable lock.
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.

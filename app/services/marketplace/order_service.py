@@ -76,7 +76,11 @@ class OrderService:
                 if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > RESALE_CAP_QUANTITY:
                     raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the {RESALE_CAP_QUANTITY}-unit resale cap")
 
-        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().all()
+        # populate_existing() is required, not decorative: the resale-cap precheck above already
+        # loaded these same Product rows into the session's identity map unlocked, so without this
+        # the stock check below would silently read that stale pre-lock state instead of the row
+        # with_for_update() just locked — see project_status.md §4 item 1's "Regression" note.
+        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
         for product in products:
             item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
             if product.quantity < item.quantity:
