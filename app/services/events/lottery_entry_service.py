@@ -6,7 +6,8 @@ from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, Lottery
 from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise, flush_or_raise
-from app.schema.events import LotteryEntryApply, LotteryEntryApplyBatch
+from app.schema.events import LotteryDrawResultRead, LotteryEntryApply, LotteryEntryApplyBatch
+from app.schema.events.lottery_entry import LotteryEntryStatus
 from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
 from app.schema.shared import NotificationType
@@ -154,3 +155,55 @@ class LotteryEntryService:
         if LotteryEntryService._manager_scope_violation(current_user, concert.company_id):
             raise ForbiddenError("Managers can only view entries for their own company's campaigns")
         return db.query(LotteryEntry).filter(LotteryEntry.campaign_id == campaign_id).all()
+
+    @staticmethod
+    def get_draw_results_for_concert(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryDrawResultRead]:
+        """Manager/admin view of a concert's draw outcome, across every tier's
+        campaign at once (a draw itself is per-concert, not per-campaign —
+        lottery_draw_service.draw_lottery's own docstring/comments). Only
+        decided entries (won/lost) are returned; a campaign that hasn't been
+        drawn yet just contributes nothing here rather than showing
+        still-pending rows.
+        """
+        concert = db.get(Concert, concert_id)
+        if not concert:
+            raise NotFoundError("Concert not found")
+        if LotteryEntryService._manager_scope_violation(current_user, concert.company_id):
+            raise ForbiddenError("Managers can only view lottery results for their own company's concerts")
+
+        entries = (
+            db.query(LotteryEntry)
+            .join(LotteryCampaign, LotteryEntry.campaign_id == LotteryCampaign.id)
+            .join(TicketType, LotteryCampaign.ticket_type_id == TicketType.id)
+            .filter(TicketType.concert_id == concert_id, LotteryEntry.status.in_([LotteryEntryStatus.won, LotteryEntryStatus.lost]))
+            .options(joinedload(LotteryEntry.user), joinedload(LotteryEntry.campaign).joinedload(LotteryCampaign.ticket_type))
+            .all()
+        )
+        if not entries:
+            return []
+
+        # Grouped query for every winner's ticket, not one query per entry —
+        # same reasoning as draw_lottery's own emails_by_user_id lookup before
+        # it was removed (see project_status.md's Email dispatch note). A
+        # lost entry has no ticket at all, hence the .get() default below.
+        tickets_by_entry_id = {
+            ticket.lottery_entry_id: ticket
+            for ticket in db.query(Ticket).filter(Ticket.lottery_entry_id.in_([entry.id for entry in entries])).all()
+        }
+
+        results = []
+        for entry in entries:
+            ticket = tickets_by_entry_id.get(entry.id)
+            results.append(LotteryDrawResultRead(
+                lottery_entry_id=entry.id,
+                user_id=entry.user_id,
+                email=entry.user.email,
+                ticket_type_id=entry.campaign.ticket_type_id,
+                tier=entry.campaign.ticket_type.tier,
+                status=entry.status,
+                drawn_at=entry.drawn_at,
+                ticket_id=ticket.id if ticket else None,
+                payment_status=ticket.status if ticket else None,
+                payment_deadline_at=ticket.payment_deadline_at if ticket else None,
+            ))
+        return results

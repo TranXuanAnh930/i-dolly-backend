@@ -38,21 +38,6 @@ class EmailTemplate(Enum):
         "Price: ${price:.2f}</p>"
         "<p>Bring this confirmation with you to the venue.</p>",
     )
-    LOTTERY_WON = (
-        "You won the lottery!",
-        "<p>Hi,</p>"
-        "<p>You won the lottery for a {tier} ticket.</p>"
-        "<p>Ticket ID: {ticket_id}<br>"
-        "Price: ${price:.2f}<br>"
-        "Pay before: {deadline}</p>"
-        "<p>Complete payment before the deadline or the seat will be released to someone else.</p>",
-    )
-    LOTTERY_LOST = (
-        "Lottery result",
-        "<p>Hi,</p>"
-        "<p>The lottery draw has concluded and you weren't selected this time.</p>"
-        "<p>Keep an eye out for future ticket sales and lottery campaigns.</p>",
-    )
     LOTTERY_PAYMENT_CONFIRMED = (
         "Your ticket payment is confirmed",
         "<p>Hi {email},</p>"

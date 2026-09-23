@@ -473,6 +473,19 @@ normal HTTP error, not a 500.
 - Response: `List[LotteryEntryRead]`
 - UI: manager — view entrants for a campaign (pre-draw or post-draw audit)
 
+### `GET /lottery_entries/concert/{concert_id}/results` 🔒 manager+
+Draw outcome for a whole concert at once (every ticket tier's campaign together, matching the
+draw's own per-concert granularity — see `PUT /concerts/lottery-draw/{id}`), not raw entry rows
+like `/campaign/{campaign_id}` above: only decided (`won`/`lost`) entries, each already folded
+together with the winner's email and, for winners, their ticket's payment state — no second
+request per winner needed.
+- Response (`List[LotteryDrawResultRead]`): `lottery_entry_id`, `user_id`, `email`, `ticket_type_id`,
+  `tier`, `status` (`won`|`lost` only), `drawn_at`, `ticket_id`, `payment_status`,
+  `payment_deadline_at` — the last three are `null` for a `lost` row (no ticket was ever issued)
+- Errors: `404` if the concert has no decided entries yet (including "hasn't been drawn at all")
+- UI: manager — post-draw results table/export for a concert; poll or refresh after
+  `lottery_draw_completed`/`lottery_draw_failed` notifications land (see `project_status.md` §8)
+
 ### `POST /lottery_preferences/set` 🔒 fan
 Rank which ticket tiers (within one concert) the fan would accept, in priority order — required
 before applying to some lotteries (see the trigger note above).

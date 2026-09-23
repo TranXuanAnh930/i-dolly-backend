@@ -88,15 +88,21 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   sit at `pending`/`null` forever regardless — that pair tracks a push-to-inbox step this table
   itself doesn't drive (see Email dispatch below, a separate path).
 - **Email dispatch**: every transactional email — verification link, order placed, ticket
-  confirmed, lottery win, lottery loss, lottery ticket payment confirmed — goes through
+  confirmed, lottery ticket payment confirmed — goes through
   `celery_app.send_task("app.tasks.email.send_email", ...)`, picked up by the worker task in
   `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s Resend wrapper. Subject/body
   text for each lives in `app/utils/email_templates.py`'s `EmailTemplate` enum (`.subject`,
   `.render(**fields)`) rather than inline at each call site. Replaces the original
-  `BackgroundTasks.add_task` approach (verification email only) — that couldn't extend to
-  `draw_lottery`'s win/loss mail, since a Celery task has no request-scoped `BackgroundTasks` to
-  hang a send off of. This is independent of the in-app `notifications` table above: both fire off
-  the same triggering events, but one doesn't feed the other.
+  `BackgroundTasks.add_task` approach (verification email only) — that wouldn't have worked from
+  a Celery task's own worker process (no request-scoped `BackgroundTasks` to hang a send off of),
+  which mattered when `draw_lottery` still sent win/loss email itself; it no longer does (see
+  below), but the rest of the app kept the Celery-based dispatch for consistency rather than
+  reverting. This is independent of the in-app `notifications` table above: both fire off the same
+  triggering events, but one doesn't feed the other. **`draw_lottery` deliberately sends no email
+  at all** — win and loss are in-app `lottery_result` notifications only (§8), a scope change made
+  so testing the lottery flow against real seed-fan email addresses doesn't spam real inboxes on
+  every draw; `LOTTERY_WON`/`LOTTERY_LOST` were removed from `EmailTemplate` since nothing
+  references them anymore.
 - **Celery skeleton** (`app/celery_app.py`, `app/tasks/`): broker + result backend on the same
   Redis instance, a separate DB index from the cache/rate-limiter. Two task modules:
   `app.tasks.lottery.draw_lottery` (manager-triggered, §8) and `app.tasks.email.send_email` (every
@@ -994,11 +1000,16 @@ not SQL, since the cross-rank/cross-tier exclusion bookkeeping is inherently pro
 **Notifications**: `draw_lottery` writes `lottery_result` (every winner and loser) and, for
 winners only, `lottery_payment_reminder` (fired once at draw time, not on a later schedule)
 inside the same transaction as the draw itself — cheap same-database inserts, so coupling them to
-the draw's commit costs nothing and buys atomicity. Win and loss also each dispatch an email via
-`celery_app.send_task` (§2's Email dispatch) once the transaction's in-app inserts are queued — a
-one-time notice at draw time, not a recurring deadline-proximity reminder, which stays out of
-scope. A reproducible/auditable draw (logging a seed + candidate snapshot per rank) was considered
-and intentionally not built — nothing in this project's scope models a dispute process.
+the draw's commit costs nothing and buys atomicity. Win and loss are **in-app notifications only —
+no email**: `draw_lottery` used to also dispatch a `LOTTERY_WON`/`LOTTERY_LOST` email per entry via
+`celery_app.send_task`, but that was removed so testing the lottery flow against real seed-fan
+email addresses (Resend, not the local dev short-circuit) doesn't spam a real inbox on every draw;
+the templates themselves are gone from `EmailTemplate` too, not just unwired. Email still fires for
+`lottery_payment_confirmation` once a won ticket is actually paid for
+(`PaymentService.finalize_paypal_payment`) — payment success and ticket confirmation stay the
+email-worthy events, per-draw win/loss doesn't. A reproducible/auditable draw (logging a seed +
+candidate snapshot per rank) was considered and intentionally not built — nothing in this
+project's scope models a dispute process.
 
 A separate `lottery_draw_triggered` notification fires earlier and outside this transaction
 entirely — from the router, at the moment the manager/admin presses draw
@@ -1011,8 +1022,24 @@ looks the concert back up (the local `Concert` object from inside `draw_lottery`
 raised), and calls `ConcertService.notify_managers_of_draw_failure` for a `lottery_draw_failed`
 notification to the same audience, before re-raising the original exception unchanged — so the
 failure notification and Celery's own `FAILURE` task state both still happen, neither replaces the
-other. There's still no *success*-completion signal beyond polling `GET /concerts/{id}/detail` for
-a campaign's `status` to flip to `drawn` — only the failure side has a push-style notification now.
+other. On the happy path, `draw_lottery` now also calls
+`ConcertService.notify_managers_of_draw_completion` (`lottery_draw_completed`) right after its own
+commit — so a manager who wasn't watching the concert's edit page when the draw finished has a
+persistent record it actually completed, not just that it started or failed. All three manager
+notifications (`lottery_draw_triggered`/`lottery_draw_failed`/`lottery_draw_completed`) carry
+`concert_id` only — no per-winner detail — the actual outcome is
+`GET /lottery_entries/concert/{concert_id}/results` (`api-spec.md` §Lottery Entries), a
+manager-facing endpoint returning every decided entry with the winner's email and their ticket's
+payment status/deadline.
+
+`draw_lottery_task`'s Celery return value is also `.model_dump(mode="json")`-serialized rather than
+a raw `LotteryResult` — the model wasn't JSON-serializable, so Celery's kombu encoder raised and
+recorded the task as `FAILURE` even when the draw itself had already committed successfully; caught
+from a real worker log, reproduced by calling the task directly and encoding its return value with
+`kombu.utils.json.dumps`, fixed, and re-verified the same way. Separately, `LotteryEntry.drawn_at`
+— a real column, exposed in `LotteryEntryRead` and used by the results endpoint above — was never
+actually set by `draw_lottery` (only `LotteryCampaign.draw_at` was); found while building that
+endpoint, fixed by setting `entry.drawn_at`/`candidate.drawn_at` alongside each status change.
 
 **Placement**: `app/services/events/lottery_draw_service.py`, not folded into
 `lottery_campaign_service.py` — the draw is a meaningfully different concern (touching

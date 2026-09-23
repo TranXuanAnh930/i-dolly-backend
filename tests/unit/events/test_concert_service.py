@@ -601,3 +601,82 @@ class TestGetPersonalization:
         result = ConcertService.get_personalization(db, DEFAULT_ID, make_mock_fan(), campaign_ids=[])
 
         assert result["entered_campaign_ids"] == []
+
+
+# ───────────────────────────────────────────────────────────────
+# notify_managers_of_draw_{trigger,failure,completion} — the three
+# notification events lottery_draw_service fires around a draw's lifecycle.
+# None had coverage before; added together since they share one shape.
+# ───────────────────────────────────────────────────────────────
+
+class TestDrawNotifications:
+
+    def _make_db_with_managers(self, manager_ids):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = [(mid,) for mid in manager_ids]
+        return db
+
+    def test_notify_managers_of_draw_trigger_notifies_every_company_manager(self):
+        from app.schema.shared import NotificationType
+        from app.services.events.concert_service import ConcertService
+
+        manager_ids = [uuid.uuid4(), uuid.uuid4()]
+        db = self._make_db_with_managers(manager_ids)
+        concert = make_mock_concert()
+
+        ConcertService.notify_managers_of_draw_trigger(db, concert)
+
+        assert db.add.call_count == 2
+        notified = [call.args[0] for call in db.add.call_args_list]
+        assert all(n.type == NotificationType.lottery_draw_triggered for n in notified)
+        assert all(n.concert_id == concert.id for n in notified)
+        assert {n.user_id for n in notified} == set(manager_ids)
+        db.commit.assert_called_once()
+
+    def test_notify_managers_of_draw_failure_notifies_every_company_manager(self):
+        from app.schema.shared import NotificationType
+        from app.services.events.concert_service import ConcertService
+
+        manager_ids = [uuid.uuid4()]
+        db = self._make_db_with_managers(manager_ids)
+        concert = make_mock_concert()
+
+        ConcertService.notify_managers_of_draw_failure(db, concert)
+
+        db.add.assert_called_once()
+        notified = db.add.call_args.args[0]
+        assert notified.type == NotificationType.lottery_draw_failed
+        assert notified.concert_id == concert.id
+        db.commit.assert_called_once()
+
+    def test_notify_managers_of_draw_completion_notifies_every_company_manager(self):
+        from app.schema.shared import NotificationType
+        from app.services.events.concert_service import ConcertService
+
+        manager_ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+        db = self._make_db_with_managers(manager_ids)
+        concert = make_mock_concert()
+
+        ConcertService.notify_managers_of_draw_completion(db, concert)
+
+        assert db.add.call_count == 3
+        notified = [call.args[0] for call in db.add.call_args_list]
+        assert all(n.type == NotificationType.lottery_draw_completed for n in notified)
+        assert all(n.concert_id == concert.id for n in notified)
+        assert {n.user_id for n in notified} == set(manager_ids)
+        db.commit.assert_called_once()
+
+    def test_notify_managers_of_draw_completion_no_managers_is_a_no_op(self):
+        """An ownerless/orphaned company (shouldn't happen in practice, but
+        nothing upstream guarantees it) — the loop just does nothing rather
+        than erroring, and the commit still happens (matches trigger/failure's
+        own shape: an empty-but-successful notify is not a failure)."""
+        from app.services.events.concert_service import ConcertService
+
+        db = self._make_db_with_managers([])
+        concert = make_mock_concert()
+
+        ConcertService.notify_managers_of_draw_completion(db, concert)
+
+        db.add.assert_not_called()
+        db.commit.assert_called_once()

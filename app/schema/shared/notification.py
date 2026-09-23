@@ -11,6 +11,7 @@ class NotificationType(str, Enum):
     lottery_registered = "lottery_registered"
     lottery_draw_triggered = "lottery_draw_triggered"
     lottery_draw_failed = "lottery_draw_failed"
+    lottery_draw_completed = "lottery_draw_completed"
     lottery_result = "lottery_result"
     lottery_payment_reminder = "lottery_payment_reminder"
     lottery_payment_confirmation = "lottery_payment_confirmation"
