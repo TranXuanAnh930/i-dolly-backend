@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session, selectinload
 
 from app.cache.cache_service import CacheService
-from app.celery_app import celery_app
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, Ticket, TicketType
 from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
@@ -16,8 +15,8 @@ from app.schema.events.lottery_result import LotteryResult
 from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
 from app.schema.shared import NotificationType
+from app.services.events.concert_service import ConcertService
 from app.services.shared.notification_service import NotificationService
-from app.utils.email_templates import EmailTemplate
 
 
 class LotteryDrawService:
@@ -57,13 +56,6 @@ class LotteryDrawService:
             MAX_RANK = max(MAX_RANK, preference.rank)
             preferences_by_entry[entry.id] = preference.rank
 
-        # One grouped query for every entrant's email, not one query per entry (same pattern as
-        # order_service.checkout's past_qty query) — used below for the win/loss email dispatch.
-        emails_by_user_id = {
-            u.id: u.email
-            for u in db.query(Users).filter(Users.id.in_({entry.user_id for entry in entries})).all()
-        } if entries else {}
-
         won_user_ids: set[uuid.UUID] = set()
         lost_user_ids: set[uuid.UUID] = set()
 
@@ -79,7 +71,13 @@ class LotteryDrawService:
                     winners = secrets.SystemRandom().sample(candidates, capacity)
                     for candidate in winners:
                         candidate.status = LotteryEntryStatus.won
-                        new_ticket = Ticket(ticket_type_id=ticket_type.id, user_id=candidate.user_id, status=TicketStatus.pending_payment, lottery_entry_id=candidate.id, payment_deadline_at=datetime.now(timezone.utc)  + timedelta(hours=campaign.payment_deadline_hours))
+                        candidate.drawn_at = datetime.now(timezone.utc)
+                        # id is assigned here, not left to the column's default=uuid.uuid4 —
+                        # that default only runs at flush time, and new_ticket.id is read
+                        # below (for the lottery_payment_reminder notification) before this
+                        # loop ever flushes, so leaving it implicit meant every such
+                        # notification was created with ticket_id=NULL.
+                        new_ticket = Ticket(id=uuid.uuid4(), ticket_type_id=ticket_type.id, user_id=candidate.user_id, status=TicketStatus.pending_payment, lottery_entry_id=candidate.id, payment_deadline_at=datetime.now(timezone.utc)  + timedelta(hours=campaign.payment_deadline_hours))
                         db.add(new_ticket)
                         won_user_ids.add(candidate.user_id)
                         # Same row for win or loss — a lottery_result notification
@@ -93,31 +91,15 @@ class LotteryDrawService:
                         # Celery Beat job, deliberately out of scope for this
                         # phase).
                         NotificationService.create_notification(db, candidate.user_id, NotificationType.lottery_payment_reminder, ticket_id=new_ticket.id)
-                        winner_email = emails_by_user_id.get(candidate.user_id)
-                        if winner_email:
-                            email_body = EmailTemplate.LOTTERY_WON.render(
-                                tier=ticket_type.tier,
-                                ticket_id=new_ticket.id,
-                                price=ticket_type.price,
-                                deadline=new_ticket.payment_deadline_at.isoformat(),
-                            )
-                            celery_app.send_task(
-                                "app.tasks.email.send_email", args=[winner_email, EmailTemplate.LOTTERY_WON.subject, email_body]
-                            )
                     ticket_type.sold_quantity += len(winners)
 
         for entry in entries:
             if entry.status == LotteryEntryStatus.pending:
                 entry.status = LotteryEntryStatus.lost
+                entry.drawn_at = datetime.now(timezone.utc)
                 if entry.user_id not in won_user_ids:
                     lost_user_ids.add(entry.user_id)
                 NotificationService.create_notification(db, entry.user_id, NotificationType.lottery_result, lottery_entry_id=entry.id)
-                loser_email = emails_by_user_id.get(entry.user_id)
-                if loser_email:
-                    email_body = EmailTemplate.LOTTERY_LOST.render()
-                    celery_app.send_task(
-                        "app.tasks.email.send_email", args=[loser_email, EmailTemplate.LOTTERY_LOST.subject, email_body]
-                    )
 
         for campaign in campaigns:
             campaign.status = CampaignStatus.drawn
@@ -130,6 +112,11 @@ class LotteryDrawService:
         # the same Redis as the API, so this reaches the same cache entry the
         # web process reads.
         CacheService.delete_cached_concert_detail(concert_id)
+        # See notify_managers_of_draw_completion's own docstring — this is
+        # the persistent record that the draw actually finished, distinct
+        # from the lottery_draw_triggered notification fired back when it
+        # was only scheduled.
+        ConcertService.notify_managers_of_draw_completion(db, concert)
 
         return LotteryResult(
             concert_id=concert_id,
