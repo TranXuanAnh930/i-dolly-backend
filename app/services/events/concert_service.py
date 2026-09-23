@@ -115,6 +115,25 @@ class ConcertService:
         commit_or_raise(db)
 
     @staticmethod
+    def notify_managers_of_draw_completion(db: Session, concert: Concert) -> None:
+        """Counterpart to notify_managers_of_draw_trigger for the happy path —
+        call this from lottery_draw_service.draw_lottery once its own commit
+        has already landed the campaign/ticket/entry changes, so this is a
+        second, separate commit rather than folded into that one (same
+        two-commit shape as the trigger/failure notifications relative to
+        whatever they're a counterpart to). Without this, a manager who
+        wasn't watching the concert's edit page when the draw finished (the
+        frontend's own poll loop, store/events/lotteryDraw.js on the
+        frontend, only surfaces success while that page stays open) had a
+        record that a draw *started* and never anything saying it actually
+        finished. Same audience as the other two: every manager at the
+        concert's own company.
+        """
+        for manager_id in ConcertService._manager_ids_for_company(db, concert.company_id):
+            NotificationService.create_notification(db, manager_id, NotificationType.lottery_draw_completed, concert_id=concert.id)
+        commit_or_raise(db)
+
+    @staticmethod
     def update_concert(db: Session, id: uuid.UUID, data: ConcertUpdate, current_user: Users) -> Concert:
         db_concert = db.get(Concert, id)
         if not db_concert:

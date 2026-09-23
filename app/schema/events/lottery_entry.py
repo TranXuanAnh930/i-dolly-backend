@@ -5,6 +5,8 @@ from enum import Enum
 from pydantic import BaseModel, Field, field_validator
 
 from app.schema.events.lottery_campaign import LotteryCampaignRead
+from app.schema.events.ticket import TicketStatus
+from app.schema.events.ticket_type import TicketTier
 
 
 class LotteryEntryStatus(str, Enum):
@@ -54,3 +56,20 @@ class LotteryEntryRead(BaseModel):
     campaign: LotteryCampaignRead
 
     model_config = {"from_attributes": True}
+
+# Manager-facing: one row per decided (won/lost) entry for a concert's draw —
+# built by LotteryEntryService.get_draw_results_for_concert, not populated
+# straight from the ORM model like LotteryEntryRead above, since it also
+# folds in the winner's email and their ticket's payment state (a lost entry
+# has no ticket at all, hence the three trailing fields all being optional).
+class LotteryDrawResultRead(BaseModel):
+    lottery_entry_id: uuid.UUID
+    user_id: uuid.UUID
+    email: str
+    ticket_type_id: uuid.UUID
+    tier: TicketTier
+    status: LotteryEntryStatus
+    drawn_at: datetime | None
+    ticket_id: uuid.UUID | None
+    payment_status: TicketStatus | None
+    payment_deadline_at: datetime | None

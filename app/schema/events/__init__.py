@@ -29,7 +29,13 @@ from .lottery_campaign import (
     LotteryCampaignRead,
     LotteryCampaignUpdate,
 )
-from .lottery_entry import LotteryEntryApply, LotteryEntryApplyBatch, LotteryEntryRead, LotteryEntryStatus
+from .lottery_entry import (
+    LotteryDrawResultRead,
+    LotteryEntryApply,
+    LotteryEntryApplyBatch,
+    LotteryEntryRead,
+    LotteryEntryStatus,
+)
 from .lottery_preference import LotteryPreferenceRead, LotteryPreferenceSet
 from .lottery_result import LotteryResult
 from .ticket import (
@@ -73,6 +79,7 @@ __all__ = [
     "LotteryEntryApplyBatch",
     "LotteryEntryRead",
     "LotteryEntryStatus",
+    "LotteryDrawResultRead",
     "LotteryPreferenceRead",
     "LotteryPreferenceSet",
     "LotteryResult",

@@ -11,7 +11,7 @@ from app.deps.auth import get_current_user, require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
 from app.exception.db_triggers import TriggerViolationError
-from app.schema.events import LotteryEntryApply, LotteryEntryApplyBatch, LotteryEntryRead
+from app.schema.events import LotteryDrawResultRead, LotteryEntryApply, LotteryEntryApplyBatch, LotteryEntryRead
 from app.services.events.lottery_entry_service import LotteryEntryService
 
 router = APIRouter(prefix="/lottery_entries", tags=["Lottery Entries"])
@@ -57,4 +57,20 @@ async def list_campaign_entries(campaign_id: uuid.UUID, current_user: Users = De
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if not result:
         raise HTTPException(status_code=404, detail="No entries found for this campaign")
+    return result
+
+# Draw outcome for a whole concert (every tier's campaign at once, matching
+# the draw's own per-concert granularity — PUT /concerts/lottery-draw/{id}),
+# not the raw entry rows /campaign/{campaign_id} above returns: only
+# won/lost rows, each folded together with the winner's email and their
+# ticket's payment status/deadline so the frontend doesn't need a second
+# request per winner.
+@router.get("/concert/{concert_id}/results", response_model=List[LotteryDrawResultRead])
+async def list_concert_draw_results(concert_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> list[LotteryDrawResultRead]:
+    try:
+        result = LotteryEntryService.get_draw_results_for_concert(db, concert_id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    if not result:
+        raise HTTPException(status_code=404, detail="No lottery results found for this concert")
     return result
