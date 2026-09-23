@@ -72,7 +72,12 @@ class LotteryDrawService:
                     for candidate in winners:
                         candidate.status = LotteryEntryStatus.won
                         candidate.drawn_at = datetime.now(timezone.utc)
-                        new_ticket = Ticket(ticket_type_id=ticket_type.id, user_id=candidate.user_id, status=TicketStatus.pending_payment, lottery_entry_id=candidate.id, payment_deadline_at=datetime.now(timezone.utc)  + timedelta(hours=campaign.payment_deadline_hours))
+                        # id is assigned here, not left to the column's default=uuid.uuid4 —
+                        # that default only runs at flush time, and new_ticket.id is read
+                        # below (for the lottery_payment_reminder notification) before this
+                        # loop ever flushes, so leaving it implicit meant every such
+                        # notification was created with ticket_id=NULL.
+                        new_ticket = Ticket(id=uuid.uuid4(), ticket_type_id=ticket_type.id, user_id=candidate.user_id, status=TicketStatus.pending_payment, lottery_entry_id=candidate.id, payment_deadline_at=datetime.now(timezone.utc)  + timedelta(hours=campaign.payment_deadline_hours))
                         db.add(new_ticket)
                         won_user_ids.add(candidate.user_id)
                         # Same row for win or loss — a lottery_result notification

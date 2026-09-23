@@ -172,6 +172,43 @@ class TestDrawLottery:
         # from that branch.
         assert db.add.call_count == 9
 
+    def test_payment_reminder_notification_carries_the_new_ticket_id(self):
+        """Regression test: new_ticket.id used to be read before the session
+        ever flushed, so the Ticket column's default=uuid.uuid4 hadn't run
+        yet and every lottery_payment_reminder notification was created with
+        ticket_id=NULL — the frontend's "complete your payment" notification
+        then linked to a dead /history/tickets/null. draw_lottery now assigns
+        the id explicitly so it's available immediately."""
+        from app.db.models.events import Ticket
+        from app.db.models.shared import Notification
+        from app.schema.shared import NotificationType
+        from app.services.events.lottery_draw_service import LotteryDrawService
+
+        vip_tt = make_mock_ticket_type(VIP_TT_ID, total_quantity=5, sold_quantity=0)
+        campaign = make_mock_campaign(VIP_CAMPAIGN_ID, VIP_TT_ID)
+        fan_id = uuid.uuid4()
+        prefs = [make_mock_preference(fan_id, VIP_TT_ID, rank=1)]
+        entries = [make_mock_entry(uuid.uuid4(), campaign, fan_id)]
+
+        db = make_mock_db(
+            concert=make_mock_concert(),
+            ticket_types=[vip_tt],
+            campaigns=[campaign],
+            preferences=prefs,
+            entries=entries,
+        )
+        manager = make_mock_user(role="manager", company_id=COMPANY_ID)
+
+        with _patched_random():
+            LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
+
+        added = [call.args[0] for call in db.add.call_args_list]
+        ticket = next(obj for obj in added if isinstance(obj, Ticket))
+        reminder = next(obj for obj in added if isinstance(obj, Notification) and obj.type == NotificationType.lottery_payment_reminder)
+
+        assert ticket.id is not None
+        assert reminder.ticket_id == ticket.id
+
     def test_single_preference_entries_over_capacity_some_lose(self):
         from app.services.events.lottery_draw_service import LotteryDrawService
 
