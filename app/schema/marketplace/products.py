@@ -82,7 +82,6 @@ class ProductWithDetailCreate(BaseModel):
 class AlbumMini(BaseModel):
     release_date: date | None = None
     track_count: int | None = None
-    cover_image_url: str | None = None
 
 class ProductCard(BaseModel):
     id: uuid.UUID

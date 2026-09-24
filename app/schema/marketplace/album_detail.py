@@ -14,7 +14,6 @@ class AlbumDetailBase(BaseModel):
     release_date: date | None = None
     track_count: int | None = Field(None, gt=0)
     format: ReleaseFormat = ReleaseFormat.physical
-    cover_image_url: str | None = None
 
 class AlbumDetailCreate(AlbumDetailBase):
     product_id: uuid.UUID  # must reference an existing products row (created via the products endpoints)

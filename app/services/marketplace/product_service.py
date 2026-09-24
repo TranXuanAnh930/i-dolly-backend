@@ -332,7 +332,6 @@ class ProductService:
                 album=AlbumMini(
                     release_date=album.release_date,
                     track_count=album.track_count,
-                    cover_image_url=album.cover_image_url,
                 ) if album else None,
                 genres=genres_by_product.get(product.id, []),
                 artist=resolve_artist(product, album, merch),

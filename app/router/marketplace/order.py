@@ -107,11 +107,20 @@ async def shipping_status(order_id:uuid.UUID, user:Users=Depends(get_current_use
         raise HTTPException(status_code=404, detail="Order not found or not authorized")
     return shipstat
 
-# FRONTEND: not currently called by i-dolly-frontend — ManagerOrdersPage
-# lists orders but has no control to update a shipping status.
+# Admin-only free-form override (set any status, including going backwards)
+# — kept for a manual correction, not the everyday path. The everyday path
+# is the manager-facing "Ship" button below: no status picker, one
+# direction (pending/processing -> shipped), company-scoped.
 @router.patch("/update_shipping_status/{order_id}", response_model=None)
 async def update_status(new_status:SchemaShippingStatus, order_id:uuid.UUID, user:Users=Depends(require_admin), db:Session=Depends(get_db)) -> ModelShippingStatus:
     try:
         return OrderService.update_shipping_status(db, new_status, order_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+
+@router.patch("/{order_id}/ship", response_model=Order)
+async def ship_order(order_id:uuid.UUID, user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> OrderModel:
+    try:
+        return OrderService.ship_order(db, order_id, user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e

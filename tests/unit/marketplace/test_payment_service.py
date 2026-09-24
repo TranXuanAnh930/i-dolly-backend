@@ -502,3 +502,56 @@ class TestFinalizePaypalPayment:
 
         assert payment.status == "failed"
         assert order.status == "cancelled"
+
+    def test_order_finalize_updates_existing_shipping_status_not_insert(self):
+        # Regression for docs/bugs.md #1: create_payment already made this order's
+        # shipping_status row at checkout — finalize must update it, never add a second.
+        from app.db.models.events import Ticket
+        from app.db.models.marketplace import Order, OrderItem, Payment, Product, ShippingStatus
+        from app.schema.marketplace import OrderStatus
+        from app.schema.marketplace import ShippingStatus as SchemaShipStatus
+        from app.services.marketplace.payment_service import PaymentService
+
+        payment = self._mock_payment(order_id=DEFAULT_ID)
+        order = MagicMock()
+        order.id = DEFAULT_ID
+        order.user_id = DEFAULT_ID
+        order.status = OrderStatus.pending
+
+        order_item = MagicMock()
+        order_item.product_id = OTHER_ID
+        order_item.quantity = 1
+
+        product = MagicMock()
+        product.id = OTHER_ID
+        product.quantity = 10
+
+        existing_ship_status = MagicMock()
+        existing_ship_status.status = SchemaShipStatus.pending
+
+        db = MagicMock()
+
+        def query_side_effect(model):
+            q = MagicMock()
+            if model is Payment:
+                q.filter.return_value.with_for_update.return_value.first.return_value = payment
+            elif model is Ticket:
+                pass
+            elif model is Order:
+                q.filter.return_value.with_for_update.return_value.first.return_value = order
+            elif model is OrderItem:
+                q.filter.return_value.all.return_value = [order_item]
+            elif model is Product:
+                q.filter.return_value.with_for_update.return_value.all.return_value = [product]
+            elif model is ShippingStatus:
+                q.filter.return_value.first.return_value = existing_ship_status
+            return q
+
+        db.query.side_effect = query_side_effect
+
+        with patch("app.services.marketplace.payment_service.capture_order", return_value={"status": "DECLINED"}):
+            PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
+
+        assert existing_ship_status.status == SchemaShipStatus.cancelled
+        added = [call.args[0] for call in db.add.call_args_list]
+        assert not any(isinstance(obj, ShippingStatus) for obj in added)

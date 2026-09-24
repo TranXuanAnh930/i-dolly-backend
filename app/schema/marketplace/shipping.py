@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -27,5 +28,10 @@ class ShippingStatus(str, Enum):
 
 class ShippingStatusResponse(BaseModel):
     status : ShippingStatus
+    # When `status` last changed — lets an order-detail page show "Shipped on
+    # <date>" instead of a bare status word. Server-side default/onupdate on
+    # the shipping_status.updated_at column (app/db/models/marketplace/shipping.py)
+    # keeps this current without the service layer having to set it by hand.
+    updated_at : datetime
 
     model_config = {"from_attributes" : True}

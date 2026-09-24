@@ -54,6 +54,11 @@ class ManagerOrderRead(BaseModel):
     created_at: datetime
     items: list[ManagerOrderItemRead]
     company_total: float
+    # None only for a pre-existing order somehow missing its ShippingStatus
+    # row (every new order gets one at checkout) — lets the manager UI's
+    # "Ship" button gate on it without assuming it's always present, same
+    # defensiveness as OrderService.ship_order's own check.
+    shippingstatus: ShippingStatusResponse | None
 
 class ManagerOrdersPageRead(BaseModel):
     page: int

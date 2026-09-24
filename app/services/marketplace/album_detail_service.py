@@ -84,7 +84,6 @@ class AlbumDetailService:
         db_album.release_date = data.release_date
         db_album.track_count = data.track_count
         db_album.format = data.format
-        db_album.cover_image_url = data.cover_image_url
         db.commit()
         db.refresh(db_album)
         return db_album

@@ -765,7 +765,6 @@ def seed(db):
             group_id=group.id if group else None,
             idol_id=idol.id if idol else None,
             release_date=release_date, track_count=track_count, format=fmt,
-            cover_image_url=image_url,
         ))
         db.add_all([AlbumGenre(product_id=product.id, genre_id=genre_id(db, g)) for g in genres])
     db.flush()

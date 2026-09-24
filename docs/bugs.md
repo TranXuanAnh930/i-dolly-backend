@@ -1,0 +1,103 @@
+# Bugs / code smells — audit backlog
+
+Findings from a static read-through (2026-09-24) of auth, checkout/payment, ticketing, lottery,
+cache and storage code. **Not reproduced against a live app or test run** — each item is traced in
+the code, not observed at runtime. Tick items off (or move them into `project_status.md` §4) as
+they're fixed.
+
+## 🔴 Critical
+
+- [x] **1. Duplicate `shipping_status` rows per order** — FIXED (see `project_status.md` §4
+  item 43; migration `a9d3f5b7c1e2`, not yet run against a live DB). `OrderService.checkout`
+  (`order_service.py:98`) now inserts one, but `PaymentService.create_payment`
+  (`payment_service.py:54`) already did, and `finalize_paypal_payment` (line 210) adds another.
+  No `UNIQUE(order_id)`; `Order.shippingstatus` is `uselist=False`, so which row loads is
+  arbitrary — a declined order can read as `pending` and be shipped. `project_status.md` item 43's
+  premise ("nothing inserted a shipping_status row") is wrong. Fix + add a unique constraint.
+- [ ] **2. Deleting a product deletes order history.** `order_items.product_id` is
+  `ON DELETE CASCADE` (`models/marketplace/order.py:34`) and `delete_product` hard-deletes
+  (`product_service.py:206`). Any manager can do this to ownerless merch. Same class as item 17.
+- [ ] **3. Cart IDOR.** `CartService.remove_cart` (`cart_service.py:51`) filters only by
+  `Cart.id`; `user_id` is accepted but unused — any user can delete anyone's cart row.
+- [ ] **4. Lottery apply ignores entry window and campaign status.** `_stage_entry`
+  (`lottery_entry_service.py:31`) never checks `entry_start_at`/`entry_end_at`/`status == open`;
+  no trigger does either. A post-draw entry stays `pending` forever and then blocks direct-sale
+  purchase for that concert via `_unresolved_lottery_entry`.
+- [ ] **5. Editing preferences breaks the concert's draw.** `set_preferences`/`clear_my_preferences`
+  work even with pending entries; the draw's `next(p for p in preferences ...)`
+  (`lottery_draw_service.py:55`) then raises `StopIteration` and aborts for everyone. Also allows
+  re-ranking after entries close.
+- [x] **6. Same fan can win twice in one tier.** With `max_entries_per_user > 1`,
+  `sample(candidates, ...)` can pick two entries of one user (`won_user_ids` is only checked when
+  building candidates) → `trg_tickets_one_per_concert` fails the whole commit.
+  **MITIGATED**: the field was removed from `LotteryCampaignCreate`/`Update`, so it stays at the
+  DB default of 1. The draw itself still doesn't dedupe by user; fix that before exposing the field
+  again. Any rows already set above 1 are unchanged; check with
+  `SELECT id FROM lottery_campaigns WHERE max_entries_per_user > 1`.
+- [ ] **7. IP rate limits spoofable.** `ProxyHeadersMiddleware(trusted_hosts="*")` (`main.py:75`)
+  makes uvicorn 0.38 take the *leftmost* `X-Forwarded-For` hop, which the client controls
+  (Render appends, doesn't strip). Rotating the header bypasses login/register limits.
+- [ ] **8. PayPal capture under row locks, no reconciliation.** `finalize_paypal_payment` calls
+  `capture_order` (network, 10s timeout) while holding `FOR UPDATE` on payment/ticket_type/products
+  (`payment_service.py:159`, `:190`). If PayPal captures but the response times out or our commit
+  fails → charged, DB `pending`. The webhook re-calls `capture_order` → 422 already captured →
+  500 → retried for 3 days, never resolves. Webhook should apply the event, not re-capture.
+
+## 🟠 High
+
+- [ ] **9. `async def` routes doing sync work.** All 161 async handlers call sync SQLAlchemy,
+  bcrypt, PayPal httpx and boto3 → block the event loop. Plain `def` routes would use the threadpool.
+- [ ] **10. `DEBUG` defaults to `True`** (`settings.py`), contradicting `deployment.md` and the
+  `email_sender.py` comment. An env missing `DEBUG` prints reset tokens to logs and sends no email.
+- [ ] **11. Redis outage → 500s.** `CacheService` has no `RedisError` handling. Invalidation runs
+  after commit, so checkout/payment 500 on an order that actually succeeded.
+- [ ] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
+  live (`ticket_service.py:54`) but direct tickets have no deadline/sweep.
+- [ ] **13. Resale cap counts cancelled/declined orders** (`order_service.py:71`, no status
+  filter), and is computed before the lock (concurrent checkouts can both pass).
+- [ ] **14. `cancel_placed_order` doesn't restock, refund, or bust the product cache.**
+- [ ] **15. Cart price drift.** Re-adding an item updates `total_price` from the current price but
+  leaves `Cart.price` stale (`cart_service.py` add_to_cart); checkout uses `total_price` for the
+  order total and `price` for line items → they don't reconcile.
+- [ ] **16. Emails dispatched before commit** in `checkout_ticket` / `checkout_won_ticket`.
+- [ ] **17. Webhook `KeyError`** on `resource.supplementary_data.related_ids.order_id` for any
+  event type lacking it → 500 → PayPal retries.
+
+## 🟡 Medium
+
+- [ ] **18.** `change_password_process` doesn't revoke refresh tokens (reset does).
+- [ ] **19.** Password-reset JWTs are reusable until expiry (no `jti` / password-hash binding).
+- [ ] **20.** Refresh tokens stored plaintext; every login revokes all other sessions
+  (`auth_service.py` `create_tokens`).
+- [ ] **21.** `get_current_user`: `uuid.UUID(payload.get("sub"))` 500s on missing `sub`; unknown
+  user returns 404 instead of 401.
+- [ ] **22.** Rate limiter `INCR` + `EXPIRE` aren't atomic (crash between → key never expires);
+  `user_key` implicitly depends on `get_current_user` running first.
+- [ ] **23.** Paginated pages return `count=len(data)` (page size, not total); manager orders page
+  loads every product and order id into memory.
+- [ ] **24.** Draw is O(entries × preferences) plus O(ranks × campaigns × entries).
+- [ ] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
+  `except` notifies managers the draw *failed*.
+
+## 🔵 Code smells
+
+- Money as `float` (`total_price=float(...)`, `with_tax(float(...))`).
+- Read-only `/payment/status/*` endpoints use `PATCH`.
+- Empty lists return 404 (`/order/fetch_placed_order`, `/payment/status/all`).
+- `/account/verify` returns 401 for "already verified".
+- No `logging` anywhere in `app/` — `print()` only; email failures swallowed, never retried.
+- `verify_token_and_get_user_id` / `verify_rtoken_and_get_user_id` near-duplicates with an unused
+  `token_type` param.
+- `CacheService` ↔ services import each other (layering cycle).
+- Upload extension taken from client filename (`storage.py:46`) — `.html` with
+  `Content-Type: image/png` gets served as HTML by `StaticFiles` on the API origin (stored XSS).
+  Derive ext from the whitelisted content type. S3 path reads the whole upload before size check.
+- PayPal `pg_payment_id` set from `generate_mock_id()` instead of the real capture id (needed for
+  refunds).
+- `MAX_RANK` upper-case local; `create_order` currency default `"USD"` while all callers pass
+  `"JPY"`; leftover tutorial comment in `main.py`.
+
+## Suggested order
+
+1. #1 (in the working tree) → 2. #3, #7, #10 (quick security) → 3. #4–#6 (lottery integrity) →
+4. #2 (`RESTRICT`/soft-delete) → 5. #9 (`async def` → `def`).

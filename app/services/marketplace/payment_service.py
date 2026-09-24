@@ -200,14 +200,21 @@ class PaymentService:
                     product.quantity-=item.quantity
 
                 db.query(Cart).filter(Cart.user_id==payment.user_id, Cart.product_id.in_(product_ids)).delete()
-                shipstatus = ModelShipStatus(order_id=order.id, status=SchemaShipStatus.pending)
+                new_ship_status = SchemaShipStatus.pending
                 order.status = OrderStatus.confirmed
                 NotificationService.create_notification(db, payment.user_id, NotificationType.order_confirmation, order_id=order.id)
             else:
                 payment.status = PaymentStatus.failed
                 order.status = OrderStatus.cancelled
-                shipstatus = ModelShipStatus(order_id=order.id, status=SchemaShipStatus.cancelled)
-            db.add(shipstatus)
+                new_ship_status = SchemaShipStatus.cancelled
+            # Update the row create_payment already made at checkout, never insert a
+            # second one — shipping_status.order_id is UNIQUE (one row per order).
+            shipstatus = db.query(ModelShipStatus).filter(ModelShipStatus.order_id == order.id).first()
+            if shipstatus is None:
+                shipstatus = ModelShipStatus(order_id=order.id)
+                db.add(shipstatus)
+            shipstatus.status = new_ship_status
+            shipstatus.updated_at = datetime.now(timezone.utc)
 
         commit_or_raise(db)
         if payment.status == PaymentStatus.success:

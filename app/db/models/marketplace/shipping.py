@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -34,3 +34,9 @@ class ShippingStatus(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now(), nullable=False)
 
     orderid = relationship("Order", back_populates="shippingstatus")
+
+    # One row per order: Order.shippingstatus is uselist=False, so a second row
+    # made which one loaded arbitrary (docs/bugs.md #1).
+    __table_args__ = (
+        UniqueConstraint("order_id", name="uq_shipping_status_order_id"),
+    )

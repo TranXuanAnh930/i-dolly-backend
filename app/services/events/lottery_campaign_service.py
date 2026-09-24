@@ -71,7 +71,6 @@ class LotteryCampaignService:
         db_campaign.entry_start_at = data.entry_start_at
         db_campaign.entry_end_at = data.entry_end_at
         db_campaign.payment_deadline_hours = data.payment_deadline_hours
-        db_campaign.max_entries_per_user = data.max_entries_per_user
         if data.status is not None:
             db_campaign.status = data.status
         db.commit()

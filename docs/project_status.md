@@ -8,7 +8,7 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `d3a9e5f1c8b7`** (`add_lottery_draw_failed_to_notification_type`) — 58 migrations,
+**Chain head: `a9d3f5b7c1e2`** (`unique_shipping_status_order_id`) — 62 migrations,
 one linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
 applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
 empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
@@ -24,9 +24,14 @@ clean each time, and `enum_range(NULL::notification_type_enum)` confirmed `lotte
 `lottery_draw_failed` present — see the Notifications bullet in §2 below for the three new
 producers these added. `d3a9e5f1c8b7`'s producer specifically was exercised past just the enum:
 calling `draw_lottery_task` directly against that same database with a concert whose lottery
-campaign hadn't closed yet confirmed the `BadRequestError` propagates out of the task (so Celery
-still records `FAILURE`, not a silent success) *and* the manager's `lottery_draw_failed` row lands,
-in one run.
+campaign hadn't closed yet confirmed the `BadRequestError` propagates and the `lottery_draw_failed`
+row lands, in one run. `7c7c3f5e19fc` (`add_lottery_draw_completed_to_notification_type`),
+`e4f8b2a6c9d1` (`drop_album_details_cover_image_url`), and `f1a7c3e9b5d2`
+(`add_order_shipped_to_notification_type`, this session's shipping-status work, item 43), and
+`a9d3f5b7c1e2` (`unique_shipping_status_order_id` — adds a unique constraint, item 43)
+have only been verified statically (`py_compile`, `alembic`'s own revision-chain check) so far — Docker
+Desktop's engine was unreachable for the usual throwaway-Postgres pass; worth a real
+`alembic upgrade head` run against all four once it's back.
 
 All 18 domain tables from `database-design.md` plus the pre-existing e-commerce tables are
 migrated. `schema.sql`, cited throughout `database-design.md` as "the reference DDL," doesn't
@@ -65,22 +70,27 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   Idol portraits and product covers are procedural placeholder art pushed through the real
   `get_storage().save()` pipeline — see `tests/fixtures/README.md`.
 - **Notifications** (`app/db/models/shared/notification.py`): a `notifications` table
-  (`database-design.md` §3.19) covering 10 event types, one nullable FK per referenced entity kind.
+  (`database-design.md` §3.19) covering 12 event types, one nullable FK per referenced entity kind.
   Producers fire inline (no cron/Beat job): `order_service.checkout()`,
   `ticket_service.checkout_ticket()`/`checkout_won_ticket()`, `user_service.verify_rtoken()`,
-  `lottery_draw_service.draw_lottery()` (result for every winner and loser, plus a payment
-  reminder for winners, fired at draw time rather than on a schedule closer to the deadline),
+  `lottery_draw_service.draw_lottery()` (`lottery_result` for every winner and loser, plus a
+  payment reminder for winners, fired at draw time rather than on a schedule closer to the
+  deadline; also calls `concert_service.notify_managers_of_draw_completion()` for
+  `lottery_draw_completed` right after its own commit lands — every manager at the concert's
+  company, not just whoever triggered it),
   `lottery_entry_service._stage_entry()` (`lottery_registered`, fired the moment a fan's entry is
   staged — shared by the single and batch apply endpoints, same commit as the entry itself),
   `concert_service.notify_managers_of_draw_trigger()` (`lottery_draw_triggered`, fired from the
   `PUT /concerts/lottery-draw/{id}` router the moment a manager/admin presses draw — every manager
   at the concert's own company gets one, not just whoever clicked, since the draw itself is
   fire-and-forget onto a Celery worker and this is the only record any of them get that one is now
-  in flight), and `concert_service.notify_managers_of_draw_failure()` (`lottery_draw_failed`,
+  in flight), `concert_service.notify_managers_of_draw_failure()` (`lottery_draw_failed`,
   called from `draw_lottery_task`'s own `except Exception` block in `app/tasks/lottery.py` —
   rolls back, notifies the same audience as the trigger notification, then re-raises the original
   exception so the task still surfaces as a Celery `FAILURE` rather than silently looking like a
-  success; see §8's updated Notifications note). Every
+  success; see §8's updated Notifications note), and `order_service.ship_order()`
+  (`order_shipped`, fired from `PATCH /order/{order_id}/ship` — the manager-facing "Ship" button,
+  §4 item 43 — to the order's own buyer, same commit as the status flip to `"shipped"`). Every
   write lands in the same commit as the event it describes. Fan-facing API:
   `GET /notifications/mine`, `GET /notifications/unread-count` (polled, no WebSocket/SSE layer),
   `POST /notifications/{id}/read`, `POST /notifications/read-all` — self-scoped, rate-limited.
@@ -806,6 +816,40 @@ newly introduced.
     (393/393) — the one test that inspects email body content
     (`test_user_service.py::test_reset_password_process`) only asserts the link substring is
     present, which still holds verbatim inside the new `<a href="...">` markup.
+
+43. ~~**`orders.shippingstatus` was never populated**~~ — **WRONG PREMISE, corrected; the real
+    bug was the opposite (duplicate rows) — FIXED**. This item originally claimed nothing ever
+    inserted a `shipping_status` row, based on a grep for `ShippingStatus(`. That grep missed
+    `payment_service.py`, which imports the model as `ModelShipStatus` and has always inserted one
+    in `PaymentService.create_payment` (every checkout, status set by the payment outcome) — and
+    `finalize_paypal_payment` inserted *another* on PayPal capture. The "fix" here (a third insert
+    in `OrderService.checkout()`) made every order carry 2–3 rows. With `Order.shippingstatus`
+    `uselist=False` and no unique constraint, which row loaded was arbitrary — a declined mock
+    order carried both `pending` and `cancelled`, so `ship_order` could ship an unpaid order
+    (`docs/bugs.md` #1).
+
+    Real fix: `create_payment` is the single creator of the row; the extra insert in `checkout()`
+    was removed; `finalize_paypal_payment` now updates the existing row (status + `updated_at`)
+    instead of inserting. Backstopped by migration `a9d3f5b7c1e2`, which adds
+    `uq_shipping_status_order_id` (no dedupe step — no orders were created while the duplicate-row
+    code was live). Regression
+    unit test: `test_order_finalize_updates_existing_shipping_status_not_insert`. Verified with
+    `py_compile`, ruff, and the unit suite (405/405) only — the migration has **not** been run
+    against a real Postgres yet (Docker was down), so run `alembic upgrade head` before relying on it.
+
+    Also added `ShippingStatusResponse.updated_at` (was `status`-only) so an order-detail page can
+    show *when* it shipped, not just that it did — this exposed a second, smaller issue:
+    `shipping_status.updated_at`'s `server_onupdate=func.now()` documents intent to SQLAlchemy but
+    isn't backed by an actual Postgres trigger, so it would never have actually updated on a status
+    change. Both `OrderService.update_shipping_status()` (the pre-existing admin free-form override)
+    and the new `ship_order()` now set `updated_at` explicitly rather than relying on that.
+
+    Verification: `py_compile` clean; full unit suite (404/404); `ship_order`'s control flow
+    (cross-company manager rejected, same-company manager succeeds + notifies, already-shipped
+    order rejected) exercised with a mocked session, since Docker was unavailable this session for
+    the usual throwaway-Postgres pass — worth a real live-DB run of a full checkout →
+    single_placed_order round trip once Docker's back, to confirm end to end rather than at the
+    schema/mock layer alone.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

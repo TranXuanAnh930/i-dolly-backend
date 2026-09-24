@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
@@ -13,7 +14,7 @@ from app.exception.checkout import (
     PaymentAmountMismatch,
     UnsupportedGatewayError,
 )
-from app.exception.common import BadRequestError, NotFoundError
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import (
     DuplicateIdempotencyKeyError,
     FanOnlyPurchaseError,
@@ -89,6 +90,9 @@ class OrderService:
         order = Order(user_id=user_id, shipping_address_id=payment_data.shipping_address_id, total_price=float(total_amount))
         db.add(order)
         flush_or_raise(db)
+        # No ShippingStatus row here — PaymentService.create_payment below is the
+        # single place that creates it (status depends on the payment outcome);
+        # adding one here too gave every order two rows.
 
         for item in cart_items:
         # Same tax-inclusive treatment as total_amount above — otherwise
@@ -171,9 +175,53 @@ class OrderService:
         if order_shippingstatus.status == SchemaShippingStatus.cancelled:
             raise BadRequestError("Order is cancelled and its shipping status can no longer be updated")
         order_shippingstatus.status = new_status
+        # server_onupdate=func.now() on this column documents intent to
+        # SQLAlchemy but isn't backed by an actual Postgres trigger — set
+        # explicitly, or ShippingStatusResponse.updated_at goes stale.
+        order_shippingstatus.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(order_shippingstatus)
         return order_shippingstatus
+
+    # --- manager-facing "Ship" button. Deliberately narrower than
+    # update_shipping_status above (admin-only, free-form to any status): a
+    # manager can only push pending/processing -> shipped, one button, no
+    # status picker, and only for an order that actually contains one of
+    # their own company's products — company-scoping resolved the same way
+    # as get_manager_orders_page below (ownerless products count as
+    # everyone's). Admins bypass the company check entirely, same as every
+    # other manager-scoped write in this codebase.
+
+    @staticmethod
+    def _manager_order_scope_violation(db: Session, order: Order, current_user: Users) -> bool:
+        if current_user.role != UserRole.manager:
+            return False
+        product_ids = {item.product_id for item in order.items}
+        products = db.query(Product).filter(Product.id.in_(product_ids)).all()
+        company_by_product = ProductService.resolve_product_company_ids(db, products)
+        return not any(company_id in (None, current_user.company_id) for company_id in company_by_product.values())
+
+    @staticmethod
+    def ship_order(db: Session, order_id: uuid.UUID, current_user: Users) -> Order:
+        order = (
+            db.query(Order)
+            .filter(Order.id == order_id)
+            .options(selectinload(Order.items), selectinload(Order.shippingstatus))
+            .first()
+        )
+        if not order:
+            raise NotFoundError("Order not found")
+        if OrderService._manager_order_scope_violation(db, order, current_user):
+            raise ForbiddenError("Managers can only ship orders containing their own company's products")
+        if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
+            current = order.shippingstatus.status.value if order.shippingstatus else "unknown"
+            raise BadRequestError(f"Order cannot be marked shipped from its current status ({current})")
+        order.shippingstatus.status = SchemaShippingStatus.shipped
+        order.shippingstatus.updated_at = datetime.now(timezone.utc)
+        NotificationService.create_notification(db, order.user_id, NotificationType.order_shipped, order_id=order.id)
+        db.commit()
+        db.refresh(order)
+        return order
 
     # --- manager/admin orders page. Product has no company_id of its own, so which orders
     # "belong" to a company is resolved the same way as ManagerProductsPage: via
@@ -200,7 +248,7 @@ class OrderService:
         orders = (
             db.query(Order)
             .filter(Order.id.in_(order_ids))
-            .options(selectinload(Order.items), selectinload(Order.user_item))
+            .options(selectinload(Order.items), selectinload(Order.user_item), selectinload(Order.shippingstatus))
             .order_by(Order.created_at.desc())
             .offset(offset)
             .limit(limit)
@@ -230,6 +278,7 @@ class OrderService:
                     for item in items
                 ],
                 company_total=sum(item.price * item.quantity for item in items),
+                shippingstatus=order.shippingstatus,
             ))
 
         return ManagerOrdersPageRead(page=page, limit=limit, count=len(data), data=data)
