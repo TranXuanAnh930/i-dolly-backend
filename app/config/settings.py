@@ -14,9 +14,7 @@ class Settings(BaseSettings):
     REDIS_PORT : int
     REDIS_DB : int
 
-    # Celery broker/result backend — same Redis instance as REDIS_HOST/PORT
-    # above, but a different DB index so task/result keys never collide with
-    # the product-list cache or rate-limiter counters living in REDIS_DB.
+    # Celery uses the same Redis instance on a separate DB index from the cache/rate limiter.
     CELERY_BROKER_DB: int = 1
     DATABASE_NAME : str
     DATABASE_USER : str
@@ -24,44 +22,30 @@ class Settings(BaseSettings):
     FROM_EMAIL : str
     RESEND_API_KEY : str
 
-    # Dev convenience only. `.env.example`'s RESEND_API_KEY is a placeholder, so a real send
-    # always fails locally — when true, send_email() prints the email body (verification/reset
-    # tokens included) to the console instead. Never set true in production.
+    # When true, send_email() prints emails (including tokens) to the console instead of sending.
+    # Dev only; never enable in production.
     DEBUG: bool = True
 
-    # Public base URL of this API — used to build links (e.g. the email
-    # verification link) that must resolve from outside the container.
-    # Defaults to local dev; override per-environment via .env.
+    # Public URL of this API, used in links sent by email.
     BASE_URL: str = "http://localhost:8000"
 
-    # Public base URL of the frontend — used to build PayPal's return_url/
-    # cancel_url (app/utils/paypal_client.py's create_order) so the buyer
-    # lands back on the SPA, not this API. Defaults to the local Vite dev
-    # port; override per-environment via .env.
+    # Public URL of the frontend, used for PayPal return/cancel URLs.
     FRONTEND_BASE_URL: str = "http://localhost:8080"
 
-    # Comma-separated list of frontend origins allowed to call this API
-    # cross-origin (see main.py's CORSMiddleware). Defaults to the local Vue
-    # dev port; set to the deployed frontend's real origin(s) in production —
-    # e.g. "https://my-frontend.vercel.app,https://staging.my-frontend.app".
+    # Comma-separated origins allowed by CORS, e.g. "https://app.example.com,https://staging.example.com".
     CORS_ORIGINS: str = "http://localhost:8080"
 
-    # --- image storage (see app/utils/storage.py) ------------------------
-    # "local" saves to LOCAL_UPLOAD_DIR, served back under LOCAL_UPLOAD_URL_PREFIX — fine for
-    # local dev, not durable for a multi-instance/ephemeral-filesystem deploy. Flip to "s3" for
-    # that; no call-site changes needed.
+    # --- image storage (app/utils/storage.py). "local" isn't durable on ephemeral hosts; use "s3".
     STORAGE_BACKEND: str = "local"  # "local" | "s3"
     LOCAL_UPLOAD_DIR: str = "uploads"
     LOCAL_UPLOAD_URL_PREFIX: str = "/uploads"
 
-    # S3 (or any S3-compatible provider: DigitalOcean Spaces, Cloudflare R2,
-    # MinIO, ...). All optional so a local-only .env keeps working — only
-    # required once STORAGE_BACKEND=s3.
+    # S3 or S3-compatible provider; required only when STORAGE_BACKEND=s3.
     S3_BUCKET_NAME: str | None = None
     S3_REGION: str | None = None
-    S3_ENDPOINT_URL: str | None = None  # set for an S3-compatible provider; leave unset for real AWS S3
-    S3_PUBLIC_URL_BASE: str | None = None  # CDN/custom domain fronting the bucket; falls back to a computed bucket URL when unset
-    AWS_ACCESS_KEY_ID: str | None = None  # falls back to boto3's normal credential chain (env, shared config, IAM role) if unset
+    S3_ENDPOINT_URL: str | None = None  # set for S3-compatible providers; unset for AWS
+    S3_PUBLIC_URL_BASE: str | None = None  # CDN/custom domain; defaults to the bucket URL
+    AWS_ACCESS_KEY_ID: str | None = None  # unset = boto3's default credential chain
     AWS_SECRET_ACCESS_KEY: str | None = None
 
     PAYPAL_CLIENT_ID: str | None = None

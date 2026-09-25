@@ -149,7 +149,7 @@ class TestAuthService:
         mock_user.is_verified = False
         db.query().filter().first.return_value = mock_user
 
-        with patch("app.services.identity.auth_service.verify_token_and_get_user_id", return_value=DEFAULT_ID):
+        with patch("app.services.identity.auth_service.decode_email_token", return_value=DEFAULT_ID):
             result = AuthService.verify_email_token(db, "valid-email-token")
 
         assert result is True
@@ -160,7 +160,7 @@ class TestAuthService:
         from app.services.identity.auth_service import AuthService
 
         db = MagicMock()
-        with patch("app.services.identity.auth_service.verify_token_and_get_user_id", return_value=None):
+        with patch("app.services.identity.auth_service.decode_email_token", return_value=None):
             result = AuthService.verify_email_token(db, "invalid-token")
         assert result is None
 

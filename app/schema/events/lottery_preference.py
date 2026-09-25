@@ -15,9 +15,7 @@ class LotteryPreferenceRead(BaseModel):
     model_config = {"from_attributes": True}
 
 class LotteryPreferenceSet(BaseModel):
-    """Fan submits their full ranked tier preference for one concert, in
-    order of preference. Replaces any existing preferences for
-    (concert_id, current_user) — see lottery_preference_service.set_preferences.
-    rank is derived from list position (1-indexed), not supplied by the fan."""
+    """A fan's full ranked list of tiers for one concert, replacing any previous ranking.
+    Rank is the list position (starting at 1)."""
     concert_id: uuid.UUID
     ticket_type_ids_in_order: list[uuid.UUID] = Field(..., min_length=1)

@@ -17,21 +17,21 @@ from app.services.marketplace.cart_service import CartService
 router = APIRouter(prefix="/cart", tags=["Cart"])
 
 @router.post("/add_cart", response_model=None)
-async def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db:Session=Depends(get_db)) -> Cart:
+def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db:Session=Depends(get_db)) -> Cart:
     try:
         return CartService.add_to_cart(db, cart_item, user.id)
     except (TriggerViolationError, ServiceError) as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/see_cart", response_model=CartDetailRead)
-async def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> CartDetailRead:
+def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> CartDetailRead:
     cart = CartService.see_cart(db, user.id)
     if not cart:
         raise HTTPException(status_code=404, detail="Cart is empty")
     return cart
 
 @router.delete("/delete_cart/{cart_id}", response_model=MessageResponse)
-async def delete_cart(cart_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> MessageResponse:
+def delete_cart(cart_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> MessageResponse:
     cart = CartService.remove_cart(db, user.id, cart_id)
     if not cart:
         raise HTTPException(status_code=404, detail="Cart item not found")

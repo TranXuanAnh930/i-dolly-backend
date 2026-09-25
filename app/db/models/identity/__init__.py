@@ -1,4 +1,4 @@
-"""Re-exports every public model class in this domain, so callers can do `from app.db.models.identity import X` instead of reaching into the individual submodule."""
+"""Re-exports this domain's model classes: `from app.db.models.identity import X`."""
 
 from .refresh_token import RefreshToken
 from .user import Users

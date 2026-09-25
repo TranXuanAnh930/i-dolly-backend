@@ -19,9 +19,7 @@ from app.schema.talent import (
 
 
 class _RefIssue(str, Enum):
-    """Private outcome type for `IdolService._validate_refs` — not a model column's value set, so
-    it stays local to this module rather than in `app/schema/`, same reasoning as any other
-    private-helper sentinel (`docs/architecture.md` §2)."""
+    """Result codes returned by IdolService._validate_refs."""
     company_not_found = "company_not_found"
     group_not_found = "group_not_found"
     company_mismatch = "company_mismatch"
@@ -30,10 +28,8 @@ class _RefIssue(str, Enum):
 
 class IdolService:
 
-    # Eager-loads exactly what IdolWithPositions needs so a page-shaped endpoint returns
-    # fully-formed idols in one query. Built lazily (called, not evaluated at import time) —
-    # this module loads early in main.py's router import chain, before routers that register
-    # unrelated models SQLAlchemy needs to resolve relationships have run.
+    # Eager-load options for IdolWithPositions. Built on call rather than at import, since this
+    # module is imported before every model is registered.
     @staticmethod
     def _with_positions_and_color() -> tuple[Any, ...]:
         return (
@@ -42,11 +38,9 @@ class IdolService:
             joinedload(Idol.group),
         )
 
-    # Error convention: NotFoundError for a missing referenced row; BadRequestError for
-    # "company_mismatch" (group_id belongs to a different company) or "group_inactive"
-    # (deactivated group, blocks new membership); ForbiddenError for a manager acting outside
-    # their own company. _validate_refs stays a private, sentinel-returning helper — its callers
-    # need to inspect and sometimes override its result before deciding it's an error.
+    # Raises NotFoundError (missing referenced row), BadRequestError (group belongs to another
+    # company, or group is inactive) and ForbiddenError (manager outside their company).
+    # _validate_refs returns a _RefIssue so callers can override its result before raising.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
@@ -61,15 +55,10 @@ class IdolService:
             group = db.get(Group, group_id)
             if not group:
                 return _RefIssue.group_not_found
-            # App-level invariant (database-design.md §3.4, not a DB constraint,
-            # matching this codebase's existing service-layer cross-field checks):
-            # if group_id is set, the idol's company_id must equal that group's
-            # company_id.
+            # An idol's company must match its group's company.
             if group.company_id != company_id:
                 return _RefIssue.company_mismatch
-            # A deactivated group is closed to new/changed membership — it can
-            # still be READ (existing members, past products/events), but an
-            # idol can't be newly assigned into it via add/update.
+            # Inactive groups can't gain new members.
             if not group.is_active:
                 return _RefIssue.group_inactive
         if color_id is not None:
@@ -97,23 +86,19 @@ class IdolService:
 
     @staticmethod
     def get_idols(db: Session) -> list[Idol]:
-        # Public "browse all idols" list — deactivated idols don't belong on a
-        # store-facing listing (database-design.md §3.4).
+        # Public list: active idols only.
         return db.query(Idol).filter(Idol.is_active.is_(True)).all()
 
     @staticmethod
     def get_idol(db: Session, id: uuid.UUID) -> Idol | None:
-        # Deliberately NOT filtered by is_active — see group_service.get_group's
-        # equivalent comment; a manager's edit form needs this to load a
-        # deactivated idol.
+        # Not filtered by is_active, so manager forms can load deactivated idols.
         return db.get(Idol, id)
 
-    # --- page-shaped reads (see idol.py schema's equivalent comment) ---
+    # --- page-shaped reads ---
 
     @staticmethod
     def get_members_page(db: Session) -> MembersPageRead | None:
-        # Store-facing browse page — same is_active filter as get_idols, plus
-        # the group-unit dropdown only offers active groups.
+        # Active idols only; the group dropdown lists active groups only.
         idols = db.query(Idol).options(*IdolService._with_positions_and_color()).filter(Idol.is_active.is_(True)).all()
         if not idols:
             return None
@@ -122,9 +107,7 @@ class IdolService:
 
     @staticmethod
     def get_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | None:
-        # Public idol profile page — a deactivated idol reads as "not found"
-        # here, same as get_idols/get_members_page; only the manager/admin
-        # settings surfaces (get_manager_idols_page, plain get_idol) still see it.
+        # Public profile: a deactivated idol is treated as not found.
         idol = (
             db.query(Idol)
             .options(*IdolService._with_positions_and_color())
@@ -139,8 +122,7 @@ class IdolService:
         siblings = siblings_query.options(*IdolService._with_positions_and_color()).all()
         return IdolDetailRead(idol=idol, group=group, siblings=siblings)
 
-    # --- manager/admin settings pages (see idol.py schema's equivalent comment
-    # — empty lists here are a normal state, not a 404).
+    # --- manager/admin settings pages (an empty list is a normal result, not a 404)
 
     @staticmethod
     def get_manager_idols_page(db: Session) -> ManagerIdolsPageRead:
@@ -161,15 +143,10 @@ class IdolService:
             raise NotFoundError("Idol not found")
         if IdolService._manager_scope_violation(current_user, db_idol.company_id):
             raise ForbiddenError("Managers can only manage idols for their own company")
-        # company_id is not part of IdolUpdate — reassigning an idol to a
-        # different company is a bigger operation than a profile edit and isn't
-        # exposed here; validate group/color against the idol's EXISTING company.
+        # company_id can't be changed here, so validate group/color against the existing company.
         error = IdolService._validate_refs(db, db_idol.company_id, data.group_id, data.color_id)
-        # IdolUpdate is a full-replace PUT, so data.group_id is resent unchanged
-        # on every ordinary edit — if the idol was already a member before its
-        # group got deactivated, that's not a new assignment and shouldn't block
-        # the rest of the edit. Only a genuine move INTO a deactivated group
-        # (data.group_id != the idol's current group_id) is rejected.
+        # IdolUpdate resends group_id on every edit; staying in an already-joined group that has
+        # since been deactivated is allowed, only moving into an inactive group is rejected.
         if error == _RefIssue.group_inactive and data.group_id == db_idol.group_id:
             error = None
         if error == _RefIssue.company_mismatch:
@@ -192,11 +169,7 @@ class IdolService:
 
     @staticmethod
     def delete_idol(db: Session, id: uuid.UUID, current_user: Users) -> Idol:
-        # Soft delete, not db.delete(): concert_performers CASCADEs off
-        # idols.id and album_details/merch_details SET NULL their idol_id —
-        # hard-deleting an idol with concert or product history would destroy
-        # or orphan that history. Deactivating in place keeps every FK target
-        # alive (database-design.md §3.4).
+        # Soft delete: concert and product history references the idol.
         db_idol = db.get(Idol, id)
         if not db_idol:
             raise NotFoundError("Idol not found")
@@ -220,9 +193,7 @@ class IdolService:
 
     @staticmethod
     def set_idol_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Idol:
-        """Used by POST /idols/{id}/image — updates only profile_image_url,
-        leaving every other field untouched (update_idol replaces the whole
-        profile from an IdolUpdate, which isn't what a plain image swap wants)."""
+        """Replace only the idol's profile image URL."""
         db_idol = db.get(Idol, id)
         if not db_idol:
             raise NotFoundError("Idol not found")

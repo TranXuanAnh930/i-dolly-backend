@@ -46,11 +46,8 @@ class PositionService:
         db.commit()
         return True
 
-    # --- idol_positions (join table) ---
-    # Company-scoped by the IDOL, the same way group/idol CRUD is (§4): a
-    # manager can only assign/change/remove a position on an idol belonging to
-    # their own company. NotFoundError -> 404, ForbiddenError (manager, wrong
-    # company) -> 403, BadRequestError (assign only, link already exists) -> 400.
+    # --- idol_positions (join table), scoped by the idol's company.
+    # Raises NotFoundError, ForbiddenError (manager, other company) or BadRequestError (link exists).
 
     @staticmethod
     def assign_idol_position(db: Session, data: IdolPositionAssign, current_user: Users) -> IdolPosition:

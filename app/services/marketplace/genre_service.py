@@ -12,10 +12,7 @@ from app.schema.marketplace import AlbumGenreAssign, GenreCreate
 
 class GenreService:
 
-    # genres: a global lookup table, not company-scoped — same rationale as
-    # idol_colors/positions (manager/admin-extensible without a migration).
-    # Already seeded (K-Pop, Pop, Dance, ... — schema.sql), so no need to
-    # re-seed via these endpoints.
+    # genres: global lookup table, not company-scoped.
 
     @staticmethod
     def add_genre(db: Session, data: GenreCreate) -> Genre:
@@ -38,8 +35,7 @@ class GenreService:
         db.commit()
         return True
 
-    # --- album_genres (join table) — scoped via the parent album_details row's
-    # idol/group company, same pattern as album_detail_service.
+    # --- album_genres (join table), scoped by the album's idol/group company.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:

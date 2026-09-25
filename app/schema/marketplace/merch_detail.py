@@ -10,7 +10,7 @@ class MerchDetailBase(BaseModel):
     color_id: uuid.UUID | None = None
 
 class MerchDetailCreate(MerchDetailBase):
-    product_id: uuid.UUID  # must reference an existing products row
+    product_id: uuid.UUID
     idol_id: uuid.UUID | None = None
     group_id: uuid.UUID | None = None
 
@@ -21,8 +21,7 @@ class MerchDetailCreate(MerchDetailBase):
         return self
 
 class MerchDetailUpdate(MerchDetailBase):
-    # idol_id/group_id deliberately excluded — ownership is immutable after
-    # creation, same convention as AlbumDetailUpdate.
+    # idol_id/group_id can't be changed after creation.
     pass
 
 class MerchDetailRead(MerchDetailBase):

@@ -18,10 +18,8 @@ class LotteryEntry(Base):
     status = Column(Enum(LotteryEntryStatus, name="lottery_entry_status_enum"), nullable=False, server_default="pending")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     drawn_at = Column(DateTime(timezone=True), nullable=True)
-    # NOTE: no UNIQUE(campaign_id, user_id) — the cap lives on
-    # lottery_campaigns.max_entries_per_user, enforced by a DB trigger
-    # (trg_lottery_entries_cap) and mirrored in lottery_entry_service for a
-    # clean 400 instead of a raw IntegrityError.
+    # No UNIQUE(campaign_id, user_id): the per-user cap is max_entries_per_user, enforced by
+    # trg_lottery_entries_cap and checked in lottery_entry_service.
 
     campaign = relationship("LotteryCampaign")
     user = relationship("Users")

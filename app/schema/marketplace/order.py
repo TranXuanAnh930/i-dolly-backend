@@ -33,12 +33,8 @@ class Order(BaseModel):
 
     model_config = {"from_attributes" : True}
 
-# --- manager/admin orders page (GET /order/manager-orders-page) — one row
-# per order that included at least one of the company's products, newest
-# first, with `items` narrowed to just that company's line items (not the
-# whole order — a manager shouldn't see what a customer also bought from
-# another company in the same checkout). Same page/limit/count/data
-# envelope as /products/pagination.
+# --- manager/admin orders page (GET /order/manager-orders-page): orders containing at least one
+# of the company's products, newest first, with `items` limited to that company's line items.
 
 class ManagerOrderItemRead(BaseModel):
     product_id: uuid.UUID
@@ -54,10 +50,7 @@ class ManagerOrderRead(BaseModel):
     created_at: datetime
     items: list[ManagerOrderItemRead]
     company_total: float
-    # None only for a pre-existing order somehow missing its ShippingStatus
-    # row (every new order gets one at checkout) — lets the manager UI's
-    # "Ship" button gate on it without assuming it's always present, same
-    # defensiveness as OrderService.ship_order's own check.
+    # None if the order has no ShippingStatus row.
     shippingstatus: ShippingStatusResponse | None
 
 class ManagerOrdersPageRead(BaseModel):

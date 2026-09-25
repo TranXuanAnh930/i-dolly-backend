@@ -17,12 +17,8 @@ class TicketStatus(str, Enum):
     used = "used"
 
 class TicketCreate(BaseModel):
-    """ADMIN-ONLY STOPGAP (database-design.md §7.4): the draw-job flow that
-    should issue a ticket to a lottery winner doesn't exist yet. This lets an
-    admin manually issue a ticket in the meantime — it is NOT the intended
-    long-term creation path for that case and should be replaced once the
-    draw job lands. Direct-sale purchases no longer go through this: see
-    ticket_service.checkout_ticket / POST /tickets/checkout."""
+    """Admin-only manual ticket issue. Fans buy through /tickets/checkout; lottery winners get
+    tickets from the draw."""
     ticket_type_id: uuid.UUID
     user_id: uuid.UUID
     lottery_entry_id: uuid.UUID | None = None
@@ -33,8 +29,7 @@ class TicketUpdate(BaseModel):
     payment_id: uuid.UUID | None = None
     payment_deadline_at: datetime | None = None
 
-# A fan buying a direct-sale ticket, mirroring PaymentCreate — no
-# shipping_address_id, since a ticket has nothing to ship.
+# Direct-sale ticket purchase (like PaymentCreate, without a shipping address).
 class TicketCheckoutCreate(BaseModel):
     ticket_type_id: uuid.UUID
     amount: int
@@ -42,10 +37,7 @@ class TicketCheckoutCreate(BaseModel):
     simulate_succ: bool | None = None
     idempotency_key: uuid.UUID
 
-# A lottery winner paying for the ticket draw_lottery already created for
-# them (status="pending_payment", lottery_entry_id set) — no ticket_type_id
-# here, unlike TicketCheckoutCreate, since the ticket (and its type) already
-# exist; the path param identifies which one.
+# Payment for a ticket the lottery draw already created; the ticket id comes from the path.
 class WonTicketCheckoutCreate(BaseModel):
     amount: int
     gateway: PaymentGateway = PaymentGateway.mock
@@ -64,24 +56,18 @@ class TicketRead(BaseModel):
     payment_deadline_at: datetime | None
     created_at: datetime
     updated_at: datetime
-    # Eager-loaded by every service function that returns a TicketRead
-    # (get_ticket/get_my_tickets/checkout_ticket) — same reasoning as
-    # Order.items on the order side: the frontend's ticket detail/history
-    # views need tier/price/concert_id and shouldn't have to make a second
-    # round trip for it.
+    # Eager-loaded by every service that returns a TicketRead.
     ticket_type: TicketTypeRead
 
     model_config = {"from_attributes": True}
 
-# --- manager-facing sales history (mirrors ProductSaleRead/ProductSalesPageRead
-# in schema/products.py) — one row per ticket, not per order, since a ticket
-# has no order/line-item concept of its own.
+# --- manager sales history: one row per ticket.
 class TicketSaleRead(BaseModel):
     ticket_id: uuid.UUID
     tier: TicketTier
     status: TicketStatus
     price: float
-    source: SaleMethod  # derived from lottery_entry_id, not a stored column
+    source: SaleMethod  # derived from the ticket type's sale method
     created_at: datetime
 
 class TicketSalesPageRead(BaseModel):

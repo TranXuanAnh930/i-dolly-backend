@@ -65,13 +65,16 @@ Don't re-derive these from the code — read the docs first, they're kept curren
   (`app/exception/common.py`) from a service, catch `ServiceError` once in the router and map it to
   an `HTTPException` — see `docs/architecture.md` §2. Don't reintroduce the old string-sentinel +
   router-side `_raise_for` pattern for new code.
+- Route handlers are plain `def`, not `async def`, unless they actually `await` something — the
+  stack below them is synchronous (`docs/architecture.md` §2).
 - Every new mutating/user-scoped query filters by `user_id` or `company_id` at the query level.
 - One concern per Alembic migration; enum types use the atomic idempotent `DO $$ ... EXCEPTION
   WHEN duplicate_object ...` pattern, not `checkfirst=True` (`docs/architecture.md` §4 has why).
 - New model files import `Base` from `app.db.base_class`, never `app.db.base`
   (`docs/architecture.md` §5 — this is a real circular-import trap, not a style nitpick).
-- Comment code the way the rest of this repo does when a decision isn't obvious from the code
-  alone — a one-line "why," not a restatement of what the line does.
+- Comments are short and describe what the code does, or a one-line "why" when it isn't obvious.
+  No history ("was X before", "previously"), no references to past sessions or bug-fix narratives —
+  that belongs in `docs/` (`project_status.md`, `bugs.md`), not in the source.
 
 ## 7. Scope control
 

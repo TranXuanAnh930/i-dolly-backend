@@ -39,7 +39,7 @@ from app.services.identity.auth_service import AuthService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # Startup: clean up expired refresh tokens
+    # Startup: delete expired and revoked refresh tokens.
     db = SessionLocal()
     try:
         AuthService.cleanup_expired_tokens(db)
@@ -51,32 +51,20 @@ app = FastAPI(title="i-dolly-backend", lifespan=lifespan)
 
 origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
 
-# 2. Add CORSMiddleware to your FastAPI application
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,           # Allows specific origins
-    allow_credentials=True,          # Allows cookies/authorization headers
-    allow_methods=["*"],             # Allows all HTTP methods (GET, POST, etc.)
-    allow_headers=["*"],             # Allows all request headers
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Without this, request.client.host (and so app.cache.rate_limit.ip_key) is
-# whoever connects to this container directly — in production that's
-# Render's own edge, not the visitor's browser, so every visitor would share
-# one IP-scoped rate-limit bucket (see docs/project_status.md §4 item 2).
-# trusted_hosts="*" is deliberate, not lazy: nothing but Render's own
-# internal network can open a raw TCP connection to this container in the
-# first place, so "trust whoever connects directly" is equivalent to "trust
-# Render" here, not "trust the public internet." Confirmed working via
-# TestClient before wiring in for real: X-Forwarded-For's leftmost entry
-# becomes request.client.host, and `app` stays the same FastAPI instance
-# afterward (add_middleware wraps lazily, doesn't reassign `app`), so nothing
-# else (tests, `uvicorn main:app`) needs to change.
+# Sets request.client.host from X-Forwarded-For so IP rate limits see the visitor, not Render's
+# proxy. With trusted_hosts="*" uvicorn takes the leftmost hop, which a client can spoof
+# (docs/bugs.md #7).
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# Serves uploaded idol/product images back out when STORAGE_BACKEND=local
-# (app/utils/storage.py). Nothing to mount for STORAGE_BACKEND=s3 — those
-# URLs point straight at the bucket/CDN instead.
+# Serves uploaded images when STORAGE_BACKEND=local; S3 URLs point at the bucket directly.
 if settings.STORAGE_BACKEND == "local":
     Path(settings.LOCAL_UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
     app.mount(settings.LOCAL_UPLOAD_URL_PREFIX, StaticFiles(directory=settings.LOCAL_UPLOAD_DIR), name="uploads")

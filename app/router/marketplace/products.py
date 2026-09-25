@@ -30,41 +30,38 @@ from app.utils.storage import StorageError, get_storage
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
-# FRONTEND: not currently called by i-dolly-frontend. The catalog store used to
-# fetch this alongside /album_details/all and merge the two client-side; it now
-# reads /products/store-page, which embeds each product's album, resolved
-# artist and genres already.
+# Not used by the frontend.
 @router.get("/all", response_model=List[ProductRead])
-async def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
+def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
     db_products = CacheService.get_cached_products(db)
     if not db_products:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
 @router.get("/store-page", response_model=StorePageRead)
-async def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)) -> StorePageRead:
+def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)) -> StorePageRead:
     result = CacheService.get_cached_store_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="Products not found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
-async def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> ProductDetailRead:
+def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> ProductDetailRead:
     result = CacheService.get_cached_product_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
 
 @router.get("/manager-products-page", response_model=ManagerProductsPageRead)
-async def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductsPageRead:
+def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductsPageRead:
     return CacheService.get_cached_manager_products_page(db, company_id)
 
 @router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
-async def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductFormPageRead:
+def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductFormPageRead:
     return CacheService.get_cached_manager_product_form_page(db, company_id)
 
 @router.get("/{id}/sales", response_model=ProductSalesPageRead)
-async def get_product_sales(
+def get_product_sales(
     id: uuid.UUID,
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
@@ -76,22 +73,17 @@ async def get_product_sales(
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-# FRONTEND: not currently called by i-dolly-frontend — no dedicated
-# "search by id" flow exists (/products/{id}/detail is used instead).
+# Not used by the frontend.
 @router.get("/search/{id:uuid}", response_model=ProductWithCategoryRead)
-async def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> ProductWithCategoryRead:
+def search_existing_product(id:uuid.UUID, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> ProductWithCategoryRead:
     db_product = ProductService.search_product(db, id)
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     return db_product
 
-# multipart/form-data, not JSON — mirrors idols.py: an optional `image`
-# file alongside the rest of the product fields in the same request.
-# FastAPI can't mix a JSON body with Form/File fields on one endpoint, so
-# this replaced the previous plain-JSON version; any client posting here
-# now sends form fields, not a JSON body.
+# multipart/form-data (product fields plus an optional image file).
 @router.post("/add_product", response_model=MessageResponse)
-async def add_new_product(
+def add_new_product(
     name: str = Form(...),
     price: float = Form(...),
     description: str = Form(...),
@@ -104,7 +96,7 @@ async def add_new_product(
     image_url = None
     if image is not None:
         try:
-            image_url = await get_storage().save(image, subfolder="products")
+            image_url = get_storage().save(image, subfolder="products")
         except StorageError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -121,13 +113,10 @@ async def add_new_product(
     CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product added successfully")
 
-# Bundles product creation with its AlbumDetail/MerchDetail row into one
-# request (see ProductWithDetailCreate's own docstring for why) —
-# ManagerProductFormPage.vue's "add product" form uses this, not the bare
-# /add_product above, so a product created there always ends up attached to
-# one of the manager's own idols/groups.
+# Creates a product and its AlbumDetail/MerchDetail row in one request; used by the manager
+# "add product" form.
 @router.post("/add_with_detail", response_model=MessageResponse)
-async def add_new_product_with_detail(
+def add_new_product_with_detail(
     name: str = Form(...),
     price: float = Form(...),
     description: str = Form(...),
@@ -158,7 +147,7 @@ async def add_new_product_with_detail(
     image_url = None
     if image is not None:
         try:
-            image_url = await get_storage().save(image, subfolder="products")
+            image_url = get_storage().save(image, subfolder="products")
         except StorageError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -172,7 +161,7 @@ async def add_new_product_with_detail(
     return MessageResponse(msg="Product added successfully")
 
 @router.put("/update/{id}", response_model=MessageResponse)
-async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
+def update_existing_product(id:uuid.UUID, product:ProductCreate, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     try:
         ProductService.update_product(db, id, product, current_user)
     except ServiceError as e:
@@ -183,11 +172,10 @@ async def update_existing_product(id:uuid.UUID, product:ProductCreate, current_u
     return MessageResponse(msg="Product Updated successfully")
 
 @router.post("/{id}/image", response_model=MessageResponse)
-async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
-    """Replace an existing product's image without touching any other
-    field — the complement to the inline upload on /products/add_product."""
+def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
+    """Replace a product's image only."""
     try:
-        image_url = await get_storage().save(image, subfolder="products")
+        image_url = get_storage().save(image, subfolder="products")
     except StorageError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     try:
@@ -200,7 +188,7 @@ async def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), curr
     return MessageResponse(msg="Product image updated successfully")
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
-async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
+def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     try:
         ProductService.delete_product(db, id, current_user)
     except ServiceError as e:
@@ -210,10 +198,9 @@ async def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(requi
     CacheService.delete_cached_product_details()
     return MessageResponse(msg="Product Deleted successfully")
 
-# FRONTEND: not currently called by i-dolly-frontend — products are always
-# created one at a time (/add_product or /add_with_detail).
+# Not used by the frontend.
 @router.post("/bulk_products", response_model=MessageResponse)
-async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
+def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
     try:
         db_product = ProductService.add_bulk_products(db, product)
     except ServiceError as e:
@@ -223,10 +210,9 @@ async def add_new_bulk_products(product:List[ProductCreate], current_user:Users=
     CacheService.delete_cached_product_details()
     return MessageResponse(msg=f"{len(db_product)} bulk products added successfully")
 
-# FRONTEND: not currently called by i-dolly-frontend — the Store grid uses
-# the unpaginated /products/store-page bundle instead.
+# Not used by the frontend.
 @router.get("/pagination", response_model=ProductsPageRead)
-async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> ProductsPageRead:
+def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> ProductsPageRead:
     db_product = ProductService.pagination_process(db, page, limit)
     return ProductsPageRead(
         page=page,
@@ -235,10 +221,9 @@ async def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, l
         data=db_product,
     )
 
-# FRONTEND: not currently called by i-dolly-frontend — the Store grid
-# filters client-side over the /products/store-page bundle instead.
+# Not used by the frontend.
 @router.get("/filter", response_model=ProductsPageRead)
-async def filter_product(
+def filter_product(
     category:str,
     name:str | None = None,
     min_price:int | None = None,

@@ -12,8 +12,7 @@ from app.schema.identity import UserRole
 
 class LotteryCampaignService:
 
-    # Company-scoped via a two-level join: ticket_type_id -> concert_id ->
-    # concert.company_id (database-design.md's dual-FK scoping note).
+    # Company-scoped via ticket_type -> concert.company_id.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
@@ -47,8 +46,7 @@ class LotteryCampaignService:
 
     @staticmethod
     def get_campaigns(db: Session, ticket_type_id: uuid.UUID) -> list[LotteryCampaign]:
-        # joinedload since LotteryCampaignRead now embeds ticket_type — without
-        # it, serializing a multi-row result would lazy-load it once per row.
+        # Eager-load ticket_type, which LotteryCampaignRead embeds.
         return (
             db.query(LotteryCampaign)
             .options(joinedload(LotteryCampaign.ticket_type))

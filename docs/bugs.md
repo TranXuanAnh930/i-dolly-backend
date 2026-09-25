@@ -19,14 +19,25 @@ they're fixed.
   (`product_service.py:206`). Any manager can do this to ownerless merch. Same class as item 17.
 - [ ] **3. Cart IDOR.** `CartService.remove_cart` (`cart_service.py:51`) filters only by
   `Cart.id`; `user_id` is accepted but unused — any user can delete anyone's cart row.
-- [ ] **4. Lottery apply ignores entry window and campaign status.** `_stage_entry`
+- [x] **4. Lottery apply ignores entry window and campaign status.** `_stage_entry`
   (`lottery_entry_service.py:31`) never checks `entry_start_at`/`entry_end_at`/`status == open`;
   no trigger does either. A post-draw entry stays `pending` forever and then blocks direct-sale
   purchase for that concert via `_unresolved_lottery_entry`.
-- [ ] **5. Editing preferences breaks the concert's draw.** `set_preferences`/`clear_my_preferences`
+  **FIXED in the service**: `_stage_entry` loads the campaign `FOR SHARE` and rejects applies unless
+  `status == open` and now is inside the entry window. The share lock serializes an apply against
+  the draw's `FOR UPDATE`; `tests/integration/events/test_lottery_apply_window.py` races the two
+  against real Postgres (and fails if the lock is removed). Still open: no DB trigger backstop, and
+  any entries already stuck as `pending` on a non-open campaign need a one-off cleanup.
+- [x] **5. Editing preferences breaks the concert's draw.** `set_preferences`/`clear_my_preferences`
   work even with pending entries; the draw's `next(p for p in preferences ...)`
   (`lottery_draw_service.py:55`) then raises `StopIteration` and aborts for everyone. Also allows
   re-ranking after entries close.
+  **FIXED**: `set_preferences`/`clear_my_preferences` run `_check_ranking_change_allowed`. Campaigns
+  of the current and new tiers are loaded `FOR SHARE`; any closed/drawn campaign rejects the change;
+  every newly ranked tier needs an open campaign whose window has started (fans rank through an
+  existing campaign); removing a tier with a pending entry is rejected.
+  `tests/integration/events/test_lottery_preference_guard.py` covers it against real Postgres,
+  including a race against the draw's lock (fails if the lock is removed).
 - [x] **6. Same fan can win twice in one tier.** With `max_entries_per_user > 1`,
   `sample(candidates, ...)` can pick two entries of one user (`won_user_ids` is only checked when
   building candidates) → `trg_tickets_one_per_concert` fails the whole commit.
@@ -47,6 +58,14 @@ they're fixed.
 
 - [ ] **9. `async def` routes doing sync work.** All 161 async handlers call sync SQLAlchemy,
   bcrypt, PayPal httpx and boto3 → block the event loop. Plain `def` routes would use the threadpool.
+  **HANDLERS FIXED**: all 162 route handlers are `def` (`architecture.md` §2). The 6 that
+  awaited something were converted too: `storage.save()` is now sync, and the webhook reads its
+  body in an async dependency. Verified via TestClient that uploads and the webhook run in the
+  threadpool. S3 uploads now read at most MAX+1 bytes (fixes the whole-file-in-memory smell below).
+  Still open:
+  - Set `pool_size`/`max_overflow` explicitly in `app/db/session.py`. The default pool of 15 DB
+    connections is smaller than the threadpool's roughly 40 concurrent requests.
+  - Add the missing `checkout_ticket` race test, now that routes really run concurrently.
 - [ ] **10. `DEBUG` defaults to `True`** (`settings.py`), contradicting `deployment.md` and the
   `email_sender.py` comment. An env missing `DEBUG` prints reset tokens to logs and sends no email.
 - [ ] **11. Redis outage → 500s.** `CacheService` has no `RedisError` handling. Invalidation runs
@@ -83,15 +102,16 @@ they're fixed.
 
 - Money as `float` (`total_price=float(...)`, `with_tax(float(...))`).
 - Read-only `/payment/status/*` endpoints use `PATCH`.
-- Empty lists return 404 (`/order/fetch_placed_order`, `/payment/status/all`).
+- ~~Empty lists return 404 (`/order/fetch_placed_order`, `/payment/status/all`)~~ — fixed, both return `[]`.
 - `/account/verify` returns 401 for "already verified".
 - No `logging` anywhere in `app/` — `print()` only; email failures swallowed, never retried.
-- `verify_token_and_get_user_id` / `verify_rtoken_and_get_user_id` near-duplicates with an unused
-  `token_type` param.
-- `CacheService` ↔ services import each other (layering cycle).
+- ~~`verify_token_and_get_user_id` / `verify_rtoken_and_get_user_id` near-duplicates~~ — fixed:
+  merged into `jwt_manager.decode_email_token(token, expected_type)`.
+- ~~`CacheService` ↔ services import each other~~ — fixed: invalidation split into
+  `app/cache/invalidation.py` (Redis only); `CacheService` inherits it (`architecture.md` §2).
 - Upload extension taken from client filename (`storage.py:46`) — `.html` with
   `Content-Type: image/png` gets served as HTML by `StaticFiles` on the API origin (stored XSS).
-  Derive ext from the whitelisted content type. S3 path reads the whole upload before size check.
+  Derive ext from the whitelisted content type. ~~S3 path reads the whole upload before size check~~ (fixed with #9).
 - PayPal `pg_payment_id` set from `generate_mock_id()` instead of the real capture id (needed for
   refunds).
 - `MAX_RANK` upper-case local; `create_order` currency default `"USD"` while all callers pass

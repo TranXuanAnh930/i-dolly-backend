@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.cache.cache_service import CacheService
+from app.cache.invalidation import CacheInvalidation
 from app.db.models.events import Ticket, TicketType
 from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product
 from app.db.models.marketplace import ShippingStatus as ModelShipStatus
@@ -23,7 +23,7 @@ class PaymentService:
 
     @staticmethod
     def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> Payment:
-        # Deliberately does not commit
+        # Doesn't commit; the caller does.
         gateway = PaymentGateway(data.gateway)
         pg_approval_url = None
         if gateway == PaymentGateway.mock:
@@ -42,7 +42,6 @@ class PaymentService:
                 order.status = OrderStatus.confirmed
                 shipstatus = ModelShipStatus(order_id=order.id, status=SchemaShipStatus.pending)
         elif gateway == PaymentGateway.paypal:
-            # Handle PayPal-specific logic here
             payment_status = PaymentStatus.pending
             order_response = create_order(str(data.amount), "JPY")
             pg_order_id = order_response["id"]
@@ -71,9 +70,8 @@ class PaymentService:
 
     @staticmethod
     def create_ticket_payment(db:Session, user_id:uuid.UUID, ticket:Ticket, data:TicketCheckoutCreate | WonTicketCheckoutCreate) -> Payment:
-        # Deliberately does not commit — the caller holds a row lock on ticket_type for the whole
-        # operation and commits once at the end, so the lock is never released mid-flow. Requires
-        # ticket.id already populated (the caller flushes right after adding the ticket).
+        # Doesn't commit: the caller holds a lock on the ticket type and commits once at the end.
+        # Requires ticket.id to be populated (the caller flushes first).
         gateway = PaymentGateway(data.gateway)
         payment_status = PaymentStatus.pending
         pg_approval_url = None
@@ -93,7 +91,6 @@ class PaymentService:
                 pg_signature = ids["signature_id"]
                 ticket.status = TicketStatus.paid
         elif gateway == PaymentGateway.paypal:
-            # Handle PayPal-specific logic here
             order_response = create_order(str(data.amount), "JPY")
             pg_order_id = order_response["id"]
             pg_approval_url = extract_approval_url(order_response)
@@ -114,7 +111,7 @@ class PaymentService:
             idempotency_key=data.idempotency_key,
         )
         db.add(payment)
-        db.flush()  # need payment.id before linking it below
+        db.flush()  # populates payment.id
         ticket.payment_id = payment.id
         return payment
 
@@ -146,14 +143,11 @@ class PaymentService:
                 return None
             elif ticket_type.sale_method == SaleMethod.lottery:
                 if ticket.payment_deadline_at and ticket.payment_deadline_at < datetime.now(timezone.utc):
-                    # Lazily discovered past the deadline — no sweep job exists yet
-                    # (database-design.md §5.2's "deliberately not built this phase")
-                    # to release this slot otherwise, so this is the one place that
-                    # does it: expire the ticket and free the seat it was holding.
+                    # Past the deadline: expire the ticket and release its seat.
                     ticket.status = TicketStatus.expired
                     ticket_type.sold_quantity -= 1
                     commit_or_raise(db)
-                    CacheService.delete_cached_concert_detail(ticket_type.concert_id)  # released a seat
+                    CacheInvalidation.delete_cached_concert_detail(ticket_type.concert_id)
                     return None
 
             paypal_payment = capture_order(pg_order_id)
@@ -207,8 +201,7 @@ class PaymentService:
                 payment.status = PaymentStatus.failed
                 order.status = OrderStatus.cancelled
                 new_ship_status = SchemaShipStatus.cancelled
-            # Update the row create_payment already made at checkout, never insert a
-            # second one — shipping_status.order_id is UNIQUE (one row per order).
+            # Update the order's existing shipping_status row (one per order).
             shipstatus = db.query(ModelShipStatus).filter(ModelShipStatus.order_id == order.id).first()
             if shipstatus is None:
                 shipstatus = ModelShipStatus(order_id=order.id)
@@ -219,13 +212,10 @@ class PaymentService:
         commit_or_raise(db)
         if payment.status == PaymentStatus.success:
             if payment.ticket_id:
-                # ticket_types[].sold_quantity moved (direct sale) — it's part
-                # of the cached concert detail bundle.
-                CacheService.delete_cached_concert_detail(ticket_type.concert_id)
+                # sold_quantity is part of the cached concert detail.
+                CacheInvalidation.delete_cached_concert_detail(ticket_type.concert_id)
             else:
-                # Stock changed, so both the list/store-page caches AND every
-                # product detail page (ProductCard.quantity is embedded there
-                # too) are now stale.
-                CacheService.delete_cached_products()
-                CacheService.delete_cached_product_details()
+                # Stock changed: clear both the list pages and the product detail pages.
+                CacheInvalidation.delete_cached_products()
+                CacheInvalidation.delete_cached_product_details()
         return payment

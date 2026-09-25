@@ -35,8 +35,7 @@ class ShippingStatus(Base):
 
     orderid = relationship("Order", back_populates="shippingstatus")
 
-    # One row per order: Order.shippingstatus is uselist=False, so a second row
-    # made which one loaded arbitrary (docs/bugs.md #1).
+    # One row per order (Order.shippingstatus is a one-to-one relationship).
     __table_args__ = (
         UniqueConstraint("order_id", name="uq_shipping_status_order_id"),
     )

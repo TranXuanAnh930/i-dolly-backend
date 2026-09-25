@@ -54,8 +54,7 @@ class ConcertPerformerRead(BaseModel):
 
     model_config = {"from_attributes": True}
 
-# --- page-shaped reads — one bundled response per screen (see idol.py's
-# equivalent comment).
+# --- page-shaped reads: one bundled response per screen.
 
 class ConcertWithVenue(ConcertRead):
     venue: VenueRead
@@ -63,10 +62,7 @@ class ConcertWithVenue(ConcertRead):
 class EventsPageRead(BaseModel):
     concerts: list[ConcertWithVenue]
 
-# An idol actually performing at the concert — a group credit expands to
-# that group's current members, a solo credit is just that one idol
-# (concert_service.get_concert_detail_public does the expansion/dedup; this is
-# only the shape the lineup list needs, not a full IdolRead).
+# One idol in a concert's lineup (group credits expanded to members by concert_service).
 class LineupIdol(BaseModel):
     id: uuid.UUID
     name: str
@@ -83,28 +79,17 @@ class ConcertDetailRead(BaseModel):
     ticket_types: list[TicketTypeRead]
     lineup: list[LineupIdol]
     performing_groups: list[PerformingGroupMini]
-    # Every campaign across every tier on this concert — not scoped to "the
-    # currently open one" server-side, since which campaign is relevant
-    # (open now vs. most recent past one) is a display decision the caller
-    # makes, same as before this was embedded here. Bundled in so a concert
-    # page never needs a second (or per-tier) request just for campaigns.
+    # Every campaign on every tier; the client decides which one to display.
     lottery_campaigns: list[LotteryCampaignRead] = []
     direct_sale_campaigns: list[DirectSaleCampaignRead] = []
-    # Everything below is personalized for whoever's logged in — all empty/
-    # False for a guest, never requires auth to view the rest of this page.
-    # Lets the frontend disable the Apply CTA for a fan who's already
-    # bought a ticket or won the lottery, and lets LotteryEntryPage.vue
-    # pre-fill an existing ranking/entry without its own separate calls.
+    # Per-viewer fields: always False/empty for guests.
     has_ticket: bool = False
     has_won_lottery: bool = False
     entered_campaign_ids: list[uuid.UUID] = []
     my_lottery_preferences: list[LotteryPreferenceRead] = []
 
-# --- manager/admin settings page — ManagerEventsPage's table and
-# ManagerEventFormPage's venue <select> both need the full venues list
-# separately from concerts (a venue not yet booked for any concert must
-# still appear in the dropdown), so venues aren't embedded per-concert here
-# the way ConcertWithVenue does. An empty list is a normal state, not a 404.
+# --- manager/admin settings page. Venues are listed separately so unbooked venues still appear
+# in the form's dropdown. An empty list is a normal result, not a 404.
 class ManagerEventsPageRead(BaseModel):
     concerts: list[ConcertRead]
     venues: list[VenueRead]

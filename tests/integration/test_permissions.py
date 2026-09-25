@@ -915,6 +915,8 @@ def test_set_preferences_success_then_list_then_clear(factory):
     concert = factory.concert(company.id, venue.id)
     vip = factory.ticket_type(concert.id, tier="vip", sale_method="lottery")
     premium = factory.ticket_type(concert.id, tier="premium", sale_method="lottery")
+    factory.lottery_campaign(vip.id)
+    factory.lottery_campaign(premium.id)
 
     set_response = client.post(
         "/lottery_preferences/set",
@@ -937,6 +939,21 @@ def test_set_preferences_success_then_list_then_clear(factory):
     factory.created = [obj for obj in factory.created if not isinstance(obj, LotteryPreference)]  # already deleted by the request above
 
     assert client.get(f"/lottery_preferences/mine/{concert.id}", headers=factory.token(fan)).status_code == 404
+
+
+def test_set_preferences_tier_without_campaign_not_found(factory):
+    fan = factory.user(role="fan")
+    company = factory.company()
+    venue = factory.venue()
+    concert = factory.concert(company.id, venue.id)
+    tt = factory.ticket_type(concert.id, sale_method="lottery")
+
+    response = client.post(
+        "/lottery_preferences/set",
+        json={"concert_id": str(concert.id), "ticket_type_ids_in_order": [str(tt.id)]},
+        headers=factory.token(fan),
+    )
+    assert response.status_code == 404
 
 
 def test_list_my_preferences_none_set(factory):

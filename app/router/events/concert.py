@@ -25,15 +25,11 @@ from app.schema.events import (
 )
 from app.services.events.concert_service import ConcertService
 
-# Company-scoped exactly like groups/idols (database-design.md §4): a manager
-# may only create/edit/delete concerts for their own company_id; admins are
-# unrestricted. venues/idols/groups referenced must exist (concert_service
-# validates FKs explicitly since we're not relying on a live DB round-trip
-# to surface a clean 404 instead of an IntegrityError).
+# Managers can only create/edit/delete their own company's concerts; admins are unrestricted.
 router = APIRouter(prefix="/concerts", tags=["Concerts"])
 
 @router.post("/add", response_model=ConcertRead)
-async def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Concert:
+def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Concert:
     try:
         result = ConcertService.add_concert(db, concert, current_user)
     except ServiceError as e:
@@ -42,35 +38,29 @@ async def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(
     CacheService.delete_cached_manager_events_page()
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend. The concerts store used
-# to pull this whole table just to answer single-concert lookups; it now caches
-# by id off GET /concerts/{id}. List views use /events-page (fans) and
-# /manager-events-page (managers/admins).
+# Not used by the frontend.
 @router.get("/all", response_model=List[ConcertRead])
-async def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Concert]:
+def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Concert]:
     result = ConcertService.get_concerts(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/events-page", response_model=EventsPageRead)
-async def get_events_page_data(db: Session = Depends(get_db)) -> EventsPageRead:
+def get_events_page_data(db: Session = Depends(get_db)) -> EventsPageRead:
     result = CacheService.get_cached_events_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/manager-events-page", response_model=ManagerEventsPageRead)
-async def get_manager_events_page_data(db: Session = Depends(get_db)) -> ManagerEventsPageRead:
+def get_manager_events_page_data(db: Session = Depends(get_db)) -> ManagerEventsPageRead:
     return CacheService.get_cached_manager_events_page(db)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
-async def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), db: Session = Depends(get_db)) -> ConcertDetailRead:
-    # The cached part (concert/venue/ticket_types/lineup/campaigns) is identical for every
-    # viewer, guest or fan. has_ticket/has_won_lottery/entered_campaign_ids/
-    # my_lottery_preferences are always computed fresh, never cached — merging a logged-in
-    # fan's own state onto a cache hit is safe; caching it would leak one fan's state to
-    # whoever's request happens to hit the same cache entry next.
+def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), db: Session = Depends(get_db)) -> ConcertDetailRead:
+    # The cached part is identical for every viewer; per-viewer fields are computed fresh each
+    # request so one fan's state is never cached and served to another.
     result = CacheService.get_cached_concert_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Concert not found")
@@ -81,14 +71,14 @@ async def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = D
     return result
 
 @router.get("/{id}", response_model=ConcertRead)
-async def get_concert_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Concert:
+def get_concert_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Concert:
     concert = ConcertService.get_concert(db, id)
     if not concert:
         raise HTTPException(status_code=404, detail="Concert not found")
     return concert
 
 @router.put("/update/{id}", response_model=ConcertRead)
-async def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Concert:
+def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> Concert:
     try:
         result = ConcertService.update_concert(db, id, data, current_user)
     except ServiceError as e:
@@ -99,12 +89,8 @@ async def update_existing_concert(id: uuid.UUID, data: ConcertUpdate, current_us
     return result
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
-async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
-    # Cancels (sets status="cancelled") rather than deleting the row — see
-    # concert_service.delete_concert. Kept on DELETE /delete/{id} for URL
-    # stability with existing clients; a manager can move the status off
-    # "cancelled" again via PUT /concerts/update/{id} same as any other
-    # status change.
+def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
+    # Cancels the concert (status="cancelled") instead of deleting it; see delete_concert.
     try:
         ConcertService.delete_concert(db, id, current_user)
     except ServiceError as e:
@@ -115,47 +101,38 @@ async def delete_existing_concert(id: uuid.UUID, current_user: Users = Depends(r
     return MessageResponse(msg="Concert cancelled successfully")
 
 
-# --- concert_performers (join table) — nested under /concerts/performers,
-# same rationale as idol_positions: no independent identity outside the
-# (concert, idol|group) pair it links. Scoped via the parent concert's
-# company_id (concert_service._manager_scope_violation).
+# --- concert_performers (join table), scoped via the parent concert's company.
 
-# FRONTEND: not currently called by i-dolly-frontend. A concert's lineup
-# shows up in the UI (EventDetailPage) only as data already embedded in
-# GET /concerts/{id}/detail — this join-table CRUD itself is unused (a
-# concert's performers must be assigned some other way today, e.g. directly
-# in the DB, since there's no frontend form for it).
+# Not used by the frontend.
 @router.post("/performers/assign", response_model=ConcertPerformerRead)
-async def assign_concert_performer(data: ConcertPerformerAssign, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> ConcertPerformer:
+def assign_concert_performer(data: ConcertPerformerAssign, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> ConcertPerformer:
     try:
         result = ConcertService.assign_performer(db, data, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    CacheService.delete_cached_concert_detail(data.concert_id)  # lineup/performing_groups changed
+    CacheService.delete_cached_concert_detail(data.concert_id)
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.get("/performers/concert/{concert_id}", response_model=List[ConcertPerformerRead])
-async def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ConcertPerformer]:
+def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_performers(db, concert_id)
     if not result:
         raise HTTPException(status_code=404, detail="This concert has no performers assigned")
     return result
 
-# Bulk read — lets a client that needs to know which concerts feature a
-# given idol/group (e.g. a group's detail page) fetch every performer link
-# in one request instead of looping over every concert.
-# FRONTEND: not currently called by i-dolly-frontend.
+# Every performer link across all concerts, in one request.
+# Not used by the frontend.
 @router.get("/performers/all", response_model=List[ConcertPerformerRead])
-async def list_all_concert_performers(db: Session = Depends(get_db)) -> list[ConcertPerformer]:
+def list_all_concert_performers(db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_all_performers(db)
     if not result:
         raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.delete("/performers/{id}", response_model=MessageResponse)
-async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
+def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         result = ConcertService.remove_performer(db, id, current_user)
     except ServiceError as e:
@@ -165,29 +142,18 @@ async def unassign_concert_performer(id: uuid.UUID, current_user: Users = Depend
 
 
 @router.put("/lottery-draw/{id}", response_model=MessageResponse)
-async def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
-    # Company-scoping has to happen HERE, synchronously, not inside the
-    # Celery task — draw_lottery's own _user_scope_violation check runs in
-    # the worker process, with no way to turn a rejection back into an HTTP
-    # response for a caller who's already gotten back "scheduled". Without
-    # this, a manager from a different company got a 200 for a task that
-    # silently no-oped in the worker (caught by
-    # test_permissions.py::test_draw_lottery_cross_company_manager_forbidden).
+def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> MessageResponse:
+    # Company scoping is checked here, synchronously: a rejection inside the Celery task couldn't
+    # be returned to the caller.
     concert = ConcertService.get_concert(db, id)
     if not concert:
         raise HTTPException(status_code=404, detail="Concert not found")
     if ConcertService._manager_scope_violation(current_user, concert.company_id):
         raise HTTPException(status_code=403, detail="Managers can only manage concerts for their own company")
 
-    # Every manager at this company gets a lottery_draw_triggered notification
-    # here, synchronously — see notify_managers_of_draw_trigger's own comment
-    # for why this can't wait for the Celery task to finish.
+    # Notify the company's managers now; the draw itself runs later in Celery.
     ConcertService.notify_managers_of_draw_trigger(db, concert)
 
-    # Fire-and-forget from here on: the actual draw (LotteryResult) runs
-    # async in a Celery worker — see app/tasks/lottery.py /
-    # lottery_draw_service.draw_lottery. This response is just a queued
-    # acknowledgement, so it can't declare response_model=LotteryResult
-    # without failing validation on every call.
+    # The draw runs in a Celery worker (app/tasks/lottery.py); this only acknowledges the request.
     celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)])
     return MessageResponse(msg="Lottery draw task has been scheduled. Results will be available once the task is complete.")

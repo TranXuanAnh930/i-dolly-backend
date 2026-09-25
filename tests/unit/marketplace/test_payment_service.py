@@ -240,7 +240,7 @@ class TestFinalizePaypalPayment:
     def test_ticket_direct_sale_success_increments_sold_quantity_and_notifies(self):
         from app.db.models.events import Ticket, TicketType
         from app.db.models.marketplace import Payment
-        from app.services.marketplace.payment_service import CacheService, PaymentService
+        from app.services.marketplace.payment_service import CacheInvalidation, PaymentService
 
         payment = self._mock_payment(ticket_id=DEFAULT_ID)
         ticket = self._mock_ticket()
@@ -263,8 +263,8 @@ class TestFinalizePaypalPayment:
         with patch(
             "app.services.marketplace.payment_service.capture_order",
             return_value={"status": "COMPLETED"},
-        ), patch.object(CacheService, "delete_cached_concert_detail") as mock_invalidate_concert, \
-           patch.object(CacheService, "delete_cached_products") as mock_invalidate_products, \
+        ), patch.object(CacheInvalidation, "delete_cached_concert_detail") as mock_invalidate_concert, \
+           patch.object(CacheInvalidation, "delete_cached_products") as mock_invalidate_products, \
            patch("app.services.marketplace.payment_service.NotificationService.create_notification") as mock_notify:
             result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
 
@@ -367,7 +367,7 @@ class TestFinalizePaypalPayment:
     def test_order_success_decrements_stock_and_clears_cart(self):
         from app.db.models.events import Ticket
         from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product
-        from app.services.marketplace.payment_service import CacheService, PaymentService
+        from app.services.marketplace.payment_service import CacheInvalidation, PaymentService
 
         payment = self._mock_payment(order_id=DEFAULT_ID)
         order = MagicMock()
@@ -407,7 +407,7 @@ class TestFinalizePaypalPayment:
         with patch(
             "app.services.marketplace.payment_service.capture_order",
             return_value={"status": "COMPLETED"},
-        ), patch.object(CacheService, "delete_cached_products") as mock_invalidate, \
+        ), patch.object(CacheInvalidation, "delete_cached_products") as mock_invalidate, \
            patch("app.services.marketplace.payment_service.NotificationService.create_notification") as mock_notify:
             result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
 

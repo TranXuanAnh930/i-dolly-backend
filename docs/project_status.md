@@ -30,8 +30,8 @@ row lands, in one run. `7c7c3f5e19fc` (`add_lottery_draw_completed_to_notificati
 (`add_order_shipped_to_notification_type`, this session's shipping-status work, item 43), and
 `a9d3f5b7c1e2` (`unique_shipping_status_order_id` — adds a unique constraint, item 43)
 have only been verified statically (`py_compile`, `alembic`'s own revision-chain check) so far — Docker
-Desktop's engine was unreachable for the usual throwaway-Postgres pass; worth a real
-`alembic upgrade head` run against all four once it's back.
+Desktop's engine was unreachable at the time. **Since run live (2026-09-25):** the integration
+suite's `alembic upgrade head` from empty applied all four cleanly (235/235 tests passed).
 
 All 18 domain tables from `database-design.md` plus the pre-existing e-commerce tables are
 migrated. `schema.sql`, cited throughout `database-design.md` as "the reference DDL," doesn't
@@ -833,9 +833,9 @@ newly introduced.
     instead of inserting. Backstopped by migration `a9d3f5b7c1e2`, which adds
     `uq_shipping_status_order_id` (no dedupe step — no orders were created while the duplicate-row
     code was live). Regression
-    unit test: `test_order_finalize_updates_existing_shipping_status_not_insert`. Verified with
-    `py_compile`, ruff, and the unit suite (405/405) only — the migration has **not** been run
-    against a real Postgres yet (Docker was down), so run `alembic upgrade head` before relying on it.
+    unit test: `test_order_finalize_updates_existing_shipping_status_not_insert`. Verified live
+    (2026-09-25): the integration suite's `alembic upgrade head` from empty reached `a9d3f5b7c1e2`,
+    `uq_shipping_status_order_id` exists, and all 235 integration tests passed.
 
     Also added `ShippingStatusResponse.updated_at` (was `status`-only) so an order-detail page can
     show *when* it shipped, not just that it did — this exposed a second, smaller issue:

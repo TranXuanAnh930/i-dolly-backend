@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -50,15 +51,21 @@ def make_mock_ticket_type(id=DEFAULT_ID, concert_id=DEFAULT_ID):
     tt.concert_id = concert_id
     return tt
 
-def make_mock_campaign(id=DEFAULT_ID, ticket_type_id=DEFAULT_ID, max_entries_per_user=1):
+def make_mock_campaign(id=DEFAULT_ID, ticket_type_id=DEFAULT_ID, max_entries_per_user=1, status="open",
+                       entry_start_at=None, entry_end_at=None):
+    # Defaults to an open campaign whose entry window contains "now".
+    now = datetime.now(timezone.utc)
     campaign = MagicMock()
     campaign.id = id
     campaign.ticket_type_id = ticket_type_id
     campaign.max_entries_per_user = max_entries_per_user
+    campaign.status = status
+    campaign.entry_start_at = entry_start_at or now - timedelta(days=1)
+    campaign.entry_end_at = entry_end_at or now + timedelta(days=1)
     return campaign
 
 def model_get_side_effect(mapping: dict):
-    def _side_effect(model, ident=None):
+    def _side_effect(model, ident=None, **kwargs):
         return mapping.get(model)
     return _side_effect
 
@@ -384,3 +391,55 @@ class TestGetEntries:
 
         result = LotteryEntryService.get_entries_for_campaign(db, DEFAULT_ID, make_mock_admin())
         assert result == []
+
+
+# ───────────────────────────────────────────────────────────────
+# Campaign status / entry window (_stage_entry)
+# ───────────────────────────────────────────────────────────────
+
+class TestApplyCampaignWindow:
+
+    def _apply(self, campaign):
+        from app.db.models.events import LotteryCampaign, TicketType
+        from app.schema.events import LotteryEntryApply
+        from app.services.events.lottery_entry_service import LotteryEntryService
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({LotteryCampaign: campaign, TicketType: make_mock_ticket_type()})
+        LotteryEntryService.apply_to_lottery(db, LotteryEntryApply(campaign_id=DEFAULT_ID), make_mock_fan())
+        return db
+
+    @pytest.mark.parametrize("status", ["drawn", "completed"])
+    def test_rejects_campaign_that_is_not_open(self, status):
+        with pytest.raises(BadRequestError, match="no longer accepting"):
+            self._apply(make_mock_campaign(status=status))
+
+    def test_rejects_cancelled_campaign(self):
+        with pytest.raises(BadRequestError, match="cancelled"):
+            self._apply(make_mock_campaign(status="cancelled"))
+
+    def test_rejects_before_entry_window(self):
+        now = datetime.now(timezone.utc)
+        campaign = make_mock_campaign(entry_start_at=now + timedelta(hours=1), entry_end_at=now + timedelta(days=1))
+        with pytest.raises(BadRequestError, match="haven't opened"):
+            self._apply(campaign)
+
+    def test_rejects_after_entry_window(self):
+        now = datetime.now(timezone.utc)
+        campaign = make_mock_campaign(entry_start_at=now - timedelta(days=2), entry_end_at=now - timedelta(hours=1))
+        with pytest.raises(BadRequestError, match="have closed"):
+            self._apply(campaign)
+
+    def test_loads_campaign_with_share_lock(self):
+        from app.db.models.events import LotteryCampaign, TicketType
+        from app.schema.events import LotteryEntryApply
+        from app.services.events.lottery_entry_service import LotteryEntryService
+
+        db = MagicMock()
+        db.get.side_effect = model_get_side_effect({LotteryCampaign: make_mock_campaign(status="drawn"), TicketType: make_mock_ticket_type()})
+        with pytest.raises(BadRequestError):
+            LotteryEntryService.apply_to_lottery(db, LotteryEntryApply(campaign_id=DEFAULT_ID), make_mock_fan())
+
+        campaign_call = next(c for c in db.get.call_args_list if c.args[0] is LotteryCampaign)
+        assert campaign_call.kwargs["with_for_update"] == {"read": True}
+        assert campaign_call.kwargs["populate_existing"] is True

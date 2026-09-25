@@ -16,8 +16,7 @@ class Notification(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, index=True)
     type = Column(Enum(NotificationType, name="notification_type_enum"), nullable=False)
 
-    # Exactly one of these is expected to be set, depending on `type` — a
-    # service-layer check, not a DB constraint (see the migration's docstring).
+    # Exactly one of these is set, depending on `type` (checked in the service layer).
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True, index=True)
     ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True, index=True)
     lottery_entry_id = Column(UUID(as_uuid=True), ForeignKey("lottery_entries.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=True, index=True)

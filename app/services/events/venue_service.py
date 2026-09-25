@@ -9,9 +9,7 @@ from app.schema.events import VenueCreate, VenueUpdate
 
 class VenueService:
 
-    # Not company-scoped: a venue is a physical location multiple companies'
-    # concerts can use, so it was never a tenant-scoping candidate
-    # (database-design.md §3.7).
+    # Not company-scoped: venues are shared by every company's concerts.
 
     @staticmethod
     def add_venue(db: Session, venue: VenueCreate) -> Venue:

@@ -15,32 +15,26 @@ from app.services.identity.auth_service import AuthService
 router = APIRouter(prefix="/account", tags=["Account"])
 
 @router.post("/register", response_model=UserOut)
-async def register(user:UserCreate, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> Users:
+def register(user:UserCreate, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> Users:
     try:
         return AuthService.create_user(db, user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/login")
-async def login(form_data:OAuth2PasswordRequestForm=Depends(), _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> JSONResponse:
+def login(form_data:OAuth2PasswordRequestForm=Depends(), _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> JSONResponse:
     db_user = AuthService.authenticate_user(db, form_data.username, form_data.password)
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = AuthService.create_tokens(db, db_user)
     response = JSONResponse(content={"access_token": token["access_token"]})
-    # samesite="none" (not "lax") — the frontend and this API are deployed
-    # on different origins (e.g. Vercel + Render), which browsers treat as
-    # cross-site. A Lax cookie is only sent on top-level navigations, never
-    # on the XHR/fetch POST /account/refresh call the frontend makes after
-    # a page reload — so it silently never reached this endpoint there,
-    # refresh always failed, and every reload logged the fan out even
-    # though their session was still otherwise valid. None requires
-    # Secure, already set.
+    # SameSite=None (requires Secure) because the frontend is on a different site; a Lax cookie
+    # wouldn't be sent with the frontend's fetch to POST /account/refresh.
     response.set_cookie("refresh_token", token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 
 @router.post("/refresh")
-async def refresh(request:Request, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> JSONResponse:
+def refresh(request:Request, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> JSONResponse:
     token = request.cookies.get("refresh_token")
     if not token:
         raise HTTPException(status_code=401, detail="Missing refresh token")
@@ -52,18 +46,15 @@ async def refresh(request:Request, _:None=Depends(rate_limit(10,60,ip_key)), db:
     response.set_cookie("refresh_token", new_token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 
-# FRONTEND: not currently called by i-dolly-frontend — no "resend
-# verification email" action exists anywhere in the UI.
+# Not used by the frontend.
 @router.post("/verify-request", response_model=MessageResponse)
-async def send_verification_link(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key))) -> MessageResponse:
+def send_verification_link(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key))) -> MessageResponse:
     AuthService.email_verification_process(user)
     return MessageResponse(msg="email verification link sent")
 
-# FRONTEND: not currently called by i-dolly-frontend — there's no landing
-# page for the verification link this endpoint is meant to be opened from
-# (the email itself is sent server-side; see settings.py's DEBUG comment).
+# Not used by the frontend.
 @router.get("/verify", response_model=MessageResponse)
-async def verify_email(token:str, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
+def verify_email(token:str, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
     result = AuthService.verify_email_token(db, token)
     if result is None:
         raise HTTPException(status_code=400, detail="Invalid or expired token")

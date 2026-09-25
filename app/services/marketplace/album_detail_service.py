@@ -13,10 +13,7 @@ from app.schema.marketplace import AlbumDetailCreate, AlbumDetailUpdate
 
 class AlbumDetailService:
 
-    # Company-scoped via whichever of idol_id/group_id is set on the row (the
-    # "dual-FK scoping" case flagged in database-design.md — more complex than
-    # concerts' direct company_id, same idea as lottery_campaigns' two-level
-    # join but resolved by "which FK is non-null" instead of a fixed path).
+    # Company-scoped via whichever of idol_id/group_id is set.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
@@ -34,10 +31,8 @@ class AlbumDetailService:
 
     @staticmethod
     def _artist_active_or_missing(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> bool:
-        # True unless the referenced idol/group exists AND is deactivated — a
-        # nonexistent id is left for the "not_found" check right after this to
-        # catch, so this only ever blocks a genuine "new release under a
-        # deactivated artist" attempt (database-design.md §3.3/§3.4).
+        # False only if the referenced idol/group exists and is deactivated; missing ids are caught by
+        # the not-found check.
         if idol_id is not None:
             idol = db.get(Idol, idol_id)
             return idol is None or idol.is_active
@@ -51,12 +46,12 @@ class AlbumDetailService:
         if not db.get(Product, data.product_id):
             raise NotFoundError("Product not found")
         if db.get(AlbumDetail, data.product_id):
-            raise BadRequestError("This product already has album details")  # already has album_details
+            raise BadRequestError("This product already has album details")
         if not AlbumDetailService._artist_active_or_missing(db, data.idol_id, data.group_id):
             raise BadRequestError("Cannot attach a new release to a deactivated idol/group")
         company_id = AlbumDetailService._resolve_company_id(db, data.idol_id, data.group_id)
         if company_id is None:
-            raise NotFoundError("Idol or group not found")  # referenced idol/group doesn't exist
+            raise NotFoundError("Idol or group not found")
         if AlbumDetailService._manager_scope_violation(current_user, company_id):
             raise ForbiddenError("Managers can only manage album details for their own company's idols/groups")
         db_album = AlbumDetail(**data.model_dump())

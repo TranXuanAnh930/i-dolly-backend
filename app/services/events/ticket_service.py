@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
-from app.cache.cache_service import CacheService
+from app.cache.invalidation import CacheInvalidation
 from app.celery_app import celery_app
 from app.db.models.events import Concert, DirectSaleCampaign, LotteryCampaign, LotteryEntry, Ticket, TicketType
 from app.db.models.identity import Users
@@ -47,9 +47,8 @@ from app.services.shared.notification_service import NotificationService
 from app.utils.email_templates import EmailTemplate
 from app.utils.tax import with_tax
 
-# ADMIN-ONLY STOPGAP for create/update/delete — see TicketCreate's docstring.
-# Fans only ever read their own tickets here. Mirrors
-# trg_tickets_one_per_concert (schema.sql) at the service layer.
+# Fans read their own tickets and buy via checkout; create/update/delete are admin-only.
+# Service-level checks mirror trg_tickets_one_per_concert.
 
 _LIVE_STATUSES = (TicketStatus.reserved, TicketStatus.pending_payment, TicketStatus.paid, TicketStatus.used)
 _UNRESOLVED_LOTTERY_STATUSES = (LotteryEntryStatus.pending, LotteryEntryStatus.won)
@@ -71,12 +70,8 @@ class TicketService:
 
     @staticmethod
     def _unresolved_lottery_entry(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> LotteryEntry | None:
-        # A fan mid-lottery for this concert (still "pending", or "won" but
-        # hasn't paid/expired yet — a live ticket from that win is already
-        # caught by _existing_live_ticket above, but a *won* entry whose ticket
-        # since expired isn't, so this checks the entry itself, not just the
-        # ticket) shouldn't also be able to buy a direct-sale ticket for the
-        # same concert — only "lost" (or no entry at all) clears this gate.
+        # A pending or won (but unresolved) lottery entry for this concert blocks a direct-sale
+        # purchase; only a lost entry or no entry allows it.
         return (
             db.query(LotteryEntry)
             .join(LotteryCampaign, LotteryEntry.campaign_id == LotteryCampaign.id)
@@ -89,17 +84,13 @@ class TicketService:
             .first()
         )
 
-    # The real direct-sale purchase path — add_ticket below is a separate
-    # admin-only manual creation path. Locks the ticket_type row for the whole
-    # operation and commits exactly once at the end (see create_ticket_payment's
-    # docstring), so two fans racing for the last seat can't both get one.
+    # Direct-sale purchase. Holds a row lock on the ticket type until the single commit at the end,
+    # so two fans can't both buy the last seat.
     @staticmethod
     def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate) -> Ticket:
         user = db.get(Users, user_id)
         if not user or user.role != UserRole.fan:
-            # Primary check for trg_tickets_fan_only — the trigger is the
-            # backstop (see flush_or_raise below), same split as
-            # order_service.checkout's own FanOnlyPurchaseError check.
+            # Primary check; trg_tickets_fan_only is the backstop.
             raise FanOnlyPurchaseError("Only fan accounts can purchase tickets")
 
         if db.query(Payment).filter(Payment.idempotency_key == data.idempotency_key).first():
@@ -129,8 +120,7 @@ class TicketService:
             raise InsufficientTicketStockError("No tickets left for this tier")
 
         if TicketService._existing_live_ticket(db, user_id, ticket_type.concert_id):
-            # Primary check for trg_tickets_one_per_concert — same reasoning as
-            # add_ticket's own pre-check below.
+            # Primary check; trg_tickets_one_per_concert is the backstop.
             raise DuplicateConcertTicketError("You already hold a live ticket for this concert")
 
         if TicketService._unresolved_lottery_entry(db, user_id, ticket_type.concert_id):
@@ -144,7 +134,7 @@ class TicketService:
 
         ticket = Ticket(ticket_type_id=ticket_type.id, user_id=user_id, status=TicketStatus.pending_payment)
         db.add(ticket)
-        flush_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert backstop — also populates ticket.id for create_ticket_payment below
+        flush_or_raise(db)  # populates ticket.id for create_ticket_payment
 
         payment = PaymentService.create_ticket_payment(db, user_id, ticket, data)
         if not payment:
@@ -157,19 +147,14 @@ class TicketService:
                     email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
                 )
                 celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
-        commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert / chk_ticket_types_capacity backstop
-        # ticket_types[].sold_quantity is part of the cached concert detail
-        # bundle, so a seat sold here has to bust it — otherwise the event page
-        # keeps advertising the old availability (up to a sold-out tier still
-        # showing as buyable) until the TTL lapses.
-        CacheService.delete_cached_concert_detail(ticket_type.concert_id)
+        commit_or_raise(db)
+        # sold_quantity is part of the cached concert detail.
+        CacheInvalidation.delete_cached_concert_detail(ticket_type.concert_id)
         db.refresh(ticket)
         return ticket
 
-    # Pays for a ticket draw_lottery already created (sold_quantity already incremented at draw
-    # time) — distinct from checkout_ticket above, which creates a new ticket and counts
-    # sold_quantity itself. Deliberately doesn't touch sold_quantity here, to avoid double-counting
-    # a seat the caller already holds.
+    # Pays for a ticket created by the lottery draw. The draw already counted the seat in
+    # sold_quantity, so this doesn't change it.
     @staticmethod
     def checkout_won_ticket(db: Session, user_id: uuid.UUID, ticket_id: uuid.UUID, data: WonTicketCheckoutCreate) -> Ticket:
         if db.query(Payment).filter(Payment.idempotency_key == data.idempotency_key).first():
@@ -187,14 +172,11 @@ class TicketService:
             raise TicketNotPayableError("This ticket isn't a payable lottery win")
 
         if ticket.payment_deadline_at and ticket.payment_deadline_at < datetime.now(timezone.utc):
-            # Lazily discovered past the deadline — no sweep job exists yet
-            # (database-design.md §5.2's "deliberately not built this phase")
-            # to release this slot otherwise, so this is the one place that
-            # does it: expire the ticket and free the seat it was holding.
+            # Past the deadline: expire the ticket and release its seat.
             ticket.status = TicketStatus.expired
             ticket_type.sold_quantity -= 1
             commit_or_raise(db)
-            CacheService.delete_cached_concert_detail(ticket_type.concert_id)  # released a seat
+            CacheInvalidation.delete_cached_concert_detail(ticket_type.concert_id)
             raise TicketNotPayableError("The payment deadline for this ticket has passed")
 
         total_amount = with_tax(float(ticket_type.price))
@@ -228,21 +210,19 @@ class TicketService:
         if not target_user:
             raise NotFoundError("User not found")
         if target_user.role != UserRole.fan:
-            # Primary check for trg_tickets_fan_only — checks the ticket's
-            # intended owner (data.user_id), not the caller, since this
-            # endpoint is admin-only (an admin issuing a ticket to a fan).
+            # Checks the ticket's recipient (data.user_id), not the admin caller.
             raise ForbiddenError("Tickets can only be issued to fan accounts")
         if data.lottery_entry_id is not None and not db.get(LotteryEntry, data.lottery_entry_id):
             raise NotFoundError("Lottery entry not found")
 
         if TicketService._existing_live_ticket(db, data.user_id, ticket_type.concert_id):
-            raise BadRequestError("This user already holds a live ticket for this concert")  # trg_tickets_one_per_concert: one live ticket per user per concert
+            raise BadRequestError("This user already holds a live ticket for this concert")
 
         db_ticket = Ticket(
             ticket_type_id=data.ticket_type_id, user_id=data.user_id, lottery_entry_id=data.lottery_entry_id,
         )
         db.add(db_ticket)
-        commit_or_raise(db)  # trg_tickets_fan_only / trg_tickets_one_per_concert backstop
+        commit_or_raise(db)
         db.refresh(db_ticket)
         return db_ticket
 
@@ -264,10 +244,7 @@ class TicketService:
             .first()
         )
 
-    # Company-scoped via the concert (Ticket -> TicketType -> Concert.company_id),
-    # same pattern as concert_service/ticket_type_service. Mirrors
-    # product_service.get_product_sales_page's shape (page/limit/count/data) for
-    # the manager-facing "sales history" list/page pair.
+    # Paginated ticket sales for one concert; managers are limited to their own company.
     @staticmethod
     def get_concert_ticket_sales(db: Session, concert_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> TicketSalesPageRead:
         concert = db.get(Concert, concert_id)

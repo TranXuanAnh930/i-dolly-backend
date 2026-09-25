@@ -13,6 +13,6 @@ class Category(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
     name = Column(String, nullable=False, unique=True)
-    is_resale_capped = Column(Boolean, nullable=False, server_default=func.true())  # data-driven anti-resale flag (database-design.md §4.2) — defaults true, an UPDATE opts a category out
+    is_resale_capped = Column(Boolean, nullable=False, server_default=func.true())  # applies RESALE_CAP_QUANTITY to this category's products
 
     products = relationship("Product", back_populates="category")

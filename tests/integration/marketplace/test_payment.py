@@ -117,7 +117,8 @@ def test_status_all_unauthenticated():
 def test_status_all_none_found(factory):
     fan = factory.fan()
     response = client.patch("/payment/status/all", headers=factory.token(fan))
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_status_all_found(factory):
     fan = factory.fan()

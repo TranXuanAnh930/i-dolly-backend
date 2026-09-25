@@ -1,15 +1,6 @@
-"""Thin PayPal REST API wrapper — Orders v2 (create/capture) + webhook
-signature verification. Mirrors app/utils/storage.py's shape: a small,
-direct client the rest of the app calls into, no gateway abstraction layer
-beyond what PaymentGateway already provides (see docs/project_status.md
-§7). Synchronous (httpx.Client), matching every other service in this
-codebase — nothing here is async.
+"""Synchronous PayPal REST client: Orders v2 create/capture and webhook signature verification.
 
-Deliberately NOT here: retries, circuit breaking, a custom exception
-hierarchy. httpx.HTTPStatusError propagates as-is on a non-2xx response;
-the caller (order_service/ticket_service's paypal branch) decides how to
-turn that into a checkout-facing error, same as it already does for the
-mock gateway's own failure cases.
+No retries or custom exceptions: non-2xx responses raise httpx.HTTPStatusError to the caller.
 """
 import json
 import time
@@ -28,15 +19,12 @@ def _base_url() -> str:
     return _BASE_URLS[settings.PAYPAL_MODE or "sandbox"]
 
 
-# In-process only — not shared across workers/restarts. Re-fetching a token
-# occasionally is cheap; a distributed cache for this would be solving a
-# problem this project doesn't have at its scale.
+# Per-process OAuth token cache.
 _cached_token: dict = {"access_token": None, "expires_at": 0.0}
 
 
 def get_access_token() -> str:
-    """OAuth2 client-credentials grant, cached until shortly before PayPal
-    says it expires (60s buffer, not cut exactly at the wire)."""
+    """Client-credentials OAuth token, cached until 60s before it expires."""
     if _cached_token["access_token"] and time.monotonic() < _cached_token["expires_at"]:
         return _cached_token["access_token"]
 
@@ -63,10 +51,9 @@ def _auth_headers() -> dict:
 
 
 def create_order(amount: str, currency: str = "USD") -> dict:
-    """Creates a PayPal order (state CREATED, not yet approved/captured).
-    amount is a string per PayPal's API (e.g. "19.99") — apply tax/rounding
-    before calling this, same as with_tax() already does for the mock
-    gateway; this function doesn't touch the value at all."""
+    """Create a PayPal order (not yet approved or captured).
+
+    `amount` is a string such as "1100", already tax-inclusive."""
     response = httpx.post(
         f"{_base_url()}/v2/checkout/orders",
         headers=_auth_headers(),
@@ -75,14 +62,8 @@ def create_order(amount: str, currency: str = "USD") -> dict:
             "purchase_units": [
                 {"amount": {"currency_code": currency, "value": amount}}
             ],
-            # application_context is deprecated in Orders v2 — silently
-            # ignored, not an error, which is exactly why setting return_url/
-            # cancel_url there never actually took effect. v2 nests these
-            # per payment source instead.
-            #
-            # Points at the frontend SPA (not this API) — it's the one that
-            # calls POST /payment/paypal/capture/{pg_order_id} after PayPal
-            # sends the buyer back with ?token=&PayerID=.
+            # return/cancel URLs point at the frontend, which calls
+            # POST /payment/paypal/capture/{pg_order_id} after the buyer approves.
             "payment_source": {
                 "paypal": {
                     "experience_context": {
@@ -100,12 +81,7 @@ def create_order(amount: str, currency: str = "USD") -> dict:
 
 
 def extract_approval_url(order_response: dict) -> str | None:
-    """Pulls the buyer-facing redirect link out of create_order()'s response.
-    v2 names it "payer-action" once payment_source is specified (as
-    create_order does above); "approve" is the older/no-payment-source name,
-    kept as a fallback in case that ever changes. None if PayPal returns
-    neither (shouldn't happen for a freshly created order, but this is a
-    display convenience, not something to raise over)."""
+    """Return the buyer approval link ("payer-action", or legacy "approve"), or None."""
     for link in order_response.get("links", []):
         if link.get("rel") in ("payer-action", "approve"):
             return link.get("href")
@@ -113,9 +89,7 @@ def extract_approval_url(order_response: dict) -> str | None:
 
 
 def capture_order(paypal_order_id: str) -> dict:
-    """Captures funds for an order the buyer has already approved on
-    PayPal's side. Raises httpx.HTTPStatusError (e.g. 422 UNPROCESSABLE_
-    ENTITY) if the order isn't in an approved state yet."""
+    """Capture an approved order. Raises httpx.HTTPStatusError (e.g. 422) if not approved yet."""
     response = httpx.post(
         f"{_base_url()}/v2/checkout/orders/{paypal_order_id}/capture",
         headers=_auth_headers(),
@@ -126,16 +100,10 @@ def capture_order(paypal_order_id: str) -> dict:
 
 
 def verify_webhook_signature(headers: dict, body: bytes | str | dict) -> bool:
-    """Posts the incoming webhook back to PayPal's own verify-webhook-
-    signature endpoint rather than recomputing the CRC32/signature check
-    locally (docs/project_status.md §7 — avoids reimplementing PayPal's
-    cert-chain verification). `headers` is the incoming request's headers
-    (matched case-insensitively below, since header casing isn't
-    guaranteed); `body` is the raw or already-parsed webhook event payload.
+    """Ask PayPal's verify-webhook-signature endpoint whether this webhook is genuine.
 
-    Returns True only if PayPal reports "SUCCESS" — treat anything else
-    (including a malformed/missing header) as an unverified, untrusted
-    event and don't act on it.
+    Headers are matched case-insensitively; `body` may be raw or already parsed. Returns True only
+    for a "SUCCESS" verification; missing headers or an unparseable body return False.
     """
     lower_headers = {k.lower(): v for k, v in headers.items()}
 
@@ -143,10 +111,8 @@ def verify_webhook_signature(headers: dict, body: bytes | str | dict) -> bool:
     if not all(h in lower_headers for h in required):
         return False
 
-    # Only parse the body once the request at least looks like a genuine
-    # PayPal webhook (has all the expected headers) — and never let a
-    # malformed/empty body crash this with an unhandled 500, since this
-    # endpoint is reachable by anyone, not just PayPal.
+    # Parse the body only after the headers look like a PayPal webhook; a bad body returns False
+    # instead of a 500, since anyone can call this endpoint.
     try:
         webhook_event = body if isinstance(body, dict) else json.loads(body)
     except (json.JSONDecodeError, TypeError):
