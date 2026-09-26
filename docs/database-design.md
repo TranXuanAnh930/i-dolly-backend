@@ -755,7 +755,7 @@ through `GET /notifications/mine`/`unread-count`/mark-read), unlike most migrati
 | Buy albums/singles/EPs/merch (cart → checkout) | ❌ | ❌ | ✅ |
 | Apply to a lottery directly (no purchase required) | ❌ | ❌ | ✅ |
 | Pay for a won ticket slot | ❌ | ❌ | ✅ |
-| View/mark-read own notifications | ❌ | ❌ | ✅ |
+| View/mark-read own notifications | ✅ | ✅ (e.g. lottery draw status) | ✅ |
 
 **`require_manager_or_admin` is now built** (`app/deps/auth.py`, alongside a matching
 `require_admin`) — replaces the inline `if not current_user.is_admin: raise HTTPException(...)`

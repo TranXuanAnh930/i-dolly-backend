@@ -22,19 +22,19 @@ async def _raw_body(request: Request) -> bytes:
 
 # Not used by the frontend.
 @router.patch("/status/all", response_model=list[PaymentResponse])
-def check_payment_status_all(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> list[Payment]:
+def check_payment_status_all(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(20,60,user_key)), db:Session=Depends(get_db)) -> list[Payment]:
     return PaymentService.fetch_all_payments(db, user.id)
 
 # Separate lookups for order payments and ticket payments.
 @router.patch("/status/order/{order_id}", response_model=PaymentResponse)
-def check_payment_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> Payment:
+def check_payment_status(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(20,60,user_key)), db:Session=Depends(get_db)) -> Payment:
     payment = PaymentService.fetch_payment_status(db, user.id, order_id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found!")
     return payment
 
 @router.patch("/status/ticket/{ticket_id}", response_model=PaymentResponse)
-def check_ticket_payment_status(ticket_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> Payment:
+def check_ticket_payment_status(ticket_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(20,60,user_key)), db:Session=Depends(get_db)) -> Payment:
     payment = PaymentService.fetch_ticket_payment_status(db, user.id, ticket_id)
     if payment is None:
         raise HTTPException(status_code=404, detail="Payment not found!")

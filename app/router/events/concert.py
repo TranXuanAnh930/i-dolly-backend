@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.cache.cache_service import CacheService
-from app.cache.rate_limit import ip_key, rate_limit
+from app.cache.rate_limit import ip_key, rate_limit, user_or_ip_key
 from app.celery_app import celery_app
 from app.db.models.events import Concert, ConcertPerformer
 from app.db.models.identity import Users
@@ -58,7 +58,7 @@ def get_manager_events_page_data(db: Session = Depends(get_db)) -> ManagerEvents
     return CacheService.get_cached_manager_events_page(db)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
-def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), db: Session = Depends(get_db)) -> ConcertDetailRead:
+def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), _: None = Depends(rate_limit(30, 60, user_or_ip_key)), db: Session = Depends(get_db)) -> ConcertDetailRead:
     # The cached part is identical for every viewer; per-viewer fields are computed fresh each
     # request so one fan's state is never cached and served to another.
     result = CacheService.get_cached_concert_detail(db, id)

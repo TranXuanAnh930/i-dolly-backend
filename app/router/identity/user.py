@@ -21,7 +21,7 @@ from app.services.identity.user_service import UserService
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
 @router.get("/me", response_model=UserOut)
-def me(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(10,60,user_key))) -> Users:
+def me(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(60,60,user_key))) -> Users:
     return user
 
 @router.put("/change-password", response_model=MessageResponse)

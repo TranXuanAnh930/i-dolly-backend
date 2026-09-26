@@ -72,7 +72,7 @@ def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:None=Dep
 
 # Not used by the frontend.
 @router.get("/single_placed_order/{order_id}", response_model=Order)
-def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
+def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(15,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     order = OrderService.fetch_single_placed_order(db, user.id, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")

@@ -850,6 +850,107 @@ newly introduced.
     the usual throwaway-Postgres pass — worth a real live-DB run of a full checkout →
     single_placed_order round trip once Docker's back, to confirm end to end rather than at the
     schema/mock layer alone.
+39. **Rate-limit tuning pass**, prompted by benchmarking `GET /products/store-page` and finding its
+    `5, 60` budget (per-IP) exhausted almost immediately under any real browsing pattern, not just
+    an attacker's. Audited every `rate_limit(limit, window, key_func)` call across `app/router`
+    and grouped them by what each is actually defending: money/inventory mutations (checkout, cart,
+    lottery entry — `3/60`) and auth-abuse surfaces (register, login, forgot-password — `3-10/60`)
+    were already correctly tight and left untouched; several self-scoped or public-cached reads
+    were sharing that same tight budget with no abuse rationale behind it, just a copy-pasted
+    number. Bumped: `GET /products/all`/`GET /products/store-page` `5→30` (cache-backed, 5-min TTL,
+    the DB is already protected — this budget was guarding against scraping, not load, and 5/min
+    is below normal SPA browsing traffic on one shared IP); `GET /profile/me` `10→60` (fired on
+    every SPA navigation/bootstrap); `GET /payment/status*` (all, order, ticket) `5→20` (polled
+    during PayPal's async capture flow, §7 — 429ing mid-checkout is the worst place for this to
+    bite); `GET /order/single_placed_order/{id}` `3→15` (a plain read that was sitting at the same
+    budget as `checkout_order`'s actual mutation, above it in the same file — looked copy-pasted
+    rather than deliberate); `GET /notifications/unread-count` `30→60` (explicitly documented as
+    polled, `notification.py`'s own comment says "well above" the poll rate — widened the margin);
+    `GET /shipping_addresses/fetch` `5→20` (hit during checkout's address-selection step).
+
+    **Separate bug, not a tuning issue**: `GET /shipping_addresses/fetch_byid/{address_id}` was
+    keyed on `ip_key`, the only shipping endpoint not using `user_key` — everyone behind the same
+    IP shared one bucket for arbitrary users' address-by-id lookups, and a user switching networks
+    reset their own. Fixed to `user_key` to match every sibling endpoint on this resource; limit
+    left at `5/60` since only the key was wrong, not the number.
+
+    **Gap found while benchmarking, also fixed here**: `GET /products/{id}/detail`, `GET
+    /groups/{id}/detail`, and `GET /idols/{id}/detail` had no `rate_limit` dependency at all,
+    unlike their sibling cache-backed reads (`/products/all`, `/products/store-page`,
+    `/groups/all`, `/idols/all`, all `10-30/60, ip_key`) on the same pattern (item 31/33's per-id
+    detail caches). Added `rate_limit(30, 60, ip_key)` to all three, matching the budget already
+    used for `/products/all`/`/products/store-page` — a per-id detail page is browsed at least as
+    often as a list page, so no reason for a tighter number here.
+
+    **`GET /concerts/{id}/detail`** had the same missing-limiter gap, but couldn't take the flat
+    `ip_key` copy the other three got: it's auth-optional (`get_current_user_optional`), which only
+    sets `request.state.user` when a token is actually presented (`app/deps/auth.py`) — plain
+    `user_key` would raise `AttributeError` on every guest request. Added
+    `app/cache/rate_limit.py::user_or_ip_key` (keys on `user.id` when `request.state.user` is set,
+    falls back to `ip_key`'s bucket otherwise) and wired `rate_limit(30, 60, user_or_ip_key)` in,
+    placed after `current_user`'s `Depends(get_current_user_optional)` in the signature so the
+    limiter reads `request.state.user` after it's actually set, not before.
+
+    Manager/admin CRUD (`20/60` uniform across campaigns/album/ticket-type/genre/merch) and
+    admin-sensitive actions (`make-admin`/`create-manager`, `3/60`) were reviewed and left as-is —
+    authenticated, privileged, not a normal-usage friction point.
+40. **Benchmarking `GET /products/store-page` surfaced a latency-under-concurrency question, not
+    yet resolved.** Two local runs against the new `30/60` limit: concurrency 1 (15s) gave
+    p50/p90/p99/max of 76/88/111/680ms; concurrency 3 (20s) gave 133/220/1735/1853ms — the tail
+    grows sharply with concurrency while throughput barely does (~9.7 → ~11.6 req/s, nowhere near
+    3x). Confirmed via `grep` that every one of the 161 route handlers across `app/router` is
+    plain `def`, not `async def` (the sole `async def` in the tree, `payment.py::_raw_body`, is an
+    async dependency for the webhook's raw-body read, not a route handler) — matches
+    `architecture.md` §2 exactly, no doc drift there.
+
+    An initial theory (thread-pool/DB-connection-pool contention) doesn't hold up:
+    `app/db/session.py` sizes the pool at 10 connections (`pool_size=5, max_overflow=5`) against
+    the ~40-thread FastAPI threadpool specifically so a handful of connections serve many
+    concurrent requests — 3 concurrent requests is nowhere near either limit, and §2's whole point
+    in moving off `async def` was to let requests genuinely run concurrently rather than queue.
+    Better-supported, still-unconfirmed hypothesis: CPython's GIL — blocking Redis/Postgres I/O
+    releases it while waiting, but the CPU-bound work around it (Pydantic validation, msgpack
+    pack/unpack, JSON encoding) doesn't, so concurrent threads can see GIL hand-off delays that a
+    single sequential caller never triggers. The pre-existing cold-cache-miss theory (one real
+    Postgres round-trip among the cache-hit responses) is separate and still unconfirmed either.
+    Neither has been isolated: `benchmark/bench.py`'s `Results` currently blends `200`/`429`
+    latencies into one set of percentiles, which hides which requests were actually slow. Next
+    step, not yet done: split latency tracking by status code (or add per-request timestamps to
+    the CSV output) before drawing a firmer conclusion — flagging so this doesn't get miscited as
+    a settled finding.
+
+    **Update — per-status split built and run** (`bench.py` now reports percentiles per status
+    code and writes `timestamp,status,latency_ms` rows). Findings, local Docker Compose on Windows:
+    - **Floor**: a `429` (one Redis `INCR`+`TTL`, no DB) costs ~88ms p50 at concurrency 1. Redis is
+      on the Compose network, so this is environment overhead (Docker Desktop port forwarding,
+      single `uvicorn --reload` process), not cache cost. It applies to every request and doesn't
+      carry over to Render.
+    - **Warm cache-hit cost**: `200` p50 102.6ms vs `429` p50 87.6ms at concurrency 1, so the
+      Redis `GET` + msgpack unpack + `StorePageRead` validation + response encoding adds ~15ms.
+    - **Under concurrency 3**, `200`s degrade far more than `429`s (p50 ×3.2 vs ×1.4). Direction
+      fits the GIL hypothesis (the `200` path has more CPU work), but ~15ms of extra work doesn't
+      explain ~230ms of extra latency on its own.
+    - **Confound the split exposed**: with a `30/60` per-IP budget, every `200` lands in the first
+      seconds of a run and every `429` after, so the comparison is also warm-up vs. steady state.
+      At concurrency 3, exactly 3 of 30 `200`s sit above the 688ms p90, which fits a **cache
+      stampede**: `CacheService.get_cached_store_page` has no rebuild lock, so N concurrent misses
+      all run `ProductService.get_store_page` and all `setex` the same key. Harmless at N=3, but
+      at real traffic it repeats every `TTL_SECONDS` (5 min) expiry. **Confirmed** with a cold run
+      (`products:store_page` deleted first, concurrency 3): the 3 slowest `200`s were requests
+      #1-3, started within 53ms of each other, each ~1.0-1.1s. All three started before any
+      finished, so all three necessarily missed the cache and rebuilt it.
+    - **The stampede only explains the tail, not the median.** Once the cache was warm (requests
+      #4-30), `200`s still took ~300-500ms at concurrency 3 against ~100ms at concurrency 1,
+      roughly 3× for 3× the concurrency. Together with throughput barely rising with
+      concurrency, this looks like requests are being handled nearly one at a time somewhere.
+      Where is still open: the local environment (Docker Desktop networking on Windows,
+      `--reload`) and CPU work under the GIL are both candidates. Running the app outside Docker
+      without `--reload` would separate them.
+    - **Unexplained**: runs cover less time than `--duration`. The cold concurrency-3 run's
+      requests span 12.7s of a 20s duration, with no unmeasured gaps inside that span (each
+      worker's summed latency ≈ 12.65s). So the missing ~7s falls before the first request or
+      after the last one. An earlier concurrency-1 run showed the same thing (34 requests in 15s,
+      ~3.5s measured).
 
 ## 5. Deliberately deferred — next phase, not forgotten
 
