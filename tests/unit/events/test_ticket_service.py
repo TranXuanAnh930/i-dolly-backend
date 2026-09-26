@@ -32,16 +32,18 @@ def make_ticket_type(sale_method="direct"):
 
 def make_db(ticket_type, ticket=None):
     from app.db.models.events import DirectSaleCampaign, Ticket, TicketType
+    from app.db.models.identity import Users
     from app.db.models.marketplace import Payment
 
     db = MagicMock()
-    queries = {model: MagicMock() for model in (Payment, TicketType, DirectSaleCampaign, Ticket)}
+    queries = {model: MagicMock() for model in (Users, Payment, TicketType, DirectSaleCampaign, Ticket)}
+    queries[Users].filter.return_value.with_for_update.return_value.first.return_value = make_fan()  # checkout_ticket
     queries[Payment].filter.return_value.first.return_value = None  # idempotency key unused
     queries[TicketType].filter.return_value.with_for_update.return_value.first.return_value = ticket_type
     queries[DirectSaleCampaign].filter.return_value.first.return_value = MagicMock()  # on sale
     queries[Ticket].filter.return_value.with_for_update.return_value.first.return_value = ticket
     db.query.side_effect = lambda model: queries.get(model, MagicMock())
-    db.get.return_value = make_fan()
+    db.get.return_value = make_fan()  # checkout_won_ticket
     return db
 
 

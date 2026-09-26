@@ -16,7 +16,7 @@ from app.schema.marketplace import ShippingStatus as SchemaShipStatus
 from app.schema.shared import NotificationType
 from app.services.shared.notification_service import NotificationService
 from app.utils.mock_id import generate_mock_id
-from app.utils.paypal_client import capture_order, create_order, extract_approval_url
+from app.utils.paypal_client import capture_id_from_response, capture_order, create_order, extract_approval_url
 
 
 class PaymentService:
@@ -154,9 +154,7 @@ class PaymentService:
             if paypal_payment["status"] == "COMPLETED":
                 payment.status = PaymentStatus.success
                 payment.is_paid = True
-                ids = generate_mock_id()
-                payment.pg_payment_id = ids["payment_id"]
-                payment.pg_signature = ids["signature_id"]
+                payment.pg_payment_id = capture_id_from_response(paypal_payment)
                 ticket.status = TicketStatus.paid
                 ticket.payment_id = payment.id
                 if ticket_type.sale_method == SaleMethod.direct:
@@ -185,9 +183,7 @@ class PaymentService:
             if paypal_payment["status"] == "COMPLETED":
                 payment.status = PaymentStatus.success
                 payment.is_paid = True
-                ids = generate_mock_id()
-                payment.pg_payment_id = ids["payment_id"]
-                payment.pg_signature = ids["signature_id"]
+                payment.pg_payment_id = capture_id_from_response(paypal_payment)
 
                 for product in products:
                     item = next((order_item for order_item in order_items if order_item.product_id == product.id), None)

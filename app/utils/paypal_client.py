@@ -88,6 +88,18 @@ def extract_approval_url(order_response: dict) -> str | None:
     return None
 
 
+def capture_id_from_response(capture_response: dict) -> str | None:
+    """Capture id from a capture-order response (purchase_units[0].payments.captures[0].id), or None.
+
+    This is the id PayPal refunds are issued against.
+    """
+    for unit in capture_response.get("purchase_units") or []:
+        for capture in ((unit or {}).get("payments") or {}).get("captures") or []:
+            if isinstance(capture, dict) and capture.get("id"):
+                return capture["id"]
+    return None
+
+
 def order_id_from_webhook(event: dict) -> str | None:
     """PayPal order id a webhook event refers to, or None for events that don't carry one.
 

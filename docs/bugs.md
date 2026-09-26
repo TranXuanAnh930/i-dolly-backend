@@ -140,14 +140,14 @@ they're fixed.
 - Upload extension taken from client filename (`storage.py:46`) — `.html` with
   `Content-Type: image/png` gets served as HTML by `StaticFiles` on the API origin (stored XSS).
   Derive ext from the whitelisted content type. ~~S3 path reads the whole upload before size check~~ (fixed with #9).
-- PayPal `pg_payment_id` set from `generate_mock_id()` instead of the real capture id (needed for
-  refunds).
+- ~~PayPal `pg_payment_id` set from `generate_mock_id()` instead of the real capture id (needed for
+  refunds)~~ — fixed: set from the capture response via `paypal_client.capture_id_from_response`.
 - `MAX_RANK` upper-case local; `create_order` currency default `"USD"` while all callers pass
   `"JPY"`; leftover tutorial comment in `main.py`.
 
 ## Suggested order (updated 2026-09-26)
 
-Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, and three code smells.
+Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, and four code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. **Security:** #7 spoofable IP rate limits (plan in `docs/plans/rate-limit-client-ip.md`).

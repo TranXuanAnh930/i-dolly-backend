@@ -262,13 +262,14 @@ class TestFinalizePaypalPayment:
 
         with patch(
             "app.services.marketplace.payment_service.capture_order",
-            return_value={"status": "COMPLETED"},
+            return_value={"status": "COMPLETED", "purchase_units": [{"payments": {"captures": [{"id": "CAPTURE-T1"}]}}]},
         ), patch.object(CacheInvalidation, "delete_cached_concert_detail") as mock_invalidate_concert, \
            patch.object(CacheInvalidation, "delete_cached_products") as mock_invalidate_products, \
            patch("app.services.marketplace.payment_service.NotificationService.create_notification") as mock_notify:
             result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
 
         assert payment.status == "success"
+        assert payment.pg_payment_id == "CAPTURE-T1"
         assert ticket.status == "paid"
         assert ticket_type.sold_quantity == 4
         mock_notify.assert_called_once()
@@ -406,12 +407,13 @@ class TestFinalizePaypalPayment:
 
         with patch(
             "app.services.marketplace.payment_service.capture_order",
-            return_value={"status": "COMPLETED"},
+            return_value={"status": "COMPLETED", "purchase_units": [{"payments": {"captures": [{"id": "CAPTURE-O1"}]}}]},
         ), patch.object(CacheInvalidation, "delete_cached_products") as mock_invalidate, \
            patch("app.services.marketplace.payment_service.NotificationService.create_notification") as mock_notify:
             result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
 
         assert payment.status == "success"
+        assert payment.pg_payment_id == "CAPTURE-O1"
         assert product.quantity == 8  # 10 - 2
         assert order.status == "confirmed"
         mock_notify.assert_called_once()

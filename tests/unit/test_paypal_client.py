@@ -1,6 +1,20 @@
 import pytest
 
-from app.utils.paypal_client import order_id_from_webhook
+from app.utils.paypal_client import capture_id_from_response, order_id_from_webhook
+
+
+@pytest.mark.parametrize("response, expected", [
+    ({"status": "COMPLETED", "purchase_units": [{"payments": {"captures": [{"id": "CAPTURE-1", "status": "COMPLETED"}]}}]},
+     "CAPTURE-1"),
+    # first unit without a capture: take the next one that has it
+    ({"purchase_units": [{"payments": {}}, {"payments": {"captures": [{"id": "CAPTURE-2"}]}}]}, "CAPTURE-2"),
+    ({"status": "COMPLETED"}, None),
+    ({"purchase_units": []}, None),
+    ({"purchase_units": [{"payments": None}]}, None),
+    ({"purchase_units": [{"payments": {"captures": [{}]}}]}, None),
+])
+def test_capture_id_from_response(response, expected):
+    assert capture_id_from_response(response) == expected
 
 
 @pytest.mark.parametrize("event, expected", [
