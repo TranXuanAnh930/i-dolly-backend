@@ -57,15 +57,13 @@ they're fixed.
 
 ## 🟠 High
 
-- [ ] **9. `async def` routes doing sync work.** All 161 async handlers call sync SQLAlchemy,
+- [x] **9. `async def` routes doing sync work.** All 161 async handlers call sync SQLAlchemy,
   bcrypt, PayPal httpx and boto3 → block the event loop. Plain `def` routes would use the threadpool.
   **HANDLERS FIXED**: all 162 route handlers are `def` (`architecture.md` §2). The 6 that
   awaited something were converted too: `storage.save()` is now sync, and the webhook reads its
   body in an async dependency. Verified via TestClient that uploads and the webhook run in the
   threadpool. S3 uploads now read at most MAX+1 bytes (fixes the whole-file-in-memory smell below).
-  Still open:
-  - ~~Set `pool_size`/`max_overflow` explicitly in `app/db/session.py`~~ — done (5 + 5, 10s timeout).
-  - Add the missing `checkout_ticket` race test, now that routes really run concurrently.
+  - ~~Set `pool_size`/`max_overflow` explicitly in `app/db/session.py`~~ — done (5 + 5, 10s timeout)
 - [x] **10. `DEBUG` defaults to `True`** (`settings.py`), contradicting `deployment.md` and the
   `email_sender.py` comment. An env missing `DEBUG` prints reset tokens to logs and sends no email.
   **FIXED**: `DEBUG` now defaults to `False`, matching `deployment.md`.
@@ -156,6 +154,5 @@ Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, and four code smells.
    `cancel_placed_order`.)
 4. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation; #11 Redis
    outage handling.
-5. **Test debt:** #9's `checkout_ticket` race test.
-6. **Deferred (fix later):** PayPal pending-state bugs #12 (abandoned ticket locks the fan out),
+5. **Deferred (fix later):** PayPal pending-state bugs #12 (abandoned ticket locks the fan out),
    #26 (unpaid orders shippable), #27 (abandoned orders never expire).
