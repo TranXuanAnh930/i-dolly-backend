@@ -850,6 +850,20 @@ newly introduced.
     the usual throwaway-Postgres pass — worth a real live-DB run of a full checkout →
     single_placed_order round trip once Docker's back, to confirm end to end rather than at the
     schema/mock layer alone.
+
+44. ~~**Transactional emails showed prices in dollars, and ticket emails showed the pre-tax
+    price**~~ — **FIXED**. `ORDER_PLACED`, `TICKET_CONFIRMED` and `LOTTERY_PAYMENT_CONFIRMED`
+    formatted amounts as `${x:.2f}`, but every price is whole yen and PayPal orders are created in
+    `JPY`. They now render `¥{x:,.0f} (tax included)`. The two ticket emails also passed
+    `ticket_type.price` (stored tax-exclusive) while the fan is charged `with_tax(price)`; they now
+    pass the checked `total_amount`, so the email matches the charge. `ORDER_PLACED` already used
+    the tax-inclusive `order.total_price`. Separately, its bare `Status: {status}` line (the raw
+    `OrderStatus`, easily misread as shipping status) is now `Payment: Paid` / `Payment: Awaiting
+    payment confirmation` (PayPal, not yet captured). Still open: no follow-up email is sent when
+    `finalize_paypal_payment` captures a PayPal payment, for orders or tickets.
+
+    Verification: all three templates rendered with int/float/`Decimal` amounts; unit suite
+    444/444. No real email was sent.
 39. **Rate-limit tuning pass**, prompted by benchmarking `GET /products/store-page` and finding its
     `5, 60` budget (per-IP) exhausted almost immediately under any real browsing pattern, not just
     an attacker's. Audited every `rate_limit(limit, window, key_func)` call across `app/router`

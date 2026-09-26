@@ -21,8 +21,8 @@ class EmailTemplate(Enum):
         "<p>Hi {email},</p>"
         "<p>Your order has been placed successfully.</p>"
         "<p>Order ID: {order_id}<br>"
-        "Total: ${total:.2f}<br>"
-        "Status: {status}</p>"
+        "Total: ¥{total:,.0f} (tax included)<br>"
+        "Payment: {payment_status}</p>"
         "<p>You can track its status from your account's order history.</p>",
     )
     TICKET_CONFIRMED = (
@@ -31,7 +31,7 @@ class EmailTemplate(Enum):
         "<p>Your ticket has been confirmed.</p>"
         "<p>Ticket ID: {ticket_id}<br>"
         "Tier: {tier}<br>"
-        "Price: ${price:.2f}</p>"
+        "Price: ¥{price:,.0f} (tax included)</p>"
         "<p>Bring this confirmation with you to the venue.</p>",
     )
     LOTTERY_PAYMENT_CONFIRMED = (
@@ -40,7 +40,7 @@ class EmailTemplate(Enum):
         "<p>Your payment for your lottery-won ticket has been confirmed.</p>"
         "<p>Ticket ID: {ticket_id}<br>"
         "Tier: {tier}<br>"
-        "Price: ${price:.2f}</p>"
+        "Price: ¥{price:,.0f} (tax included)</p>"
         "<p>Bring this confirmation with you to the venue.</p>",
     )
     RESET_PASSWORD = (
