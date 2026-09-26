@@ -12,7 +12,6 @@ Everything below is scaffolding — fill in the TODOs yourself.
 import argparse
 import asyncio
 import csv
-import statistics
 import time
 from dataclasses import dataclass, field
 
