@@ -1,6 +1,4 @@
-# Placeholder task proving the worker/broker/backend wiring works end to end.
-# No real domain logic belongs here — see docs/project_status.md for which
-# background jobs (lottery draw, async email, ETL) are still undecided.
+# Placeholder task for checking the Celery worker/broker wiring.
 from app.celery_app import celery_app
 
 

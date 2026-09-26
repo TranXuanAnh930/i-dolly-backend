@@ -80,7 +80,8 @@ def test_fetch_placed_orders_unauthenticated():
 def test_fetch_placed_orders_empty():
     headers = auth_headers()
     response = client.get("/order/fetch_placed_order", headers=headers)
-    assert response.status_code in (200, 404)
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_cancel_nonexistent_order():
     headers = auth_headers()

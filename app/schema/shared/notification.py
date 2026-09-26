@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 class NotificationType(str, Enum):
     order_confirmation = "order_confirmation"
+    order_shipped = "order_shipped"
     ticket_confirmation = "ticket_confirmation"
     lottery_registered = "lottery_registered"
     lottery_draw_triggered = "lottery_draw_triggered"

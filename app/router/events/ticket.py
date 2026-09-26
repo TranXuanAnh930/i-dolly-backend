@@ -32,21 +32,15 @@ from app.schema.events import (
 from app.schema.identity import UserRole
 from app.services.events.ticket_service import TicketService
 
-# add/update/delete below are ADMIN-ONLY manual escape hatches (see
-# TicketCreate's docstring and database-design.md §7.4) — lottery-won tickets
-# are issued by the draw job itself (app/tasks/lottery.py), not through these.
-# Fans buy direct-sale tickets through /checkout, and can only read their own
-# tickets otherwise.
+# Fans buy direct-sale tickets via /checkout, pay for lottery wins via /{id}/checkout, and read
+# their own tickets. add/update/delete are admin-only manual overrides.
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
 
 @router.post("/checkout", response_model=TicketRead)
-async def checkout_new_ticket(data: TicketCheckoutCreate, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> Ticket:
+def checkout_new_ticket(data: TicketCheckoutCreate, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> Ticket:
     try:
         return TicketService.checkout_ticket(db, user.id, data)
-    # Order matters here — InsufficientTicketStockError, PaymentAmountMismatch
-    # and UnsupportedGatewayError all subclass CartItemError, so the generic
-    # catch must come last or it swallows every more specific case as a 404,
-    # same reasoning as order.py's checkout_order.
+    # Specific errors first: several subclass CartItemError, which is caught later as a 404.
     except (InsufficientTicketStockError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -61,11 +55,10 @@ async def checkout_new_ticket(data: TicketCheckoutCreate, user: Users = Depends(
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.post("/{ticket_id}/checkout", response_model=TicketRead)
-async def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheckoutCreate, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> Ticket:
+def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheckoutCreate, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> Ticket:
     try:
         return TicketService.checkout_won_ticket(db, user.id, ticket_id, data)
-    # Same ordering reasoning as checkout_new_ticket above: catch the
-    # generic CartItemError-family checks after the more specific ones.
+    # Specific errors first, as in checkout_new_ticket.
     except TicketNotFoundError as e:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -76,11 +69,9 @@ async def checkout_won_lottery_ticket(ticket_id: uuid.UUID, data: WonTicketCheck
         db.rollback()
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-# FRONTEND: not currently called by i-dolly-frontend. Tickets are only ever
-# created through /tickets/checkout or /tickets/{id}/checkout — this generic
-# admin-only create (and the single-get/update/delete below) are unused.
+# Not used by the frontend.
 @router.post("/add", response_model=TicketRead)
-async def add_new_ticket(data: TicketCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
+def add_new_ticket(data: TicketCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
     try:
         return TicketService.add_ticket(db, data)
     except TriggerViolationError as e:
@@ -89,14 +80,14 @@ async def add_new_ticket(data: TicketCreate, current_user: Users = Depends(requi
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/mine", response_model=List[TicketRead])
-async def list_my_tickets(current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Ticket]:
+def list_my_tickets(current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Ticket]:
     result = TicketService.get_my_tickets(db, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="You have no tickets")
     return result
 
 @router.get("/concert/{concert_id}/sales", response_model=TicketSalesPageRead)
-async def get_concert_sales(
+def get_concert_sales(
     concert_id: uuid.UUID,
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
@@ -108,9 +99,9 @@ async def get_concert_sales(
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.get("/{id}", response_model=TicketRead)
-async def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> Ticket:
+def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> Ticket:
     ticket = TicketService.get_ticket(db, id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
@@ -118,17 +109,17 @@ async def get_ticket_by_id(id: uuid.UUID, current_user: Users = Depends(get_curr
         raise HTTPException(status_code=403, detail="You can only view your own tickets")
     return ticket
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.put("/update/{id}", response_model=TicketRead)
-async def update_existing_ticket(id: uuid.UUID, data: TicketUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
+def update_existing_ticket(id: uuid.UUID, data: TicketUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Ticket:
     try:
         return TicketService.update_ticket(db, id, data)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
-async def delete_existing_ticket(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
+def delete_existing_ticket(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         TicketService.delete_ticket(db, id)
     except ServiceError as e:

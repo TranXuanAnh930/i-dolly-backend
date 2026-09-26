@@ -12,8 +12,7 @@ from app.schema.identity import UserRole
 
 class DirectSaleCampaignService:
 
-    # Company-scoped via a two-level join: ticket_type_id -> concert_id ->
-    # concert.company_id — same pattern as lottery_campaign_service.
+    # Company-scoped via ticket_type -> concert.company_id.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:

@@ -15,7 +15,7 @@ class Ticket(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
     ticket_type_id = Column(UUID(as_uuid=True), ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, index=True)
-    lottery_entry_id = Column(UUID(as_uuid=True), ForeignKey("lottery_entries.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # null = directly purchased, no lottery
+    lottery_entry_id = Column(UUID(as_uuid=True), ForeignKey("lottery_entries.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # null for direct-sale tickets
     payment_id = Column(UUID(as_uuid=True), ForeignKey("payment.id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)
     status = Column(Enum(TicketStatus, name="ticket_status_enum"), nullable=False, server_default="reserved")
     issued_code = Column(String, unique=True, nullable=True)  # set once status = 'paid'
@@ -27,8 +27,5 @@ class Ticket(Base):
     ticket_type = relationship("TicketType")
     user = relationship("Users")
     lottery_entry = relationship("LotteryEntry")
-    # foreign_keys is required here now — payment.ticket_id (added for
-    # Payment -> Ticket traceability, see payment_service.
-    # create_ticket_payment) gives this pair of tables a second FK path,
-    # which SQLAlchemy can't disambiguate on its own.
+    # foreign_keys is needed because payment.ticket_id adds a second FK path between the tables.
     payment = relationship("Payment", foreign_keys=[payment_id])

@@ -16,14 +16,11 @@ class LotteryCampaign(Base):
     ticket_type_id = Column(UUID(as_uuid=True), ForeignKey("ticket_types.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, index=True)
     entry_start_at = Column(DateTime(timezone=True), nullable=False)
     entry_end_at = Column(DateTime(timezone=True), nullable=False)
-    # Nullable — NULL means "not drawn yet." Only the draw job itself
-    # writes this (app/services/lottery_draw_service.py), never a client;
-    # it records when the campaign WAS drawn, not a scheduled target.
+    # When the campaign was drawn; set by the draw, null until then.
     draw_at = Column(DateTime(timezone=True), nullable=True)
     payment_deadline_hours = Column(Integer, nullable=False, server_default="48")
     status = Column(Enum(CampaignStatus, name="campaign_status_enum"), nullable=False, server_default="open")
-    # Per-campaign, data-driven cap — raise it for a specific campaign via an
-    # UPDATE, no migration needed (database-design.md's note on this table).
+    # Not exposed through the API; stays at 1 (see LotteryCampaignBase).
     max_entries_per_user = Column(Integer, nullable=False, server_default="1")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

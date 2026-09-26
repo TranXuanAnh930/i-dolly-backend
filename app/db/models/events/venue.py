@@ -17,10 +17,8 @@ class Venue(Base):
     city = Column(String, nullable=False)
     country = Column(String, nullable=False)
     total_capacity = Column(Integer, nullable=False)
-    # GENERATED ALWAYS AS ... STORED in Postgres (database-design.md §3.7) — Computed() marks it
-    # server-derived so SQLAlchemy leaves it out of every INSERT/UPDATE. Plain VARCHAR, not a
-    # Postgres enum: a GENERATED STORED expression must be IMMUTABLE, and the enum text->enum cast
-    # is only STABLE (enum values can change at runtime via ALTER TYPE ... ADD VALUE).
+    # Postgres GENERATED ALWAYS AS ... STORED column; Computed() keeps it out of INSERT/UPDATE.
+    # VARCHAR rather than an enum because a generated expression must be IMMUTABLE.
     size = Column(
         String,
         Computed(

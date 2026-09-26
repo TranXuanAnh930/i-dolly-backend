@@ -32,9 +32,7 @@ class IdolRead(IdolBase):
 
     model_config = {"from_attributes": True}
 
-# --- page-shaped reads — one bundled response per screen, assembled
-# server-side, instead of the client stitching /idols/all + /idol_colors/all
-# + /positions/idol_positions/all together itself.
+# --- page-shaped reads: one bundled response per screen.
 
 class GroupMini(BaseModel):
     id: uuid.UUID
@@ -49,7 +47,7 @@ class IdolWithPositions(IdolRead):
 
 class MembersPageRead(BaseModel):
     idols: list[IdolWithPositions]
-    groups: list[GroupMini]  # for the members-page unit filter only
+    groups: list[GroupMini]  # for the members page's group filter
 
 class IdolDetailGroup(GroupMini):
     description: str | None = None
@@ -57,26 +55,21 @@ class IdolDetailGroup(GroupMini):
 class IdolDetailRead(BaseModel):
     idol: IdolWithPositions
     group: IdolDetailGroup | None = None
-    # Other members of the same group, or other solo idols if this idol has
-    # none — whichever the page's "more from this unit" section needs.
+    # Other members of the same group, or other solo idols if the idol has no group.
     siblings: list[IdolWithPositions] = []
 
-# --- manager/admin settings pages — same one-bundled-response idea, but
-# unlike the customer-facing pages above, an empty list here is a normal
-# state (a fresh company has no idols yet), not a 404.
+# --- manager/admin settings pages (an empty list is a normal result, not a 404).
 
 class ManagerIdolsPageRead(BaseModel):
     idols: list[IdolRead]
-    groups: list[GroupMini]  # for the idol table's "Group" column only
+    groups: list[GroupMini]  # for the idol table's "Group" column
 
-# The group <select> is filtered client-side to the current company
-# (myGroups), unlike GroupMini's other uses which only ever display a name
-# — so this is the one place group.company_id is needed alongside id/name.
+# Group option with company_id, so the form can filter groups to the current company.
 class GroupOptionForCompany(GroupMini):
     company_id: uuid.UUID
     is_active: bool
 
 class ManagerIdolFormPageRead(BaseModel):
-    idols: list[IdolRead]  # only read for the isEditing lookup
+    idols: list[IdolRead]
     groups: list[GroupOptionForCompany]  # the group <select>, filtered by company
     colors: list[IdolColorRead]  # the color <select>

@@ -17,7 +17,7 @@ class Concert(Base):
     venue_id = Column(UUID(as_uuid=True), ForeignKey("venues.id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
-    capacity = Column(Integer, nullable=False)  # may be <= venue.total_capacity; not DB-enforced (database-design.md §3.7)
+    capacity = Column(Integer, nullable=False)  # may be below the venue's capacity; not DB-enforced
     event_datetime = Column(DateTime(timezone=True), nullable=False)
     doors_open_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(Enum(ConcertStatus, name="concert_status_enum"), nullable=False, server_default="scheduled")

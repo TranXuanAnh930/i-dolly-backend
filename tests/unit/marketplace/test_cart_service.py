@@ -88,6 +88,31 @@ class TestCartService:
         db.add.assert_called_once()
         db.commit.assert_called_once()
 
+    def test_add_to_cart_existing_item_reprices_row(self):
+        from app.db.models.marketplace import Product
+        from app.schema.marketplace import CartItem
+        from app.services.marketplace.cart_service import CartService
+
+        db = MagicMock()
+        db.get.return_value = make_mock_user()
+        product = make_mock_product(quantity=10)
+        product.price = 1200.0  # price went up since the item was first added
+        existing = MagicMock()
+        existing.quantity = 1
+        existing.price = 1000.0
+        existing.total_price = 1000.0
+        product_query = MagicMock()
+        product_query.filter.return_value.with_for_update.return_value.first.return_value = product
+        cart_query = MagicMock()
+        cart_query.filter.return_value.with_for_update.return_value.first.return_value = existing
+        db.query.side_effect = lambda model: product_query if model is Product else cart_query
+
+        CartService.add_to_cart(db, CartItem(quantity=2, product_id=DEFAULT_ID), DEFAULT_ID)
+
+        assert existing.quantity == 3
+        assert existing.price == 1200.0
+        assert existing.total_price == existing.price * existing.quantity == 3600.0
+
     def test_add_to_cart_insufficient_stock(self):
         from app.db.models.marketplace import Product
         from app.exception.common import BadRequestError

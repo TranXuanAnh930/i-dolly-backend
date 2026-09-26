@@ -10,7 +10,7 @@ from app.exception.common import BadRequestError
 from app.schema.identity import UserCreate
 from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
-from app.utils.jwt_manager import create_access_token, create_email_verification_token, verify_token_and_get_user_id
+from app.utils.jwt_manager import create_access_token, create_email_verification_token, decode_email_token
 
 
 class AuthService:
@@ -40,7 +40,7 @@ class AuthService:
 
     @staticmethod
     def create_tokens(db: Session, user: Users) -> dict[str, str]:
-        # Revoke all existing refresh tokens for this user
+        # One active session per user: revoke existing refresh tokens.
         db.query(RefreshToken).filter(
             RefreshToken.user_id == user.id,
             RefreshToken.revoked == False
@@ -82,7 +82,7 @@ class AuthService:
 
     @staticmethod
     def verify_email_token(db: Session, token: str) -> bool | None:
-        user_id = verify_token_and_get_user_id(token, "verify")
+        user_id = decode_email_token(token, "verify")
         if not user_id:
             return None
         db_user = db.query(Users).filter(Users.id == user_id).first()

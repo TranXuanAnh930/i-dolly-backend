@@ -210,10 +210,6 @@ def cleanup_concert_scenario(company_id: uuid.UUID, venue_id: uuid.UUID, user_id
         db.commit()
 
 
-# ───────────────────────────────────────────────────────────────
-# Tests — fill these in.
-# ───────────────────────────────────────────────────────────────
-
 def test_concurrent_draw_only_succeeds_once():
     admin, company, venue, concert, ticket_type, campaign, fan_ids = build_drawable_concert(total_quantity=1, entrant_count=3)
     draw_calls = [make_draw_call(concert.id, admin.id) for _ in range(2)]

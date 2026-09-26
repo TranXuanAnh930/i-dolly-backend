@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -27,5 +28,7 @@ class ShippingStatus(str, Enum):
 
 class ShippingStatusResponse(BaseModel):
     status : ShippingStatus
+    # When the status last changed; set explicitly by OrderService on each status update.
+    updated_at : datetime
 
     model_config = {"from_attributes" : True}

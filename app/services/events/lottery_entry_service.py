@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -7,6 +8,7 @@ from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise, flush_or_raise
 from app.schema.events import LotteryDrawResultRead, LotteryEntryApply, LotteryEntryApplyBatch
+from app.schema.events.lottery_campaign import CampaignStatus
 from app.schema.events.lottery_entry import LotteryEntryStatus
 from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
@@ -17,11 +19,8 @@ _LIVE_TICKET_STATUSES = (TicketStatus.reserved, TicketStatus.pending_payment, Ti
 
 class LotteryEntryService:
 
-    # Fan-facing / self-scoped, same as lottery_preferences: "applying" to a
-    # lottery creates an entry owned by current_user. Mirrors the two DB triggers
-    # (trg_lottery_entries_cap, trg_lottery_entries_require_preference) at the
-    # service layer so a bad apply() returns a clean 400/403 instead of a raw
-    # IntegrityError from Postgres.
+    # Fan-facing: entries are owned by current_user. Checks here mirror the DB triggers
+    # (trg_lottery_entries_cap, trg_lottery_entries_require_preference) to return clean 400/403s.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
@@ -29,29 +28,31 @@ class LotteryEntryService:
 
     @staticmethod
     def _stage_entry(db: Session, campaign_id: uuid.UUID, current_user: Users) -> LotteryEntry:
-        """Every rule apply_to_lottery enforces, plus the INSERT — but no
-        commit, so the caller owns the transaction boundary. Shared by the
-        single and batch entry points so the two can't drift apart.
+        """Validate and flush one lottery entry without committing.
 
-        Flushes rather than commits: the triggers still fire per row, and a
-        later tier in the same batch sees the rows staged before it (so the cap
-        check below counts them). Nothing is durable until the caller commits,
-        which is what makes the batch all-or-nothing — an exception here leaves
-        the transaction uncommitted, and get_db's close() discards it.
+        Shared by the single and batch apply paths; the caller commits, so a batch is all-or-nothing.
+        Flushed rows count toward the cap check for later tiers in the same batch.
         """
-        campaign = db.get(LotteryCampaign, campaign_id)
+        # FOR SHARE: the draw locks campaigns FOR UPDATE, so an apply and a draw can't interleave.
+        # An apply that waited on a draw re-reads the row and sees status=drawn below, instead of
+        # adding a pending entry the draw never processes. Concurrent applies don't block each other.
+        campaign = db.get(LotteryCampaign, campaign_id, with_for_update={"read": True}, populate_existing=True)
         if not campaign:
             raise NotFoundError("Lottery campaign not found")
+        now = datetime.now(timezone.utc)
+        if campaign.status == CampaignStatus.cancelled:
+            raise BadRequestError("This lottery campaign is cancelled")
+        if campaign.status != CampaignStatus.open:
+            raise BadRequestError("This lottery campaign is no longer accepting entries")
+        if now < campaign.entry_start_at:
+            raise BadRequestError("Entries for this lottery campaign haven't opened yet")
+        if now > campaign.entry_end_at:
+            raise BadRequestError("Entries for this lottery campaign have closed")
         ticket_type = db.get(TicketType, campaign.ticket_type_id)
         if not ticket_type:
             raise NotFoundError("Lottery campaign not found")
 
-        # Mirrors ticket_service's own one-ticket-per-concert boundary
-        # (trg_tickets_one_per_concert) from the other direction: a fan who
-        # already holds a live ticket for this concert — bought directly, or won
-        # from an earlier lottery tier — has nothing to gain from also applying
-        # here, and letting them in would risk ending up with two tickets for
-        # one concert if they later win this tier too.
+        # A fan who already holds a live ticket for this concert can't apply.
         existing_ticket = (
             db.query(Ticket)
             .join(TicketType, Ticket.ticket_type_id == TicketType.id)
@@ -91,17 +92,14 @@ class LotteryEntryService:
         db_entry = LotteryEntry(campaign_id=campaign_id, user_id=current_user.id)
         db.add(db_entry)
         flush_or_raise(db)  # backstop for trg_lottery_entries_fan_only/_cap/_require_preference
-        # lottery_registered: confirms the entry landed, same commit as the
-        # row it describes (notification_service.create_notification's own
-        # convention) — previously the only NotificationType with no
-        # producer anywhere (project_status.md's notifications note).
+        # Created in the same transaction as the entry.
         NotificationService.create_notification(db, current_user.id, NotificationType.lottery_registered, lottery_entry_id=db_entry.id)
         return db_entry
 
     @staticmethod
     def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry:
         if current_user.role != UserRole.fan:
-            raise ForbiddenError("Only fan accounts can apply to a lottery")  # primary check for trg_lottery_entries_fan_only
+            raise ForbiddenError("Only fan accounts can apply to a lottery")
         db_entry = LotteryEntryService._stage_entry(db, data.campaign_id, current_user)
         commit_or_raise(db)
         db.refresh(db_entry)
@@ -109,12 +107,7 @@ class LotteryEntryService:
 
     @staticmethod
     def apply_to_lotteries(db: Session, data: LotteryEntryApplyBatch, current_user: Users) -> list[LotteryEntry]:
-        """Batch counterpart to apply_to_lottery. Every tier is validated and
-        staged first, then a single commit makes them durable together — so a
-        fan either gets every tier they submitted or none of them, never the
-        partial state a per-tier client loop leaves behind when one call fails
-        partway through.
-        """
+        """Apply to several campaigns at once; either every entry is created or none is."""
         if current_user.role != UserRole.fan:
             raise ForbiddenError("Only fan accounts can apply to a lottery")
         entries = [
@@ -128,11 +121,7 @@ class LotteryEntryService:
 
     @staticmethod
     def get_my_entries(db: Session, current_user: Users) -> list[LotteryEntry]:
-        # joinedload both hops — LotteryEntryRead embeds campaign (which embeds
-        # ticket_type), and this list can span many different campaigns across
-        # a fan's whole history, so lazy-loading each would be its own N+1 at
-        # the DB layer (the frontend used to do this same N+1 over HTTP, once
-        # per entry — see lotteryEntries.js's old resolveContext).
+        # Eager-load campaign and ticket_type, which LotteryEntryRead embeds, to avoid N+1 queries.
         return (
             db.query(LotteryEntry)
             .options(joinedload(LotteryEntry.campaign).joinedload(LotteryCampaign.ticket_type))
@@ -142,9 +131,7 @@ class LotteryEntryService:
 
     @staticmethod
     def get_entries_for_campaign(db: Session, campaign_id: uuid.UUID, current_user: Users) -> list[LotteryEntry]:
-        """Manager/admin view of who has entered a campaign under their own
-        company (company_id resolved the same way as lottery_campaign_service:
-        campaign -> ticket_type -> concert.company_id)."""
+        """Entries for one campaign; managers are limited to their own company's concerts."""
         campaign = db.get(LotteryCampaign, campaign_id)
         if not campaign:
             raise NotFoundError("Lottery campaign not found")
@@ -158,13 +145,9 @@ class LotteryEntryService:
 
     @staticmethod
     def get_draw_results_for_concert(db: Session, concert_id: uuid.UUID, current_user: Users) -> list[LotteryDrawResultRead]:
-        """Manager/admin view of a concert's draw outcome, across every tier's
-        campaign at once (a draw itself is per-concert, not per-campaign —
-        lottery_draw_service.draw_lottery's own docstring/comments). Only
-        decided entries (won/lost) are returned; a campaign that hasn't been
-        drawn yet just contributes nothing here rather than showing
-        still-pending rows.
-        """
+        """Won and lost entries across every campaign of a concert, with each winner's ticket.
+
+        Managers are limited to their own company's concerts. Undrawn campaigns contribute nothing."""
         concert = db.get(Concert, concert_id)
         if not concert:
             raise NotFoundError("Concert not found")
@@ -182,10 +165,7 @@ class LotteryEntryService:
         if not entries:
             return []
 
-        # Grouped query for every winner's ticket, not one query per entry —
-        # same reasoning as draw_lottery's own emails_by_user_id lookup before
-        # it was removed (see project_status.md's Email dispatch note). A
-        # lost entry has no ticket at all, hence the .get() default below.
+        # One query for every winner's ticket; lost entries have none.
         tickets_by_entry_id = {
             ticket.lottery_entry_id: ticket
             for ticket in db.query(Ticket).filter(Ticket.lottery_entry_id.in_([entry.id for entry in entries])).all()

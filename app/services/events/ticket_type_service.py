@@ -10,17 +10,13 @@ from app.schema.events import TicketTypeCreate, TicketTypeUpdate
 from app.schema.events.concert import ConcertStatus
 from app.schema.identity import UserRole
 
-# Mirrors concert_service._EVENT_OPEN_STATUSES/reasoning: once the parent
-# concert is on sale (or further), a ticket type's capacity is frozen for
-# managers too — resizing how many tickets are on offer out from under fans
-# who already hold entries/tickets is exactly what this blocks. Cancelling
-# the concert unlocks it again, same as the concert's own date/capacity.
+# While the parent concert is in one of these statuses, a ticket type's capacity can't change
+# (same rule as concert_service).
 _EVENT_OPEN_STATUSES = {ConcertStatus.on_sale, ConcertStatus.sold_out, ConcertStatus.completed}
 
 class TicketTypeService:
 
-    # Company-scoped via the parent concert's company_id, same pattern as
-    # concert_performers (concert_service._manager_scope_violation).
+    # Company-scoped via the parent concert's company_id.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
@@ -35,7 +31,7 @@ class TicketTypeService:
             raise ForbiddenError("Managers can only manage ticket types for their own company's concerts")
         db_tt = TicketType(**data.model_dump())
         db.add(db_tt)
-        commit_or_raise(db)  # trg_ticket_types_capacity
+        commit_or_raise(db)
         db.refresh(db_tt)
         return db_tt
 
@@ -63,18 +59,15 @@ class TicketTypeService:
             ):
                 raise ForbiddenError("Concert is already on sale — cancel it first, then resize ticket capacity once it's cancelled")
             if data.total_quantity < db_tt.sold_quantity:
-                raise BadRequestError("total_quantity cannot be less than sold_quantity")  # would violate chk_ticket_types_capacity
+                raise BadRequestError("total_quantity cannot be less than sold_quantity")
             db_tt.total_quantity = data.total_quantity
         if data.price is not None:
-            # Managers can't reprice a ticket after creation — fans may already
-            # hold entries/tickets at the advertised price; only an admin can
-            # correct it. Rounded before comparing: price is Numeric(10,2)
-            # (Decimal) in the DB but arrives here as a float, and the two
-            # don't compare equal bit-for-bit even for the "same" price.
+            # Only admins can change a ticket's price after creation. Rounded before comparing because
+            # the DB value is a Decimal and the input is a float.
             if current_user.role == UserRole.manager and round(float(db_tt.price), 2) != round(data.price, 2):
                 raise ForbiddenError("Managers cannot change ticket price after creation — ask an admin")
             db_tt.price = data.price
-        commit_or_raise(db)  # trg_ticket_types_capacity (fires on UPDATE OF total_quantity)
+        commit_or_raise(db)
         db.refresh(db_tt)
         return db_tt
 

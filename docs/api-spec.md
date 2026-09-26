@@ -433,10 +433,11 @@ lottery or (once built — see `project_status.md` §5) direct purchase.
 
 ### `POST /lottery_campaigns/add` 🔒 manager+
 - Request (`LotteryCampaignCreate`): `entry_start_at`, `entry_end_at` (both datetime),
-  `payment_deadline_hours` (int, default 48), `max_entries_per_user` (int, default 1),
-  `ticket_type_id` (uuid)
-- Response (`LotteryCampaignRead`): adds `id`, `status`, `draw_at` (null until actually drawn —
-  written only by the draw job, never client-supplied), `created_at`
+  `payment_deadline_hours` (int, default 48), `ticket_type_id` (uuid). `max_entries_per_user` is
+  not accepted (ignored if sent) — pinned to 1 server-side for now.
+- Response (`LotteryCampaignRead`): adds `id`, `status`, `max_entries_per_user` (read-only, always
+  1 for now), `draw_at` (null until actually drawn — written only by the draw job, never
+  client-supplied), `created_at`
 - UI: manager — set up a lottery for a ticket tier
 
 ### `GET /lottery_campaigns/ticket_type/{ticket_type_id}` 🔓
@@ -630,8 +631,9 @@ Attaches album-specific data to an existing product, and is what establishes tha
 company ownership.
 - Request (`AlbumDetailCreate`): `product_id` (uuid, must already exist), `idol_id` (uuid,
   optional), `group_id` (uuid, optional — exactly one of the two required), `release_date` (date,
-  optional), `track_count` (int, optional, >0), `format` (str, default `"physical"`),
-  `cover_image_url` (str, optional)
+  optional), `track_count` (int, optional, >0), `format` (str, default `"physical"`) — no cover
+  image field here; every product's image, album or not, is `products.image_url` only
+  (`POST /products/{id}/image`), see `database-design.md` §3.16
 - Response (`AlbumDetailRead`): `product_id`, `idol_id`, `group_id`, plus base fields
 - `400` if the referenced `idol_id`/`group_id` is deactivated (`is_active=false`) — new releases
   can't be attached to an inactive artist (database-design.md §3.3/§3.4)
@@ -646,7 +648,7 @@ company ownership.
 - UI: product detail page (album variant)
 
 ### `PUT /album_details/update/{product_id}` 🔒 manager+ (company-scoped)
-- Request (`AlbumDetailUpdate`): `release_date`, `track_count`, `format`, `cover_image_url`
+- Request (`AlbumDetailUpdate`): `release_date`, `track_count`, `format`
   (`idol_id`/`group_id` immutable after creation)
 
 ### `DELETE /album_details/delete/{product_id}` 🔒 manager+ (company-scoped)
@@ -759,8 +761,9 @@ follow up with `PATCH /payment/status/order/{order_id}` (below) to fetch the pay
   same key against an already-resolved payment returns `409`, not a duplicate order)
 - Response (`Order`): `id`, `user_id`, `shipping_address_id`, `total_price`, `status`
   (`"pending"|"confirmed"|"cancelled"` — a `paypal` checkout comes back `"pending"`, not
-  `"confirmed"`, until the payment is captured), `created_at`, `items`, `shippingstatus`,
-  `shippingaddress`
+  `"confirmed"`, until the payment is captured), `created_at`, `items`, `shippingstatus`
+  (always present — every order gets a `shipping_status` row at `"pending"` in the same checkout
+  transaction, not created lazily later), `shippingaddress`
 - Errors: `404` (empty cart / bad address), `402` (mock payment failed), `400` (stock/amount
   mismatch, unsupported gateway, or a resale-cap trigger violation), `409` (idempotency key already
   used) — distinguish these in the UI rather than showing one generic "checkout failed"
@@ -780,14 +783,30 @@ follow up with `PATCH /payment/status/order/{order_id}` (below) to fetch the pay
 - UI: order detail page — "cancel order" button
 
 ### `GET /order/shipping_status/{order_id}` 🔒 fan
-- Response: not schema-enforced; `ShippingStatusResponse`-shaped (`{"status": ...}`)
+- Response: not schema-enforced (raw `shipping_status` row); `ShippingStatusResponse`-shaped —
+  `status`, `updated_at` (when `status` last changed)
 - UI: order detail page — shipping tracker
 
 ### `PATCH /order/update_shipping_status/{order_id}` 🔒 admin
+Free-form override — sets any status, including going backwards. A manual-correction tool, not the
+everyday fulfillment path; see `PATCH /order/{order_id}/ship` below for that.
 - Request (`ShippingStatus` enum): `"pending" | "processing" | "shipped" | "delivered" |
   "cancelled"`
-- Response: `Order`
-- UI: admin — fulfillment/shipping dashboard
+- Response: not schema-enforced (raw `shipping_status` row, same shape as the `GET` above, despite
+  the type hint saying `Order` — the service returns the `shipping_status` row, not the order)
+- `400` if the order is already `cancelled`
+- UI: admin — fulfillment/shipping dashboard, manual override
+
+### `PATCH /order/{order_id}/ship` 🔒 manager+ (company-scoped)
+The everyday "mark shipped" action — one button, no status picker. Only moves `pending`/`processing`
+→ `shipped`; a manager may only ship an order containing at least one of their own company's
+products (an admin isn't scoped). Writes an `order_shipped` in-app notification to the buyer in the
+same commit as the status flip.
+- Response (`Order`): the full updated order, same shape as `POST /order/checkout`'s response —
+  `shippingstatus.status` is now `"shipped"` with a fresh `updated_at`
+- Errors: `404` (order doesn't exist), `403` (manager's company has no product in this order), `400`
+  (order isn't in `pending`/`processing` — already shipped/delivered, or cancelled)
+- UI: manager orders page — a "Ship" button per order row, or on the order detail page
 
 ### `PATCH /payment/status/order/{order_id}` 🔒 fan
 Was `PATCH /payment/status/{order_id}` in an earlier revision of this doc — the path changed when
@@ -861,9 +880,9 @@ surface to the user.
 ### `GET /notifications/mine` 🔒 fan
 - Query: `unread_only` (bool, default `false`)
 - Response: `List[NotificationRead]` — `id`, `user_id`, `type`
-  (`"order_confirmation"|"ticket_confirmation"|"lottery_registered"|"lottery_draw_triggered"|
-  "lottery_draw_failed"|"lottery_result"|"lottery_payment_reminder"|"lottery_payment_confirmation"|
-  "event_reminder"|"password_reset"`),
+  (`"order_confirmation"|"order_shipped"|"ticket_confirmation"|"lottery_registered"|
+  "lottery_draw_triggered"|"lottery_draw_failed"|"lottery_draw_completed"|"lottery_result"|
+  "lottery_payment_reminder"|"lottery_payment_confirmation"|"event_reminder"|"password_reset"`),
   `order_id`/`ticket_id`/`lottery_entry_id`/`concert_id` (exactly one set, depending on `type`),
   `status`, `sent_at`, `is_read`, `read_at`, `created_at`
 - Errors: `404` if the fan has no notifications at all (not just none matching `unread_only`)

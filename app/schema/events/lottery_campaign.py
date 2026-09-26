@@ -18,7 +18,8 @@ class LotteryCampaignBase(BaseModel):
     entry_start_at: datetime
     entry_end_at: datetime
     payment_deadline_hours: int = Field(48, gt=0)
-    max_entries_per_user: int = Field(1, gt=0)
+    # max_entries_per_user isn't client-settable; it stays at the DB default of 1 because the draw
+    # assumes one entry per user per campaign (docs/bugs.md #6). Read-only on LotteryCampaignRead.
 
     @model_validator(mode="after")
     def _check_window(self) -> Self:
@@ -36,19 +37,13 @@ class LotteryCampaignRead(LotteryCampaignBase):
     id: uuid.UUID
     ticket_type_id: uuid.UUID
     status: CampaignStatus
-    # Written only by the draw job (app/services/lottery_draw_service.py) —
-    # never client-supplied. NULL until this campaign is actually drawn.
+    max_entries_per_user: int
+    # Set by the lottery draw; None until drawn.
     draw_at: datetime | None
     created_at: datetime
-    # Embedded (via the ORM relationship of the same name) so a caller that
-    # already has a campaign doesn't need a second round-trip just to learn
-    # its tier/price — see LotteryEntryRead's own comment for where this
-    # matters most.
+    # Embedded so callers get the tier and price without another request.
     ticket_type: TicketTypeRead
-    # Total fans who've applied — not a mapped column, set as a plain
-    # attribute by concert_service.get_concert_detail_public before this model
-    # validates the ORM object (from_attributes reads it via getattr same
-    # as any real column).
+    # Number of applications; set as a plain attribute by concert_service, not a mapped column.
     entry_count: int = 0
 
     model_config = {"from_attributes": True}

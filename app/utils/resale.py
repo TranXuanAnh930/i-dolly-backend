@@ -1,7 +1,3 @@
-# Anti-resale purchase limit — applies per product, per user, cumulative
-# across every order they've ever placed (see order_service.checkout and
-# database-design.md §4.2), to any product whose category has
-# is_resale_capped=True (the default — see Category.is_resale_capped).
-# One named constant so the number product_service exposes to the client
-# can never drift from the number order_service actually enforces.
+# Max units of one product a fan can buy across all their orders, for products whose category is
+# resale-capped. Shared by the check in order_service and the value shown to clients.
 RESALE_CAP_QUANTITY = 3

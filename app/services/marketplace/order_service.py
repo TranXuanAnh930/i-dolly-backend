@@ -1,9 +1,10 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from app.cache.cache_service import CacheService
+from app.cache.invalidation import CacheInvalidation
 from app.db.models.identity import Users
 from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product, ShippingAddress, ShippingStatus
 from app.exception.checkout import (
@@ -13,7 +14,7 @@ from app.exception.checkout import (
     PaymentAmountMismatch,
     UnsupportedGatewayError,
 )
-from app.exception.common import BadRequestError, NotFoundError
+from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import (
     DuplicateIdempotencyKeyError,
     FanOnlyPurchaseError,
@@ -45,7 +46,7 @@ class OrderService:
     def checkout(db:Session, user_id:uuid.UUID, payment_data:PaymentCreate) -> Order:
         user = db.get(Users, user_id)
         if not user or user.role != UserRole.fan:
-            # Primary check for trg_orders_fan_only — see FanOnlyPurchaseError's docstring.
+            # Primary check; trg_orders_fan_only is the backstop.
             raise FanOnlyPurchaseError("Only fan accounts can check out")
         address = (db.query(ShippingAddress).filter(payment_data.shipping_address_id==ShippingAddress.id, ShippingAddress.user_id==user_id).first())
         if not address:
@@ -66,7 +67,7 @@ class OrderService:
         capped_product_ids = {product.id for product in capped_products}
 
         if capped_product_ids:
-        # one grouped query across every capped item in the cart, not one query per item
+        # One grouped query for every resale-capped item in the cart.
             past_qty = dict(
                 db.query(OrderItem.product_id, func.sum(OrderItem.quantity))
                 .join(Order).filter(Order.user_id == user_id, OrderItem.product_id.in_(capped_product_ids))
@@ -76,10 +77,8 @@ class OrderService:
                 if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > RESALE_CAP_QUANTITY:
                     raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the {RESALE_CAP_QUANTITY}-unit resale cap")
 
-        # populate_existing() is required, not decorative: the resale-cap precheck above already
-        # loaded these same Product rows into the session's identity map unlocked, so without this
-        # the stock check below would silently read that stale pre-lock state instead of the row
-        # with_for_update() just locked — see project_status.md §4 item 1's "Regression" note.
+        # populate_existing() is required: the resale-cap query already loaded these rows unlocked,
+        # and without it the stock check would read those stale copies instead of the locked rows.
         products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
         for product in products:
             item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
@@ -89,11 +88,10 @@ class OrderService:
         order = Order(user_id=user_id, shipping_address_id=payment_data.shipping_address_id, total_price=float(total_amount))
         db.add(order)
         flush_or_raise(db)
+        # PaymentService.create_payment creates the ShippingStatus row.
 
         for item in cart_items:
-        # Same tax-inclusive treatment as total_amount above — otherwise
-        # sum(order_item.price * quantity) drifts 10% below order.total_price,
-        # and the order-details line items would show pre-tax figures.
+        # Line-item prices are tax-inclusive, matching total_amount.
             order_item = OrderItem(
                 order_id=order.id,
                 product_id=item.product_id,
@@ -114,15 +112,11 @@ class OrderService:
             db.query(Cart).filter(Cart.user_id==payment.user_id, Cart.product_id.in_(product_ids)).delete()
             NotificationService.create_notification(db, user_id, NotificationType.order_confirmation, order_id=order.id)
 
-        commit_or_raise(db)  # trg_orders_fan_only / chk_products_capacity backstop
+        commit_or_raise(db)
         if payment.status == PaymentStatus.success:
-            # Both, not just the first: product.quantity was decremented above,
-            # and that stock figure is embedded in the per-product detail
-            # payload (ProductCard.quantity) as well as the list/store-page
-            # ones — busting only the latter leaves the detail page quoting
-            # pre-purchase stock while the grid shows the real number.
-            CacheService.delete_cached_products()
-            CacheService.delete_cached_product_details()
+            # Stock changed: clear both the list pages and the product detail pages.
+            CacheInvalidation.delete_cached_products()
+            CacheInvalidation.delete_cached_product_details()
         db.refresh(order)
         return order
 
@@ -145,6 +139,7 @@ class OrderService:
             .first()
         )
 
+    # Out of scope: not used by the frontend. Doesn't restock, refund, or bust the product cache.
     @staticmethod
     def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order:
         order = OrderService.fetch_single_placed_order(db, user_id, order_id)
@@ -171,14 +166,50 @@ class OrderService:
         if order_shippingstatus.status == SchemaShippingStatus.cancelled:
             raise BadRequestError("Order is cancelled and its shipping status can no longer be updated")
         order_shippingstatus.status = new_status
+        # Set explicitly; server_onupdate isn't backed by a DB trigger.
+        order_shippingstatus.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(order_shippingstatus)
         return order_shippingstatus
 
-    # --- manager/admin orders page. Product has no company_id of its own, so which orders
-    # "belong" to a company is resolved the same way as ManagerProductsPage: via
-    # album_details/merch_details -> idol/group -> company_id, ownerless products counting as
-    # everyone's. Requires real auth (require_manager_or_admin) since orders are customer data.
+    # --- manager "Ship" button: moves pending/processing -> shipped, only for orders containing one
+    # of the manager's company's products (ownerless products count for every company). Admins
+    # are unrestricted.
+
+    @staticmethod
+    def _manager_order_scope_violation(db: Session, order: Order, current_user: Users) -> bool:
+        if current_user.role != UserRole.manager:
+            return False
+        product_ids = {item.product_id for item in order.items}
+        products = db.query(Product).filter(Product.id.in_(product_ids)).all()
+        company_by_product = ProductService.resolve_product_company_ids(db, products)
+        return not any(company_id in (None, current_user.company_id) for company_id in company_by_product.values())
+
+    @staticmethod
+    def ship_order(db: Session, order_id: uuid.UUID, current_user: Users) -> Order:
+        order = (
+            db.query(Order)
+            .filter(Order.id == order_id)
+            .options(selectinload(Order.items), selectinload(Order.shippingstatus))
+            .first()
+        )
+        if not order:
+            raise NotFoundError("Order not found")
+        if OrderService._manager_order_scope_violation(db, order, current_user):
+            raise ForbiddenError("Managers can only ship orders containing their own company's products")
+        if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
+            current = order.shippingstatus.status.value if order.shippingstatus else "unknown"
+            raise BadRequestError(f"Order cannot be marked shipped from its current status ({current})")
+        order.shippingstatus.status = SchemaShippingStatus.shipped
+        order.shippingstatus.updated_at = datetime.now(timezone.utc)
+        NotificationService.create_notification(db, order.user_id, NotificationType.order_shipped, order_id=order.id)
+        db.commit()
+        db.refresh(order)
+        return order
+
+    # --- manager/admin orders page. An order belongs to a company if it contains one of that
+    # company's products (resolved via album_details/merch_details; ownerless products count for
+    # every company).
 
     @staticmethod
     def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> ManagerOrdersPageRead:
@@ -200,7 +231,7 @@ class OrderService:
         orders = (
             db.query(Order)
             .filter(Order.id.in_(order_ids))
-            .options(selectinload(Order.items), selectinload(Order.user_item))
+            .options(selectinload(Order.items), selectinload(Order.user_item), selectinload(Order.shippingstatus))
             .order_by(Order.created_at.desc())
             .offset(offset)
             .limit(limit)
@@ -210,9 +241,7 @@ class OrderService:
         products_by_id = {p.id: p for p in products}
         data = []
         for order in orders:
-            # Narrowed to this company's own line items — a manager shouldn't
-            # see what else a customer bought from another company in the same
-            # checkout, only their own company's part of it.
+            # Only this company's line items are shown.
             items = [item for item in order.items if item.product_id in relevant_ids]
             data.append(ManagerOrderRead(
                 id=order.id,
@@ -230,6 +259,7 @@ class OrderService:
                     for item in items
                 ],
                 company_total=sum(item.price * item.quantity for item in items),
+                shippingstatus=order.shippingstatus,
             ))
 
         return ManagerOrdersPageRead(page=page, limit=limit, count=len(data), data=data)

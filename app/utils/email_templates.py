@@ -2,14 +2,10 @@ from enum import Enum
 
 
 class EmailTemplate(Enum):
-    """Subject + body template for every transactional email this app sends. `render()` fills
-    in the body's placeholders; the task name each is dispatched under stays at the call site.
+    """Subject and HTML body template for each transactional email; render() fills placeholders.
 
-    Bodies are HTML — app/utils/email_sender.py sends them under Resend's `html` param, and a
-    plain-text body sent that way loses its line breaks (HTML collapses bare `\\n`s to spaces).
-    Every placeholder here is either an EmailStr validated at the schema boundary (`{email}`) or a
-    server-generated value (ids, prices, an HMAC-signed `{link}` token) — none are arbitrary user
-    text, so interpolating straight into HTML doesn't need escaping.
+    Placeholders are validated emails or server-generated values (ids, prices, signed links), so
+    they're interpolated without HTML escaping.
     """
 
     EMAIL_VERIFICATION = (

@@ -1,4 +1,4 @@
-"""Re-exports every public schema class in this domain, so callers can do `from app.schema.talent import X` instead of reaching into the individual submodule."""
+"""Re-exports this domain's schema classes: `from app.schema.talent import X`."""
 
 from .group import (
     GroupBase,

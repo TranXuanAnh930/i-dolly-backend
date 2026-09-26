@@ -16,11 +16,9 @@ from app.services.events.lottery_entry_service import LotteryEntryService
 
 router = APIRouter(prefix="/lottery_entries", tags=["Lottery Entries"])
 
-# FRONTEND: not currently called by i-dolly-frontend — LotteryEntryPage submits
-# every tier at once through /apply-batch below, for the rate-limit reason
-# documented there. Kept as the single-entry API in its own right.
+# Not used by the frontend, which submits every tier through /apply-batch.
 @router.post("/apply", response_model=LotteryEntryRead)
-async def apply_to_a_lottery(data: LotteryEntryApply, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> LotteryEntry:
+def apply_to_a_lottery(data: LotteryEntryApply, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> LotteryEntry:
     try:
         return LotteryEntryService.apply_to_lottery(db, data, current_user)
     except TriggerViolationError as e:
@@ -28,13 +26,9 @@ async def apply_to_a_lottery(data: LotteryEntryApply, current_user: Users = Depe
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
-# One submission = one request = one rate-limit slot, deliberately the same
-# 3/60s budget as a single apply. A client entering several of a concert's tiers
-# should come here rather than looping /apply: that loop spends a slot per tier,
-# so a fan ranking 4+ tiers would have the tail of their submission 429'd with
-# the earlier tiers already committed.
+# Applies to several tiers in one request, using one rate-limit slot (3 per 60s, same as /apply).
 @router.post("/apply-batch", response_model=List[LotteryEntryRead])
-async def apply_to_lotteries(data: LotteryEntryApplyBatch, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> list[LotteryEntry]:
+def apply_to_lotteries(data: LotteryEntryApplyBatch, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(3, 60, user_key)), db: Session = Depends(get_db)) -> list[LotteryEntry]:
     try:
         return LotteryEntryService.apply_to_lotteries(db, data, current_user)
     except TriggerViolationError as e:
@@ -43,14 +37,14 @@ async def apply_to_lotteries(data: LotteryEntryApplyBatch, current_user: Users =
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
 @router.get("/mine", response_model=List[LotteryEntryRead])
-async def list_my_entries(current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> list[LotteryEntry]:
+def list_my_entries(current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> list[LotteryEntry]:
     result = LotteryEntryService.get_my_entries(db, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="You have no lottery entries")
     return result
 
 @router.get("/campaign/{campaign_id}", response_model=List[LotteryEntryRead])
-async def list_campaign_entries(campaign_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> list[LotteryEntry]:
+def list_campaign_entries(campaign_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> list[LotteryEntry]:
     try:
         result = LotteryEntryService.get_entries_for_campaign(db, campaign_id, current_user)
     except ServiceError as e:
@@ -59,14 +53,10 @@ async def list_campaign_entries(campaign_id: uuid.UUID, current_user: Users = De
         raise HTTPException(status_code=404, detail="No entries found for this campaign")
     return result
 
-# Draw outcome for a whole concert (every tier's campaign at once, matching
-# the draw's own per-concert granularity — PUT /concerts/lottery-draw/{id}),
-# not the raw entry rows /campaign/{campaign_id} above returns: only
-# won/lost rows, each folded together with the winner's email and their
-# ticket's payment status/deadline so the frontend doesn't need a second
-# request per winner.
+# Won and lost entries across every campaign of a concert, each with the winner's email and ticket
+# payment status.
 @router.get("/concert/{concert_id}/results", response_model=List[LotteryDrawResultRead])
-async def list_concert_draw_results(concert_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> list[LotteryDrawResultRead]:
+def list_concert_draw_results(concert_id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> list[LotteryDrawResultRead]:
     try:
         result = LotteryEntryService.get_draw_results_for_concert(db, concert_id, current_user)
     except ServiceError as e:

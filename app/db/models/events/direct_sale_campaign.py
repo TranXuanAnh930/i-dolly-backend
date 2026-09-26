@@ -9,11 +9,8 @@ from app.schema.events.direct_sale_campaign import DirectSaleCampaignStatus
 
 
 class DirectSaleCampaign(Base):
-    """A time-boxed on-sale window for one direct-sale ticket type — the
-    same "campaign defines when it's purchasable" shape lottery_campaigns
-    gives lottery tiers, minus the draw step. checkout_ticket only allows a
-    purchase while a campaign for that ticket_type is status='open' and
-    sale_start_at <= now() <= sale_end_at (ticket_service.checkout_ticket)."""
+    """On-sale window for a direct-sale ticket type. Tickets can be bought only while a campaign is
+    open and now is between sale_start_at and sale_end_at."""
 
     __tablename__ = "direct_sale_campaigns"
 
