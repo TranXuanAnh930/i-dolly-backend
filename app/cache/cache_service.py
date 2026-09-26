@@ -4,6 +4,28 @@ from typing import Any
 import msgpack
 from sqlalchemy.orm import Session
 
+from app.cache.invalidation import (
+    EVENTS_PAGE_KEY,
+    GROUPS_PAGE_KEY,
+    IDOL_COLORS_KEY,
+    MANAGEMENT_COMPANIES_KEY,
+    MANAGER_EVENTS_PAGE_KEY,
+    MANAGER_GROUPS_PAGE_KEY,
+    MANAGER_IDOL_FORM_PAGE_KEY,
+    MANAGER_IDOLS_PAGE_KEY,
+    MEMBERS_PAGE_KEY,
+    PRODUCTS_LIST_KEY,
+    STORE_PAGE_KEY,
+    TTL_SECONDS,
+    VENUES_KEY,
+    CacheInvalidation,
+    concert_detail_key,
+    group_detail_key,
+    idol_detail_key,
+    manager_product_form_page_key,
+    manager_products_page_key,
+    product_detail_key,
+)
 from app.cache.redis_client import redis_client
 from app.schema.events import ConcertDetailRead, EventsPageRead, ManagerEventsPageRead, VenueRead
 from app.schema.marketplace import (
@@ -32,18 +54,14 @@ from app.services.talent.idol_color_service import IdolColorService
 from app.services.talent.idol_service import IdolService
 from app.services.talent.management_company_service import ManagementCompanyService
 
-_TTL_SECONDS = 60 * 5
 
-
-# One class rather than a flat module of functions, matching the router/service
-# layer's convention (IdolService, GroupService, ...) — every method is a
-# @staticmethod, called as CacheService.method(...), including cross-calls
-# between methods on this same class.
-class CacheService:
+# Redis cache-aside reads: return the cached value, or build it via a service and cache it.
+# Invalidation methods are inherited from CacheInvalidation.
+class CacheService(CacheInvalidation):
 
     @staticmethod
     def get_cached_products(db: Session) -> list[dict[str, Any]]:
-        cache_key = "products:list"
+        cache_key = PRODUCTS_LIST_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
@@ -52,9 +70,8 @@ class CacheService:
         if not products:
             return []
 
-        # ProductRead has no from_attributes config, so it validates a dict, not the raw Product row —
-        # category still needs manual resolution (category_id -> Category.name), but every other
-        # field goes through the real schema so a renamed field fails loudly here, not silently.
+        # ProductRead has no from_attributes, so build a dict (resolving the category name) and
+        # validate it through the schema.
         payload = [
             ProductRead.model_validate({
                 "id": p.id,
@@ -67,35 +84,28 @@ class CacheService:
             }).model_dump(mode="json")
             for p in products
         ]
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
     @staticmethod
     def get_cached_store_page(db: Session) -> StorePageRead | None:
-        cache_key = "products:store_page"
+        cache_key = STORE_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return StorePageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
-        # get_store_page already returns a real StorePageRead instance, so this cache can't diverge
-        # from the schema. model_dump(mode="json") gives msgpack-storable values; the cache-hit branch
-        # above reconstructs the same StorePageRead from that stored dict.
+        # Stored as model_dump(mode="json") so msgpack can serialize it.
         result = ProductService.get_store_page(db)
         if not result:
             return None
 
         payload = result.model_dump(mode="json")
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return result
 
     @staticmethod
-    def delete_cached_products() -> None:
-        redis_client.delete("products:list")
-        redis_client.delete("products:store_page")
-
-    @staticmethod
     def get_cached_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | None:
-        cache_key = f"products:{id}:detail"
+        cache_key = product_detail_key(id)
         cached = redis_client.get(cache_key)
         if cached:
             return ProductDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
@@ -103,23 +113,12 @@ class CacheService:
         result = ProductService.get_product_detail(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
-
-    # Recommendations are built from every other product (same-artist, or same-genre for
-    # album-family items), so a write to any product can shift what shows on some OTHER
-    # product's cached detail page too — the write has no cheap way to know which ids' pages
-    # that touches. Same fan-out tradeoff as delete_cached_idol_details below: clear the whole
-    # namespace rather than resolve the affected set.
-    @staticmethod
-    def delete_cached_product_details() -> None:
-        keys = redis_client.keys("products:*:detail")
-        if keys:
-            redis_client.delete(*keys)
 
     @staticmethod
     def get_cached_events_page(db: Session) -> EventsPageRead | None:
-        cache_key = "concerts:events_page"
+        cache_key = EVENTS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return EventsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
@@ -127,20 +126,13 @@ class CacheService:
         result = ConcertService.get_events_page(db)
         if not result:
             return None
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
-    @staticmethod
-    def delete_cached_events_page() -> None:
-        redis_client.delete("concerts:events_page")
-
-    # Caches ConcertService.get_concert_detail_public only — the personalized fields
-    # (has_ticket/has_won_lottery/entered_campaign_ids/my_lottery_preferences) are never part of
-    # this payload, so a cache hit here can never leak one fan's ticket/lottery state to
-    # another. The router merges those in fresh on every request, cached or not.
+    # Caches only the viewer-independent concert detail; per-viewer fields are never stored.
     @staticmethod
     def get_cached_concert_detail(db: Session, id: uuid.UUID) -> ConcertDetailRead | None:
-        cache_key = f"concerts:{id}:detail"
+        cache_key = concert_detail_key(id)
         cached = redis_client.get(cache_key)
         if cached:
             return ConcertDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
@@ -148,20 +140,12 @@ class CacheService:
         result = ConcertService.get_concert_detail_public(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
-
-    # Unlike delete_cached_idol_details/delete_cached_product_details, every mutation that can
-    # change this bundle (the concert itself, one of its ticket types, a lottery/direct-sale
-    # campaign, a performer credit) always knows its own concert_id — no cross-id fan-out to
-    # resolve, so this is a precise single-key delete rather than a namespace scan.
-    @staticmethod
-    def delete_cached_concert_detail(id: uuid.UUID) -> None:
-        redis_client.delete(f"concerts:{id}:detail")
 
     @staticmethod
     def get_cached_members_page(db: Session) -> MembersPageRead | None:
-        cache_key = "idols:members_page"
+        cache_key = MEMBERS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return MembersPageRead.model_validate(msgpack.unpackb(cached, raw=False))
@@ -169,16 +153,12 @@ class CacheService:
         result = IdolService.get_members_page(db)
         if not result:
             return None
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
-    def delete_cached_members_page() -> None:
-        redis_client.delete("idols:members_page")
-
-    @staticmethod
     def get_cached_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | None:
-        cache_key = f"idols:detail:{id}"
+        cache_key = idol_detail_key(id)
         cached = redis_client.get(cache_key)
         if cached:
             return IdolDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
@@ -186,26 +166,12 @@ class CacheService:
         result = IdolService.get_idol_detail(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
-
-    # An idol detail page embeds its group and its siblings (other idols sharing
-    # that group_id), and a group detail page embeds every member's idol data —
-    # so a write to either an idol or a group can invalidate detail pages keyed
-    # by ids this method was never given (e.g. renaming a group must bust the
-    # detail cache of idols this call has no id for). Resolving exactly which
-    # ids are affected isn't cheap; clearing the whole namespace is, and both
-    # caches are only ever written together for that reason — same tradeoff as
-    # delete_cached_manager_products_pages below.
-    @staticmethod
-    def delete_cached_idol_details() -> None:
-        keys = redis_client.keys("idols:detail:*")
-        if keys:
-            redis_client.delete(*keys)
 
     @staticmethod
     def get_cached_groups_page(db: Session) -> GroupsPageRead | None:
-        cache_key = "groups:groups_page"
+        cache_key = GROUPS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return GroupsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
@@ -213,16 +179,12 @@ class CacheService:
         result = GroupService.get_groups_page(db)
         if not result:
             return None
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
-    def delete_cached_groups_page() -> None:
-        redis_client.delete("groups:groups_page")
-
-    @staticmethod
     def get_cached_group_detail(db: Session, id: uuid.UUID) -> GroupDetailRead | None:
-        cache_key = f"groups:detail:{id}"
+        cache_key = group_detail_key(id)
         cached = redis_client.get(cache_key)
         if cached:
             return GroupDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
@@ -230,26 +192,14 @@ class CacheService:
         result = GroupService.get_group_detail(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
-    # Same cross-invalidation tradeoff as delete_cached_idol_details above — a
-    # group detail page embeds its members' idol data, so it's cleared alongside
-    # the idol detail cache on any idol or group write, not just group writes.
-    @staticmethod
-    def delete_cached_group_details() -> None:
-        keys = redis_client.keys("groups:detail:*")
-        if keys:
-            redis_client.delete(*keys)
-
-    # Venues and idol colors are near-static lookup tables (no store-facing personalization, no
-    # money/inventory at stake) — same TTL+invalidate-on-write shape as the pages above, just a
-    # smaller payload. VenueRead/IdolColorRead both have from_attributes=True, so no manual dict
-    # construction is needed the way get_cached_products needs for ProductRead.
+    # Venues and idol colors: small lookup tables, cached with the same TTL + invalidate-on-write.
 
     @staticmethod
     def get_cached_venues(db: Session) -> list[dict[str, Any]] | None:
-        cache_key = "venues:all"
+        cache_key = VENUES_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
@@ -258,16 +208,12 @@ class CacheService:
         if not venues:
             return None
         payload = [VenueRead.model_validate(v).model_dump(mode="json") for v in venues]
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
     @staticmethod
-    def delete_cached_venues() -> None:
-        redis_client.delete("venues:all")
-
-    @staticmethod
     def get_cached_idol_colors(db: Session) -> list[dict[str, Any]] | None:
-        cache_key = "idol_colors:all"
+        cache_key = IDOL_COLORS_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
@@ -276,127 +222,84 @@ class CacheService:
         if not colors:
             return None
         payload = [IdolColorRead.model_validate(c).model_dump(mode="json") for c in colors]
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
-    @staticmethod
-    def delete_cached_idol_colors() -> None:
-        redis_client.delete("idol_colors:all")
-
-    # --- Manager/admin settings pages. Unlike the store-facing pages above, these never 404 on an
-    # empty result (an empty list is a normal state for a brand-new company) — the underlying service
-    # functions always return a real page object, so there's no None branch to cache around.
+    # --- Manager/admin settings pages. These always return a page object (possibly empty), never None.
 
     @staticmethod
     def get_cached_manager_idols_page(db: Session) -> ManagerIdolsPageRead:
-        cache_key = "idols:manager_idols_page"
+        cache_key = MANAGER_IDOLS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return ManagerIdolsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = IdolService.get_manager_idols_page(db)
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
-    def delete_cached_manager_idols_page() -> None:
-        redis_client.delete("idols:manager_idols_page")
-
-    @staticmethod
     def get_cached_manager_idol_form_page(db: Session) -> ManagerIdolFormPageRead:
-        cache_key = "idols:manager_idol_form_page"
+        cache_key = MANAGER_IDOL_FORM_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return ManagerIdolFormPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = IdolService.get_manager_idol_form_page(db)
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
-    def delete_cached_manager_idol_form_page() -> None:
-        redis_client.delete("idols:manager_idol_form_page")
-
-    @staticmethod
     def get_cached_manager_groups_page(db: Session) -> ManagerGroupsPageRead:
-        cache_key = "groups:manager_groups_page"
+        cache_key = MANAGER_GROUPS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return ManagerGroupsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = GroupService.get_manager_groups_page(db)
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
-    def delete_cached_manager_groups_page() -> None:
-        redis_client.delete("groups:manager_groups_page")
-
-    @staticmethod
     def get_cached_manager_events_page(db: Session) -> ManagerEventsPageRead:
-        cache_key = "concerts:manager_events_page"
+        cache_key = MANAGER_EVENTS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return ManagerEventsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ConcertService.get_manager_events_page(db)
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
-    @staticmethod
-    def delete_cached_manager_events_page() -> None:
-        redis_client.delete("concerts:manager_events_page")
-
-    # Products' manager pages are the only ones of this batch scoped by company_id (None means an
-    # admin viewing every company's products unfiltered) — one cache entry per company_id rather than
-    # one shared entry, so a manager editing their own catalog never sees another company's cached
-    # page or vice versa. Invalidation clears every company's entry rather than tracking who's
-    # affected by a given product edit — company_id isn't a column on Product itself (resolved
-    # indirectly through album/merch detail, see product_service.resolve_product_company_ids), so
-    # knowing exactly which company_id keys a given write touches isn't cheap; clearing all of them
-    # is. `keys()` (an O(N) scan) is fine at this project's key-count; a real high-traffic deployment
-    # would want a SCAN cursor or a company_id-indexed key registry instead.
-
-    @staticmethod
-    def _manager_products_cache_key(company_id: uuid.UUID | None) -> str:
-        return f"products:manager_products_page:{company_id if company_id else 'all'}"
-
-    @staticmethod
-    def _manager_product_form_cache_key(company_id: uuid.UUID | None) -> str:
-        return f"products:manager_product_form_page:{company_id if company_id else 'all'}"
+    # Manager product pages are cached per company_id (None = admin, all companies). Product has no
+    # company_id column, so a write clears every company's entry. keys() is an O(N) scan; use SCAN at
+    # larger key counts.
 
     @staticmethod
     def get_cached_manager_products_page(db: Session, company_id: uuid.UUID | None) -> ManagerProductsPageRead:
-        cache_key = CacheService._manager_products_cache_key(company_id)
+        cache_key = manager_products_page_key(company_id)
         cached = redis_client.get(cache_key)
         if cached:
             return ManagerProductsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ProductService.get_manager_products_page(db, company_id)
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_manager_product_form_page(db: Session, company_id: uuid.UUID | None) -> ManagerProductFormPageRead:
-        cache_key = CacheService._manager_product_form_cache_key(company_id)
+        cache_key = manager_product_form_page_key(company_id)
         cached = redis_client.get(cache_key)
         if cached:
             return ManagerProductFormPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ProductService.get_manager_product_form_page(db, company_id)
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
-    def delete_cached_manager_products_pages() -> None:
-        for pattern in ("products:manager_products_page:*", "products:manager_product_form_page:*"):
-            keys = redis_client.keys(pattern)
-            if keys:
-                redis_client.delete(*keys)
-
-    @staticmethod
     def get_cached_management_companies(db: Session) -> list[dict[str, Any]] | None:
-        cache_key = "management_companies:all"
+        cache_key = MANAGEMENT_COMPANIES_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
@@ -405,9 +308,6 @@ class CacheService:
         if not companies:
             return None
         payload = [ManagementCompanyRead.model_validate(c).model_dump(mode="json") for c in companies]
-        redis_client.setex(cache_key, _TTL_SECONDS, msgpack.packb(payload))
+        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
-    @staticmethod
-    def delete_cached_management_companies() -> None:
-        redis_client.delete("management_companies:all")

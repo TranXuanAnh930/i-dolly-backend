@@ -36,21 +36,14 @@ from app.schema.identity import UserRole
 from app.schema.shared import NotificationType
 from app.services.shared.notification_service import NotificationService
 
-# Once a concert has gone on sale (or further), fans may already hold
-# tickets or lottery entries against its date/capacity — a manager silently
-# moving those out from under them is the thing this blocks. "cancelled" is
-# excluded on purpose: cancelling is how a manager unlocks the concert
-# again (to reschedule, or resize capacity), same "cancel, don't mutate a
-# live event" rule as delete_concert's soft-delete below. Also reused as-is
-# by ticket_type_service for the same reason on a ticket type's own
-# capacity (total_quantity).
+# A concert in any of these statuses may already have tickets or entries against its
+# date/capacity, so it can't be edited until cancelled. Also used by ticket_type_service.
 _EVENT_OPEN_STATUSES = {ConcertStatus.on_sale, ConcertStatus.sold_out, ConcertStatus.completed}
 
 class ConcertService:
 
-    # Error convention: NotFoundError (404), ForbiddenError (403, manager
-    # acting outside their own company_id), BadRequestError (400, everything
-    # else — see individual raise sites for the specific business rule).
+    # Raises NotFoundError (404), ForbiddenError (403, manager outside their company) or
+    # BadRequestError (400, business-rule violation).
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -> bool:
@@ -87,15 +80,9 @@ class ConcertService:
 
     @staticmethod
     def notify_managers_of_draw_trigger(db: Session, concert: Concert) -> None:
-        """Fired the moment a manager (or admin) presses "draw" — the router's
-        own response is a bare "scheduled" ack, since the actual draw runs
-        async in a Celery worker (lottery_draw_service.draw_lottery), so this
-        notification is the only record any manager gets that a draw is now
-        in flight for this concert. Every manager at the concert's own
-        company is notified, not just whoever clicked, since nothing
-        server-side stops a second manager (or the same one) from
-        re-triggering the draw while it's still running — see
-        project_status.md's known-limitation note on this endpoint.
+        """Notify every manager at the concert's company that a lottery draw was started.
+
+        The draw runs asynchronously in Celery, so this is the managers' record that it's in flight.
         """
         for manager_id in ConcertService._manager_ids_for_company(db, concert.company_id):
             NotificationService.create_notification(db, manager_id, NotificationType.lottery_draw_triggered, concert_id=concert.id)
@@ -103,32 +90,18 @@ class ConcertService:
 
     @staticmethod
     def notify_managers_of_draw_failure(db: Session, concert: Concert) -> None:
-        """Counterpart to notify_managers_of_draw_trigger for the unhappy
-        path — call this from draw_lottery_task's own exception handler
-        (app/tasks/lottery.py) once the failing session has been rolled back,
-        so this notification's own commit lands cleanly. Same audience as
-        the trigger notification: every manager at the concert's company,
-        not just whoever originally clicked.
-        """
+        """Notify every manager at the concert's company that the lottery draw failed.
+
+        Called from draw_lottery_task after rolling back the failed draw."""
         for manager_id in ConcertService._manager_ids_for_company(db, concert.company_id):
             NotificationService.create_notification(db, manager_id, NotificationType.lottery_draw_failed, concert_id=concert.id)
         commit_or_raise(db)
 
     @staticmethod
     def notify_managers_of_draw_completion(db: Session, concert: Concert) -> None:
-        """Counterpart to notify_managers_of_draw_trigger for the happy path —
-        call this from lottery_draw_service.draw_lottery once its own commit
-        has already landed the campaign/ticket/entry changes, so this is a
-        second, separate commit rather than folded into that one (same
-        two-commit shape as the trigger/failure notifications relative to
-        whatever they're a counterpart to). Without this, a manager who
-        wasn't watching the concert's edit page when the draw finished (the
-        frontend's own poll loop, store/events/lotteryDraw.js on the
-        frontend, only surfaces success while that page stays open) had a
-        record that a draw *started* and never anything saying it actually
-        finished. Same audience as the other two: every manager at the
-        concert's own company.
-        """
+        """Notify every manager at the concert's company that the lottery draw finished.
+
+        Called after the draw has committed, in a separate commit."""
         for manager_id in ConcertService._manager_ids_for_company(db, concert.company_id):
             NotificationService.create_notification(db, manager_id, NotificationType.lottery_draw_completed, concert_id=concert.id)
         commit_or_raise(db)
@@ -166,12 +139,8 @@ class ConcertService:
 
     @staticmethod
     def delete_concert(db: Session, id: uuid.UUID, current_user: Users) -> Concert:
-        # Cancel, not db.delete(): ticket_types CASCADEs off concerts.id, and
-        # tickets/lottery_entries cascade off ticket_types in turn — hard-
-        # deleting a concert with any sales or lottery history would destroy it.
-        # Setting status="cancelled" (already a first-class concert_status_enum
-        # value the frontend renders everywhere) keeps every FK target alive,
-        # same rationale as idol_service.delete_idol's soft delete.
+        # Soft delete: tickets and lottery entries cascade off the concert's ticket types, so a
+        # hard delete would destroy sales history.
         db_concert = db.get(Concert, id)
         if not db_concert:
             raise NotFoundError("Concert not found")
@@ -223,7 +192,7 @@ class ConcertService:
         db.commit()
         return link
 
-    # --- page-shaped reads (see idol_service.py's equivalent comment) ---
+    # --- page-shaped reads ---
 
     @staticmethod
     def get_events_page(db: Session) -> EventsPageRead | None:
@@ -241,13 +210,8 @@ class ConcertService:
             color_hex=idol.color.hex_code if idol.color else None,
         )
 
-    # Split from the old single get_concert_detail: everything here is identical for every
-    # viewer (including guests), so it's the unit CacheService.get_cached_concert_detail caches
-    # verbatim — has_ticket/has_won_lottery/entered_campaign_ids/my_lottery_preferences stay at
-    # their False/empty schema defaults here on purpose. get_personalization below computes
-    # those per-viewer fields separately, and the router (get_concert_detail_by_id) merges them
-    # onto this result uncached, so a cached response never leaks one fan's ticket/lottery
-    # state to another.
+    # Viewer-independent concert detail, cached by CacheService.get_cached_concert_detail.
+    # Per-viewer fields stay at their defaults here; get_personalization fills them in uncached.
     @staticmethod
     def get_concert_detail_public(db: Session, id: uuid.UUID) -> ConcertDetailRead | None:
         concert = db.query(Concert).options(joinedload(Concert.venue)).filter(Concert.id == id).first()
@@ -260,10 +224,8 @@ class ConcertService:
             .filter(ConcertPerformer.concert_id == id)
             .all()
         )
-        # A group credit expands to that group's current members, a solo credit
-        # is just that one idol — de-duplicated in case the same idol shows up
-        # via both a solo and a group credit (mirrors the previous client-side
-        # concertsStore.lineupForConcert getter).
+        # Expand group credits to current members, de-duplicating idols credited both solo and
+        # via a group.
         seen_idol_ids = set()
         lineup = []
         seen_group_ids = set()
@@ -283,11 +245,7 @@ class ConcertService:
                     seen_idol_ids.add(performer.idol_id)
                     lineup.append(ConcertService._lineup_idol(performer.idol))
 
-        # Every campaign across every tier on this concert, lottery and direct
-        # alike — public, not personalized. Bundled here (rather than a
-        # separate per-concert campaign endpoint) so EventDetailPage.vue,
-        # LotteryEntryPage.vue and TicketPurchasePage.vue each need exactly one
-        # request to load, not one call per tier or one call per data source.
+        # Every lottery and direct-sale campaign on this concert, so the event pages need one request.
         lottery_campaigns = (
             db.query(LotteryCampaign)
             .options(joinedload(LotteryCampaign.ticket_type))
@@ -302,14 +260,8 @@ class ConcertService:
             .all()
         )
 
-        # How many fans have applied, total — distinct from ticket_type.
-        # sold_quantity (only incremented once the draw actually allocates a
-        # seat), and not capped by total_quantity the way a direct-sale tier's
-        # sold count is. Attached as a plain attribute (not a mapped column) so
-        # LotteryCampaignRead's from_attributes pickup just works; a manager's
-        # own concert-detail page reads this to show "entries" instead of
-        # "sold" for a lottery tier (see ManagerEventFormPage.vue) — public
-        # too, same as every other field on this already-public bundle.
+        # Total lottery applications per campaign, attached as a plain attribute for
+        # LotteryCampaignRead. Unlike sold_quantity, this isn't capped by total_quantity.
         campaign_ids = [campaign.id for campaign in lottery_campaigns]
         entry_counts = dict(
             db.query(LotteryEntry.campaign_id, func.count(LotteryEntry.id))
@@ -320,10 +272,7 @@ class ConcertService:
         for campaign in lottery_campaigns:
             campaign.entry_count = entry_counts.get(campaign.id, 0)
 
-        # has_ticket/has_won_lottery/entered_campaign_ids/my_lottery_preferences are deliberately
-        # left at their ConcertDetailRead defaults (False/[]/[]/[]) — this bundle is public and
-        # cacheable precisely because it never depends on who's asking. get_personalization below
-        # computes those four fields per request, never cached.
+        # Per-viewer fields are left at their defaults; see get_personalization.
         return ConcertDetailRead(
             concert=concert,
             venue=concert.venue,
@@ -334,13 +283,8 @@ class ConcertService:
             direct_sale_campaigns=direct_sale_campaigns,
         )
 
-    # The four fields ConcertDetailRead defaults to False/empty for a guest. "Bought" means an
-    # actually-paid ticket, not a reserved or abandoned checkout; a lottery ticket has
-    # lottery_entry_id set on the Ticket row it creates, so `paid`/`used` here already covers a
-    # fan who won and paid, on top of a straight direct-sale purchase. campaign_ids is passed in
-    # rather than re-queried — the caller already has it from the (possibly cached)
-    # lottery_campaigns list, and re-deriving it here would be a second query for data the
-    # public bundle already fetched.
+    # Per-viewer fields for the concert detail page. "Bought" means a paid or used ticket, which
+    # covers both direct-sale purchases and paid lottery wins.
     @staticmethod
     def get_personalization(db: Session, id: uuid.UUID, current_user: Users, campaign_ids: list[uuid.UUID]) -> dict[str, Any]:
         has_ticket = (
@@ -385,8 +329,7 @@ class ConcertService:
             "my_lottery_preferences": my_lottery_preferences,
         }
 
-    # --- manager/admin settings page (see idol_service.py's equivalent
-    # comment — an empty list here is a normal state, not a 404).
+    # --- manager/admin settings page (an empty list is a normal result, not a 404)
 
     @staticmethod
     def get_manager_events_page(db: Session) -> ManagerEventsPageRead:

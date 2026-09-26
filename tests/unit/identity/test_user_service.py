@@ -213,7 +213,7 @@ class TestUserService:
 
         db = MagicMock()
 
-        with patch("app.services.identity.user_service.verify_rtoken_and_get_user_id", return_value=None):
+        with patch("app.services.identity.user_service.decode_email_token", return_value=None):
             result = UserService.verify_rtoken(db, "bad-token", "newpass")
 
         assert result is False
@@ -225,7 +225,7 @@ class TestUserService:
         db = MagicMock()
         db.query().filter().first.return_value = None
 
-        with patch("app.services.identity.user_service.verify_rtoken_and_get_user_id", return_value=DEFAULT_ID):
+        with patch("app.services.identity.user_service.decode_email_token", return_value=DEFAULT_ID):
             result = UserService.verify_rtoken(db, "good-token", "newpass")
 
         assert result is None
@@ -238,7 +238,7 @@ class TestUserService:
         mock_user = make_mock_user(id=DEFAULT_ID)
         db.query().filter().first.return_value = mock_user
 
-        with patch("app.services.identity.user_service.verify_rtoken_and_get_user_id", return_value=DEFAULT_ID), \
+        with patch("app.services.identity.user_service.decode_email_token", return_value=DEFAULT_ID), \
              patch("app.services.identity.user_service.hash_password", return_value="new_hashed"), \
              patch("app.services.identity.user_service.NotificationService.create_notification") as mock_notify:
             result = UserService.verify_rtoken(db, "good-token", "newpass")

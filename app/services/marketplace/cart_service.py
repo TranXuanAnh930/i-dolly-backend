@@ -19,7 +19,7 @@ class CartService:
         if not user:
             raise NotFoundError("User not found")
         if user.role != UserRole.fan:
-            # Primary check for trg_cart_fan_only — see FanOnlyPurchaseError's docstring.
+            # Primary check; trg_cart_fan_only is the backstop.
             raise FanOnlyPurchaseError("Only fan accounts can add items to a cart")
         product = db.query(Product).filter(Product.id==cart_item.product_id).with_for_update().first()
         if not product:
@@ -30,6 +30,8 @@ class CartService:
         stmt = db.query(Cart).filter(Cart.user_id==user_id, Cart.product_id==cart_item.product_id).with_for_update().first()
         if stmt:
             stmt.quantity+=cart_item.quantity
+            # Reprice the whole row at the current price, so price * quantity == total_price.
+            stmt.price=product.price
             stmt.total_price=product.price*stmt.quantity
         else:
             stmt = Cart(**cart_item.model_dump(), user_id=user_id, price=product.price, total_price=product.price*cart_item.quantity)
@@ -49,7 +51,7 @@ class CartService:
 
     @staticmethod
     def remove_cart(db:Session, user_id:uuid.UUID, cart_id:uuid.UUID) -> Literal[True] | None:
-        cart = db.query(Cart).filter(Cart.id==cart_id).first()
+        cart = db.query(Cart).filter(Cart.id==cart_id, Cart.user_id==user_id).first()
         if not cart:
             return None
         db.delete(cart)

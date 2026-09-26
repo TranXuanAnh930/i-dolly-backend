@@ -15,36 +15,30 @@ from app.schema.common import MessageResponse
 from app.schema.talent import IdolColorBase, IdolColorCreate, IdolColorRead
 from app.services.talent.idol_color_service import IdolColorService
 
-# A lookup table, not an enum, specifically so it's manager/admin-extensible
-# without a migration (database-design.md §3.5) — create/update use
-# require_manager_or_admin. Delete stays admin-only: colors are global, not
-# scoped to one company, so removing one can affect another company's idols;
-# a manager shouldn't be able to break another company's data.
+# Lookup table managers/admins can extend; delete is admin-only since colors are shared across
+# companies.
 router = APIRouter(prefix="/idol_colors", tags=["Idol Colors"])
 
-# FRONTEND: not currently called by i-dolly-frontend — and neither is anything
-# else on this router. The frontend's IdolColorsService was deleted along with
-# the idols store that was its only caller; a color reaches the UI embedded in
-# the page bundles instead (ProductCard.artist.color_hex, MembersPageRead).
+# Not used by the frontend (nor is the rest of this router).
 @router.post("/add", response_model=IdolColorRead)
-async def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
+def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
     db_color = IdolColorService.add_idol_color(db, color)
     CacheService.delete_cached_idol_colors()
     CacheService.delete_cached_manager_idol_form_page()
-    CacheService.delete_cached_manager_products_pages()  # ManagerProductFormPage's colors dropdown is embedded there too
+    CacheService.delete_cached_manager_products_pages()  # the product form embeds colors
     return db_color
 
-# FRONTEND: not currently called by i-dolly-frontend (see the note above).
+# Not used by the frontend.
 @router.get("/all", response_model=List[IdolColorRead])
-async def list_idol_colors(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[IdolColor]:
+def list_idol_colors(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[IdolColor]:
     result = CacheService.get_cached_idol_colors(db)
     if not result:
         raise HTTPException(status_code=404, detail="No idol colors found")
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.put("/update/{id}", response_model=IdolColorRead)
-async def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
+def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current_user: Users = Depends(require_manager_or_admin), db: Session = Depends(get_db)) -> IdolColor:
     try:
         db_color = IdolColorService.update_idol_color(db, id, data)
     except ServiceError as e:
@@ -54,9 +48,9 @@ async def update_existing_idol_color(id: uuid.UUID, data: IdolColorBase, current
     CacheService.delete_cached_manager_products_pages()
     return db_color
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
-async def delete_existing_idol_color(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
+def delete_existing_idol_color(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     result = IdolColorService.delete_idol_color(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Idol color not found")

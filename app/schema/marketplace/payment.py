@@ -24,12 +24,7 @@ class PaymentCreate(BaseModel):
 
 class PaymentResponse(BaseModel):
     id : uuid.UUID
-    # Exactly one of these is set — order_id for a store checkout
-    # (order_service.checkout), ticket_id for a direct-sale ticket
-    # (ticket_service.checkout_ticket). order_id used to be required here,
-    # which meant serializing a ticket payment (order_id always null) raised
-    # a validation error — fetch_all_payments would 500 for any user who'd
-    # ever bought a ticket.
+    # Exactly one of order_id/ticket_id is set.
     order_id : uuid.UUID | None = None
     ticket_id : uuid.UUID | None = None
     user_id : uuid.UUID
@@ -40,9 +35,8 @@ class PaymentResponse(BaseModel):
     pg_order_id : str | None
     pg_payment_id : str | None
     pg_signature : str | None
-    # PayPal's buyer-facing redirect link (docs/api-spec.md §6) — set only
-    # for a pending paypal payment; a frontend sends the buyer here to
-    # approve before calling POST /payment/paypal/capture/{pg_order_id}.
+    # PayPal approval link for a pending PayPal payment; the buyer approves there before the
+    # frontend calls POST /payment/paypal/capture/{pg_order_id}.
     pg_approval_url : str | None = None
     created_at : datetime
     updated_at : datetime

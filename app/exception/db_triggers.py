@@ -1,34 +1,12 @@
-"""
-Typed exceptions for this project's Postgres trigger-enforced business rules
-(the 8 trigger functions documented in docs/database-design.md SS4/SS4.1-4.2),
-plus a helper that translates the raw DBAPIError SQLAlchemy raises when one
-of them fires into one of these types instead.
+"""Typed exceptions for business rules enforced by Postgres triggers and UNIQUE constraints.
 
-Why this exists: every one of these triggers is a deliberate BEFORE
-INSERT/UPDATE `RAISE EXCEPTION` — a real business-rule rejection, not a bug
-— but until now nothing translated that into a clean HTTP response. It
-surfaced as a raw sqlalchemy.exc.DBAPIError, which FastAPI has no handler
-for, so it fell through as an unstyled 500. This mirrors the existing
-app/exception/checkout.py convention (raise in the service, catch in the
-router, map to a status code) rather than introducing a different pattern —
-see docs/architecture.md SS2's "two conventions coexist" note.
-
-Usage in a service function that performs a trigger-covered write, in place
-of a bare db.commit()/db.flush():
-
-    from app.exception.db_triggers import commit_or_raise
+commit_or_raise()/flush_or_raise() translate the raw DBAPIError raised when one of those rules
+fires into a TriggerViolationError subclass that carries its own HTTP status code:
 
     db.add(row)
     commit_or_raise(db)
-    db.refresh(row)
 
-Usage in the router — one line, since the status code travels with the
-exception class:
-
-    from app.exception.db_triggers import TriggerViolationError
-
-    try:
-        result = some_service_fn(db, ...)
+    # router
     except TriggerViolationError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 """
@@ -38,26 +16,14 @@ from sqlalchemy.orm import Session
 
 
 class TriggerViolationError(Exception):
-    """Base class for a Postgres trigger's RAISE EXCEPTION, translated into
-    something a router can catch and map to a clean HTTP status. Never
-    raised directly — always one of the subclasses below, which carry the
-    original Postgres message as their text."""
+    """Base class; only subclasses are raised, carrying the original Postgres message."""
     status_code = 400
 
 
 class FanOnlyPurchaseError(TriggerViolationError):
-    """trg_cart_fan_only / trg_orders_fan_only / trg_lottery_entries_fan_only
-    / trg_tickets_fan_only (fn_enforce_fan_only_purchase) — an admin/manager
-    account attempted a fan-only action. An authorization failure, not a
-    validation one, so this is the one trigger exception that isn't 400.
+    """An admin/manager attempted a fan-only action (fn_enforce_fan_only_purchase triggers).
 
-    Unlike every other class here, this one is also raised **directly** by
-    service code (cart_service.add_to_cart, order_service.checkout) as the
-    primary check — the trigger is the backstop, per database-design.md
-    §4.1, but until now nothing implemented the primary check it's meant to
-    back up. Both paths (a direct raise, or translate_trigger_error()
-    catching the trigger firing) produce the same type, so a router only
-    ever needs the one `except TriggerViolationError` clause either way."""
+    Also raised directly by services as the primary check; the trigger is the backstop."""
     status_code = 403
 
 
@@ -92,28 +58,16 @@ class ConcertTicketCapacityExceededError(TriggerViolationError):
 
 
 class DuplicateIdempotencyKeyError(TriggerViolationError):
-    """A payment.idempotency_key UNIQUE violation — the backstop for the
-    race window between the service-layer pre-check and this commit (see
-    checkout()/checkout_ticket()). Not one of the 8 documented trigger
-    functions — a plain constraint, not a PL/pgSQL RAISE EXCEPTION — but
-    reusing this base class means routers need no new except clause."""
+    """uq_payment_idempotency_key: a checkout retried with an already-used idempotency key."""
     status_code = 409
 
 
 class DuplicateTicketTypeError(TriggerViolationError):
-    """uq_ticket_types_concert_tier_method — a concert can only have one
-    ticket type per (tier, sale_method) pair. Also a plain UNIQUE
-    constraint, not a trigger — same reasoning as DuplicateIdempotencyKeyError
-    above. Without this, ManagerEventFormPage.vue's "add ticket type" form
-    hitting an already-used tier+method combo surfaced as an unhandled 500
-    (a raw psycopg2.errors.UniqueViolation) instead of a clean 400."""
+    """uq_ticket_types_concert_tier_method: one ticket type per (concert, tier, sale_method)."""
 
 
-# (message substring, exception class) pairs, matched against the raw
-# Postgres error text. Each substring is chosen to be unique to one trigger
-# function's RAISE EXCEPTION wording (see the grep-able "RAISE EXCEPTION"
-# lines under alembic/versions/ for the exact source) — order doesn't
-# matter since none of them overlap.
+# (substring of the Postgres error text, exception class). Each substring matches exactly one
+# trigger's RAISE EXCEPTION wording or constraint name, so order doesn't matter.
 _MESSAGE_PATTERNS = [
     ("cannot participate in purchase activity", FanOnlyPurchaseError),
     ("not concert_id=", LotteryPreferenceTicketTypeMismatchError),
@@ -130,15 +84,8 @@ _MESSAGE_PATTERNS = [
 
 
 def translate_trigger_error(exc: DBAPIError) -> TriggerViolationError | None:
-    """
-    Inspect a DBAPIError SQLAlchemy raised and, if its message matches one
-    of this project's trigger functions, return the matching typed
-    exception (constructed with the original Postgres message as its
-    text). Returns None if this doesn't look like one of ours — a real
-    constraint violation, a connection error, an actual bug — so the
-    caller re-raises the original exception unchanged instead of silently
-    mislabeling something unrelated as a clean business-rule 400.
-    """
+    """Return the typed exception matching this DB error, or None if it isn't a known rule
+    violation (the caller then re-raises the original error unchanged)."""
     orig = getattr(exc, "orig", None)
     text = str(orig) if orig is not None else str(exc)
     for pattern, exc_cls in _MESSAGE_PATTERNS:
@@ -158,13 +105,9 @@ def _handle(db: Session, exc: DBAPIError) -> None:
 
 
 def commit_or_raise(db: Session) -> None:
-    """
-    db.commit(), translating a Postgres trigger violation into a typed
-    TriggerViolationError instead of letting a raw DBAPIError escape to the
-    router as an unhandled 500. Rolls back on any DB error so the session
-    is left usable, and re-raises the original exception unchanged if it
-    doesn't match a known trigger — see translate_trigger_error.
-    """
+    """db.commit(), raising a TriggerViolationError for known rule violations.
+
+    Rolls back on any DB error; unknown errors are re-raised unchanged."""
     try:
         db.commit()
     except DBAPIError as exc:
@@ -172,9 +115,7 @@ def commit_or_raise(db: Session) -> None:
 
 
 def flush_or_raise(db: Session) -> None:
-    """Same as commit_or_raise, but for a mid-transaction db.flush() — used
-    where a service needs the row's generated id (e.g. order.id) before the
-    transaction is ready to commit. See order_service.checkout()."""
+    """commit_or_raise for a mid-transaction db.flush() (e.g. to get a generated id)."""
     try:
         db.flush()
     except DBAPIError as exc:

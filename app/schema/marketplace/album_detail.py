@@ -14,10 +14,9 @@ class AlbumDetailBase(BaseModel):
     release_date: date | None = None
     track_count: int | None = Field(None, gt=0)
     format: ReleaseFormat = ReleaseFormat.physical
-    cover_image_url: str | None = None
 
 class AlbumDetailCreate(AlbumDetailBase):
-    product_id: uuid.UUID  # must reference an existing products row (created via the products endpoints)
+    product_id: uuid.UUID
     idol_id: uuid.UUID | None = None
     group_id: uuid.UUID | None = None
 
@@ -28,8 +27,7 @@ class AlbumDetailCreate(AlbumDetailBase):
         return self
 
 class AlbumDetailUpdate(AlbumDetailBase):
-    # idol_id/group_id deliberately excluded — ownership is set at creation
-    # and immutable, same convention as Group/Idol.company_id.
+    # idol_id/group_id can't be changed after creation.
     pass
 
 class AlbumDetailRead(AlbumDetailBase):

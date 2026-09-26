@@ -27,9 +27,7 @@ class ProductRead(ProductBase):
     id: uuid.UUID
     category : str
 
-# Distinct from ProductRead — ProductRead.category is a resolved name (str), built by hand from
-# the Category relationship. search_existing_product/paginated_product/filter_product return raw
-# Product rows instead, so category here is the full CategoryRead object, validated directly.
+# Product with its full CategoryRead (ProductRead has only the category name).
 class ProductWithCategoryRead(ProductBase):
     id: uuid.UUID
     category: CategoryRead
@@ -42,10 +40,8 @@ class ProductsPageRead(BaseModel):
     count: int
     data: list[ProductWithCategoryRead]
 
-# Bundles a Product with its AlbumDetail/MerchDetail row into one request, so a product is never
-# left ownerless the way a bare add_product + optional follow-up call could leave it. detail_kind
-# picks which set of fields below applies, mirroring AlbumDetailCreate/MerchDetailCreate's own
-# idol_id/group_id validators.
+# Creates a product together with its AlbumDetail or MerchDetail row. detail_kind selects which
+# fields below apply.
 class ProductWithDetailCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     price: float = Field(..., gt=0)
@@ -75,14 +71,12 @@ class ProductWithDetailCreate(BaseModel):
             raise ValueError("detail_kind must be 'album' or 'merch'")
         return self
 
-# --- page-shaped reads. ProductCard is the shape every product-grid view renders (store grid, a
-# group's products, recommendations) — album info, genres, and the resolved artist all embedded
-# so the client never needs a second lookup.
+# --- page-shaped reads. ProductCard is the shape every product grid renders, with album info,
+# genres and the resolved artist embedded.
 
 class AlbumMini(BaseModel):
     release_date: date | None = None
     track_count: int | None = None
-    cover_image_url: str | None = None
 
 class ProductCard(BaseModel):
     id: uuid.UUID
@@ -95,31 +89,23 @@ class ProductCard(BaseModel):
     album: AlbumMini | None = None
     genres: list[GenreRead] = []
     artist: ArtistRef | None = None
-    # None = not resale-capped; otherwise the max units a fan may buy of
-    # this product, cumulative across every order they've ever placed (see
-    # order_service.checkout and app/utils/resale.RESALE_CAP_QUANTITY).
+    # Max units a fan may buy across all their orders; None if the product isn't resale-capped.
     resale_cap_quantity: int | None = None
 
-# Deliberately not with the top imports, and a direct submodule import rather than the
-# app.schema.talent package shortcut: talent needs marketplace back (group.py imports
-# ProductCard), so a package-level import on either side of that cycle needs the other package's
-# __init__ to have already finished — regardless of which side loads first.
+# Imported here, from the submodule, to break the talent <-> marketplace schema import cycle.
 from app.schema.talent.idol import GroupMini, GroupOptionForCompany, IdolRead  # noqa: E402
 from app.schema.talent.idol_color import IdolColorRead  # noqa: E402
 
 
 class StorePageRead(BaseModel):
     products: list[ProductCard]
-    groups: list[GroupMini]  # for the store page's unit filter only
+    groups: list[GroupMini]  # for the store page's group filter
 
 class ProductDetailRead(BaseModel):
     product: ProductCard
     recommendations: list[ProductCard]
 
-# --- manager/admin settings pages — ManagerProductsPage's table only needs
-# the plain product rows (no album/genre/artist embedding); the form page
-# additionally needs the category list for its <select>. Neither needs
-# album_details at all. An empty list here is a normal state, not a 404.
+# --- manager/admin settings pages (an empty list is a normal result, not a 404).
 
 class ManagerProductsPageRead(BaseModel):
     products: list[ProductRead]
@@ -127,18 +113,14 @@ class ManagerProductsPageRead(BaseModel):
 class ManagerProductFormPageRead(BaseModel):
     products: list[ProductRead]
     categories: list[CategoryRead]
-    # For the "product for one of my own idols/groups" step of creating a
-    # product — idols/groups carry company_id so the form can filter to the
-    # current company client-side, same pattern as ManagerIdolFormPageRead's
-    # own groups field. colors is only ever used for a merch product's
-    # optional color_id.
+    # Idols/groups to attach a new product to (filtered by company client-side); colors are for
+    # merch products.
     idols: list[IdolRead] = []
     groups: list[GroupOptionForCompany] = []
     colors: list[IdolColorRead] = []
 
-# --- sales history (GET /products/{id}/sales) — one row per order that
-# included this product, newest first. Same page/limit/count/data envelope
-# as /products/pagination.
+# --- sales history (GET /products/{id}/sales): one row per order containing the product,
+# newest first.
 
 class ProductSaleRead(BaseModel):
     order_id: uuid.UUID

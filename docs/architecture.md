@@ -9,7 +9,7 @@ How the codebase is organized and the conventions new code should follow. For th
 - **FastAPI** 0.122 (Python 3.12) + **Pydantic v2** (2.12.4) for request/response schemas.
 - **PostgreSQL** via **SQLAlchemy 2.0** (`app/db/models/*`), **Alembic 1.17** for migrations — one
   linear chain, one concern per migration.
-- **Redis** for caching (`app/cache/cache_service.py`, msgpack-serialized, 5-minute TTL) and rate
+- **Redis** for caching (`app/cache/cache_service.py` + `invalidation.py`, msgpack-serialized, 5-minute TTL) and rate
   limiting (`app/cache/rate_limit.py`, fixed-window counters).
 - **Celery** (`app/celery_app.py`), broker + result backend on the same Redis instance but a
   separate DB index (`CELERY_BROKER_DB=1` vs `REDIS_DB=0`) so task keys never collide with
@@ -73,10 +73,16 @@ purpose.
    object and is a separate schema from `ProductRead`, whose `category` field is a resolved name
    (`str`) built by `CacheService.get_cached_products`. `cache_service.py` follows the same
    one-class-of-`@staticmethod`s shape as item 2 above (`class CacheService: ...`, called as
-   `CacheService.get_cached_products(db)`), not a flat module of functions — it imports the
-   read-side services listed here for their query logic, which is also why invalidation calls live
-   in the router right after the mutating service call, not inside the service itself (a service
-   importing `cache_service` back would be circular).
+   `CacheService.get_cached_products(db)`), not a flat module of functions. The cache is split in
+   two to keep imports one-directional:
+   - `app/cache/invalidation.py` (`CacheInvalidation`) holds every cache key and `delete_cached_*`
+     method and depends only on Redis. Services that must invalidate inside their own transaction
+     flow (checkout, payment finalize, the lottery draw) import this.
+   - `app/cache/cache_service.py` (`CacheService(CacheInvalidation)`) holds the read-through
+     `get_cached_*` methods, which call services to fill the cache. Only routers import it; they
+     also call its inherited `delete_cached_*` right after a mutating service call.
+
+   A service must never import `cache_service`, since that would recreate the cycle.
 
 Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, never a
 bare function). Two same-named functions in different service files (e.g. both
@@ -125,6 +131,28 @@ except ServiceError as e:
   `flush_or_raise()` replace a bare `db.commit()`/`db.flush()` at any write a trigger can fire on;
   each subclass carries its own `status_code`. A function can raise both a `TriggerViolationError`
   and a `ServiceError` (e.g. `ticket_service.checkout_ticket`) — the router catches both.
+
+### Route handlers: `def`, not `async def`
+
+The whole stack under the routers is synchronous: SQLAlchemy `Session`, bcrypt, `httpx.post`
+(PayPal) and boto3. FastAPI runs an `async def` handler directly on the event loop, so any blocking
+call inside it stalls every other request in the process. It runs a plain `def` handler in its
+threadpool instead. So **route handlers are `def`** unless they genuinely `await` something.
+
+No handler is `async def`. The two places that used to force it were handled without
+`run_in_threadpool` wrappers:
+- **Uploads**: `storage.save()` is sync and reads `UploadFile.file`. Starlette has already spooled
+  the whole upload before the handler runs, so that read is plain file I/O. Never call
+  `UploadFile.read()` from sync code: it's async and returns an un-awaited coroutine.
+- **Raw request body** (`paypal_webhook`): the one `await request.body()` lives in a small async
+  dependency (`_raw_body`). FastAPI awaits async dependencies on the loop and still runs the `def`
+  handler in the threadpool.
+
+If a new route seems to need `async def`, first move the `await` into a dependency like this.
+
+This also means requests in one process now really run concurrently. Previously every
+handler ran start-to-finish on the loop thread, which accidentally serialized them per process.
+The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that safe.
 
 ## 3. Cross-cutting pieces
 

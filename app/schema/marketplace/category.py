@@ -10,9 +10,7 @@ class CategoryCreate(CategoryBase):
     id:uuid.UUID
 
 class CategoryUpdate(CategoryBase):
-    # Optional: lets an admin flip the data-driven anti-resale flag via the
-    # API (database-design.md §4.2 — "an UPDATE, not a migration"). Omitting
-    # it leaves the category's existing value untouched.
+    # Omit to leave the category's resale-cap flag unchanged.
     is_resale_capped: bool | None = None
 
 class CategoryRead(CategoryBase):

@@ -19,17 +19,9 @@ class LotteryEntryApply(BaseModel):
     campaign_id: uuid.UUID
 
 class LotteryEntryApplyBatch(BaseModel):
-    """Apply to several of a concert's tiers in one submission.
+    """Apply to several of a concert's tiers in one request (all-or-nothing, one rate-limit slot).
 
-    All-or-nothing, and one rate-limit slot for the whole thing — the per-tier
-    alternative (a client loop calling /apply once per tier) spends a slot each,
-    so a fan ranking more tiers than the limiter allows would get part of their
-    submission in and the rest rejected, with no clean way back.
-
-    max_length is a generous ceiling on tiers-per-concert, not a product rule.
-    Duplicates are rejected rather than silently deduped: the same campaign
-    twice means the caller built the list wrong, and letting it through would
-    surface as a confusing "you've already used all your entries" instead.
+    Duplicate campaign_ids are rejected. max_length is a sanity limit, not a business rule.
     """
 
     campaign_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=10)
@@ -48,20 +40,13 @@ class LotteryEntryRead(BaseModel):
     status: LotteryEntryStatus
     created_at: datetime
     drawn_at: datetime | None
-    # Embedded (via the ORM relationship of the same name, itself embedding
-    # ticket_type) so a fan's entry list resolves straight down to tier +
-    # concert without a per-entry round-trip — see get_my_entries's
-    # joinedload. Frontend's lotteryEntries store used to do this resolve
-    # itself with 2 extra requests per entry.
+    # Embeds the campaign and its ticket_type so a fan's entry list needs no extra requests.
     campaign: LotteryCampaignRead
 
     model_config = {"from_attributes": True}
 
-# Manager-facing: one row per decided (won/lost) entry for a concert's draw —
-# built by LotteryEntryService.get_draw_results_for_concert, not populated
-# straight from the ORM model like LotteryEntryRead above, since it also
-# folds in the winner's email and their ticket's payment state (a lost entry
-# has no ticket at all, hence the three trailing fields all being optional).
+# Manager view of one decided (won/lost) entry, built by
+# LotteryEntryService.get_draw_results_for_concert. Ticket fields are None for lost entries.
 class LotteryDrawResultRead(BaseModel):
     lottery_entry_id: uuid.UUID
     user_id: uuid.UUID

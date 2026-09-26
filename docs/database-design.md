@@ -190,7 +190,6 @@ erDiagram
         date release_date
         int track_count
         release_format_enum format "physical / digital"
-        string cover_image_url
     }
     ALBUM_DETAILS ||--o{ ALBUM_GENRES : ""
     GENRES ||--o{ ALBUM_GENRES : ""
@@ -492,6 +491,12 @@ flag beats a hardcoded limit" move as `categories.is_resale_capped` (§3.15). Ra
 one specific campaign later is `UPDATE lottery_campaigns SET max_entries_per_user = ...`, not a
 schema change.
 
+**Not exposed through the API (for now):** `LotteryCampaignCreate`/`Update` don't accept
+`max_entries_per_user`, so every campaign stays at the default of 1. The draw logic assumes one
+entry per user per campaign: with more than one, `sample()` could pick the same fan twice in one
+tier (`docs/bugs.md` #6). Before making this settable again, the draw has to dedupe candidates by
+user.
+
 **Explicitly not** a revival of the old purchase-linked `entries_count` column: that was a
 per-*entry* multiplier tied to what you bought (3 albums = 3 shots); `max_entries_per_user` is a
 per-*campaign* policy knob, unrelated to purchases either way — the purchase/lottery decoupling
@@ -595,7 +600,14 @@ so it gets the harder guarantee, explicitly requested rather than inferred.
 One-to-one extension of the existing `products` table, not a replacement: `product_id` (PK,
 FK to `products.id`), `idol_id` (FK, nullable), `group_id` (FK, nullable — at least one of
 `idol_id`/`group_id` set, `CHECK` constraint), `release_date`, `track_count`, `format`
-(`release_format_enum`: physical / digital), `cover_image_url`.
+(`release_format_enum`: physical / digital).
+
+**No `cover_image_url` column** (dropped, migration `e4f8b2a6c9d1`) — it duplicated
+`products.image_url` for album/single/EP products specifically, set independently at
+creation/update time with no guarantee the two stayed in sync (an image re-upload via
+`POST /products/{id}/image` only ever touched `products.image_url`). Every product's image, album
+or not, is `products.image_url` alone now — one field, one write path, one place a client reads
+from.
 
 **No `release_type` column** — see §3.15. A "Single" product and an "Album" product are the exact
 same shape in this table; only `products.category_id` distinguishes them. This directly answers

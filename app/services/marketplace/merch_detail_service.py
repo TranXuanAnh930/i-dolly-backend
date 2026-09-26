@@ -13,7 +13,7 @@ from app.schema.marketplace import MerchDetailCreate, MerchDetailUpdate
 
 class MerchDetailService:
 
-    # Same dual-FK scoping as album_details.
+    # Company-scoped via whichever of idol_id/group_id is set.
 
     @staticmethod
     def _manager_scope_violation(current_user: Users, company_id: uuid.UUID | None) -> bool:
@@ -31,7 +31,7 @@ class MerchDetailService:
 
     @staticmethod
     def _artist_active_or_missing(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> bool:
-        # Same rule as album_detail_service's equivalent helper.
+        # False only if the referenced idol/group exists and is deactivated.
         if idol_id is not None:
             idol = db.get(Idol, idol_id)
             return idol is None or idol.is_active

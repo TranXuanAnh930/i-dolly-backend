@@ -29,11 +29,9 @@ from app.utils.resale import RESALE_CAP_QUANTITY
 
 class ProductService:
 
-    # Company-scoping for update/delete/image-replace only. A product has no company_id column of
-    # its own — ownership resolves through whichever of album_details/merch_details references it,
-    # same dual-FK lookup as album_detail_service/merch_detail_service. A product tied to neither
-    # (plain merch) has no owner and stays manager-agnostic. add_product/add_bulk_products stay
-    # unscoped since a bare Product has no idol/group link yet at creation.
+    # Company scoping for update/delete/image: a product's owner is resolved through its
+    # album_details or merch_details row. Products with neither are ownerless and any manager
+    # may manage them.
 
     @staticmethod
     def _resolve_product_company_id(db: Session, product_id: uuid.UUID) -> uuid.UUID | None:
@@ -88,19 +86,14 @@ class ProductService:
     @staticmethod
     def add_product(db: Session, product:ProductCreate) -> Product:
         if not db.get(Category, product.category_id):
-            raise NotFoundError("category_id does not reference an existing category")  # was an uncaught IntegrityError -> 500 at commit
+            raise NotFoundError("category_id does not reference an existing category")
         db_product = Product(**product.model_dump())
         db.add(db_product)
         db.commit()
         db.refresh(db_product)
         return db_product
 
-    # Same "which FK is set, then resolve its owner" shape as
-    # album_detail_service/merch_detail_service's own _resolve_company_id /
-    # _artist_active_or_missing — duplicated locally rather than importing
-    # another module's private helpers, matching this project's existing
-    # convention of a small scoping helper per service file (concert_service,
-    # ticket_type_service, lottery_campaign_service all do the same).
+    # Resolve the owning company from an idol_id or group_id.
     @staticmethod
     def _resolve_owner_company_id(db: Session, idol_id: uuid.UUID | None, group_id: uuid.UUID | None) -> uuid.UUID | None:
         if idol_id is not None:
@@ -122,8 +115,7 @@ class ProductService:
         return True
 
     # Creates the Product and its AlbumDetail/MerchDetail row in one transaction, so a rejected
-    # detail (bad owner, wrong company) rolls the product insert back too. Unlike the bare
-    # add_product above, this is scoped from the start — the schema requires idol_id/group_id.
+    # detail rolls back the product too.
     @staticmethod
     def add_product_with_detail(db: Session, data: ProductWithDetailCreate, image_url: str | None, current_user: Users) -> Product:
         if not db.get(Category, data.category_id):
@@ -146,7 +138,7 @@ class ProductService:
             quantity=data.quantity, category_id=data.category_id, image_url=image_url,
         )
         db.add(db_product)
-        flush_or_raise(db)  # populates db_product.id for the detail row below, same transaction
+        flush_or_raise(db)  # populates db_product.id for the detail row
 
         if data.detail_kind == "album":
             db_detail = AlbumDetail(
@@ -159,7 +151,7 @@ class ProductService:
                 edition=data.edition, color_id=data.color_id,
             )
         db.add(db_detail)
-        commit_or_raise(db)  # one commit for both rows — a rejected detail rolls the product back too
+        commit_or_raise(db)
         db.refresh(db_product)
         return db_product
 
@@ -170,12 +162,11 @@ class ProductService:
             raise NotFoundError("Product not found")
         if ProductService._manager_scope_violation(db, current_user, id):
             raise ForbiddenError("Managers can only manage products belonging to their own company's idols/groups")
-        # Managers can't reprice a product after creation, same rationale as
-        # ticket_type_service.update_ticket_type — only an admin can correct it.
+        # Only admins can change a product's price after creation.
         if current_user.role == UserRole.manager and round(product.price, 2) != round(db_product.price, 2):
             raise ForbiddenError("Managers cannot change product price after creation — ask an admin")
         if not db.get(Category, product.category_id):
-            raise NotFoundError("category_id does not reference an existing category")  # was an uncaught IntegrityError -> 500 at commit
+            raise NotFoundError("category_id does not reference an existing category")
         db_product.name = product.name
         db_product.description = product.description
         db_product.price = product.price
@@ -189,9 +180,7 @@ class ProductService:
 
     @staticmethod
     def set_product_image(db: Session, id: uuid.UUID, image_url: str, current_user: Users) -> Product:
-        """Used by the dedicated /products/{id}/image upload endpoint — updates
-        only the image, leaving every other field untouched (unlike
-        update_product, which replaces the whole row from a ProductCreate)."""
+        """Replace only the product's image URL."""
         db_product = db.get(Product, id)
         if not db_product:
             raise NotFoundError("Product not found")
@@ -218,8 +207,7 @@ class ProductService:
         if not product:
             raise BadRequestError("No products given")
         db_products = [Product(**p.model_dump()) for p in product]
-        # All-or-nothing: check every referenced category exists before saving
-        # any of them — was an uncaught IntegrityError -> 500 at commit.
+        # Validate every category before saving any product (all-or-nothing).
         category_ids = {p.category_id for p in product}
         existing_ids = {row[0] for row in db.query(Category.id).filter(Category.id.in_(category_ids)).all()}
         if category_ids - existing_ids:
@@ -260,10 +248,7 @@ class ProductService:
         products=stmt.offset(offset).limit(limit).all()
         return products
 
-    # --- page-shaped reads (see idol_service.py's equivalent comment). Builds
-    # ProductCard-shaped dicts (schema/products.py) — every product-grid view
-    # (store grid, a group's products, a product's own recommendations) renders
-    # this same shape, assembled here in one pass instead of per-card lookups.
+    # --- page-shaped reads. Builds the ProductCard shape used by every product grid in one pass.
 
     @staticmethod
     def _build_product_cards(db: Session, products: list[Product]) -> list[ProductCard]:
@@ -289,11 +274,8 @@ class ProductService:
 
         idols_by_id = {i.id: i for i in db.query(Idol).options(selectinload(Idol.color)).all()}
         groups_by_id = {g.id: g for g in db.query(Group).all()}
-        # Longest-name-first so a group's name can't shadow one of its own
-        # member's longer name — same heuristic the frontend used (catalogStore.
-        # artistForAlbum) before this endpoint existed, kept only as a fallback
-        # for plain merch with neither an album_details nor merch_details
-        # row (a real idol/group FK, when one exists, always wins).
+        # Name-matching fallback for products with no album/merch detail: longest name first so a
+        # group name doesn't shadow a member's longer name.
         name_candidates = sorted(
             [("idol", i) for i in idols_by_id.values()] + [("group", g) for g in groups_by_id.values()],
             key=lambda pair: len(pair[1].name), reverse=True,
@@ -332,7 +314,6 @@ class ProductService:
                 album=AlbumMini(
                     release_date=album.release_date,
                     track_count=album.track_count,
-                    cover_image_url=album.cover_image_url,
                 ) if album else None,
                 genres=genres_by_product.get(product.id, []),
                 artist=resolve_artist(product, album, merch),
@@ -356,9 +337,7 @@ class ProductService:
         cards_by_id = {c.id: c for c in ProductService._build_product_cards(db, all_products)}
         card = cards_by_id[product.id]
 
-        # Same-artist products (any type/category), plus — for album-family
-        # items only — same-genre products, deduped and capped at 8. Mirrors
-        # ProductDetailPage.vue's previous client-side recommendation logic.
+        # Same-artist products, plus same-genre products for albums; deduped, max 8.
         my_genre_ids = {genre.id for genre in card.genres}
         seen = {product.id}
         recommendations = []
@@ -380,11 +359,8 @@ class ProductService:
 
         return ProductDetailRead(product=card, recommendations=recommendations[:8])
 
-    # --- manager/admin settings pages (see idol_service.py's equivalent
-    # comment — an empty list here is a normal state, not a 404). Plain
-    # ProductRead dicts, not the embedded ProductCard shape above — neither
-    # manager page renders album/genre/artist info, so album_details is never
-    # even queried here.
+    # --- manager/admin settings pages (an empty list is a normal result, not a 404). Returns plain
+    # ProductRead dicts; these pages don't need album/genre/artist data.
 
     @staticmethod
     def _product_read_dict(product: Product) -> ProductRead:
@@ -398,8 +374,8 @@ class ProductService:
             category=product.category.name if product.category else None,
         )
 
-    # Batch version of _resolve_product_company_id — one query per detail table instead of two
-    # per product. Not underscore-prefixed: order_service.get_manager_orders_page reuses it too.
+    # Batch version of _resolve_product_company_id: one query per detail table. Also used by
+    # order_service.
     @staticmethod
     def resolve_product_company_ids(db: Session, products: list[Product]) -> dict[uuid.UUID, uuid.UUID | None]:
         product_ids = [p.id for p in products]
@@ -429,12 +405,8 @@ class ProductService:
                 company_by_product[product.id] = None
         return company_by_product
 
-    # company_id is optional: an admin (no single company of their own) passes
-    # none and sees every product; a manager passes their own company_id and
-    # sees that company's products plus every ownerless one (matching
-    # _manager_scope_violation's "ownerless = manageable by anyone" rule) —
-    # without this, a manager could see (and try to edit) another company's
-    # products and only find out it was forbidden after submitting the form.
+    # company_id=None (admin) returns every product; a manager's company_id returns that
+    # company's products plus ownerless ones.
     @staticmethod
     def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None) -> ManagerProductsPageRead:
         products = db.query(Product).options(joinedload(Product.category)).all()
@@ -450,11 +422,8 @@ class ProductService:
             company_by_product = ProductService.resolve_product_company_ids(db, products)
             products = [p for p in products if company_by_product[p.id] in (None, company_id)]
         categories = db.query(Category).all()
-        # idols/groups/colors are for the "attach this product to one of my own
-        # idols/groups" step of creating a product (add_product_with_detail) —
-        # every idol/group is returned (not company-filtered server-side) since
-        # an admin's form needs every company's, same as ManagerIdolFormPageRead's
-        # own groups field; the manager form filters client-side by company_id.
+        # Every idol/group is returned so admins can pick any company; the manager form filters
+        # client-side by company_id.
         idols = db.query(Idol).all()
         groups = db.query(Group).all()
         colors = db.query(IdolColor).all()
@@ -466,9 +435,7 @@ class ProductService:
             colors=colors,
         )
 
-    # --- sales history — replaces the old hard-delete action (would CASCADE-delete order
-    # history). Product has no is_active/status column to soft-delete instead, so the manager UI
-    # drops the destructive action entirely in favor of a read-only sales view.
+    # --- sales history: read-only view of a product's order items.
     @staticmethod
     def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> ProductSalesPageRead:
         db_product = db.get(Product, product_id)

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
-from app.cache.cache_service import CacheService
+from app.cache.invalidation import CacheInvalidation
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, Ticket, TicketType
 from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
@@ -72,24 +72,14 @@ class LotteryDrawService:
                     for candidate in winners:
                         candidate.status = LotteryEntryStatus.won
                         candidate.drawn_at = datetime.now(timezone.utc)
-                        # id is assigned here, not left to the column's default=uuid.uuid4 —
-                        # that default only runs at flush time, and new_ticket.id is read
-                        # below (for the lottery_payment_reminder notification) before this
-                        # loop ever flushes, so leaving it implicit meant every such
-                        # notification was created with ticket_id=NULL.
+                        # Assign the id now: the reminder notification below needs it before flush.
                         new_ticket = Ticket(id=uuid.uuid4(), ticket_type_id=ticket_type.id, user_id=candidate.user_id, status=TicketStatus.pending_payment, lottery_entry_id=candidate.id, payment_deadline_at=datetime.now(timezone.utc)  + timedelta(hours=campaign.payment_deadline_hours))
                         db.add(new_ticket)
                         won_user_ids.add(candidate.user_id)
-                        # Same row for win or loss — a lottery_result notification
-                        # always carries lottery_entry_id, and the client tells
-                        # the two apart by reading entries.status off the FK'd
-                        # row, same as everywhere else "which of the four FKs is
-                        # set" already drives the meaning rather than a second notification type.
+                        # One lottery_result notification for wins and losses; the client reads
+                        # the entry's status to tell them apart.
                         NotificationService.create_notification(db, candidate.user_id, NotificationType.lottery_result, lottery_entry_id=candidate.id)
-                        # Fired once, here, at draw time — not a scheduled
-                        # nag closer to the deadline (that would need a cron/
-                        # Celery Beat job, deliberately out of scope for this
-                        # phase).
+                        # Sent once at draw time; there's no scheduled reminder closer to the deadline.
                         NotificationService.create_notification(db, candidate.user_id, NotificationType.lottery_payment_reminder, ticket_id=new_ticket.id)
                     ticket_type.sold_quantity += len(winners)
 
@@ -106,16 +96,9 @@ class LotteryDrawService:
             campaign.draw_at = datetime.now(timezone.utc)
 
         commit_or_raise(db)
-        # A draw moves three things the cached concert detail carries:
-        # lottery_campaigns[].status (open -> drawn), .draw_at, and
-        # ticket_types[].sold_quantity. Runs in the Celery worker, which shares
-        # the same Redis as the API, so this reaches the same cache entry the
-        # web process reads.
-        CacheService.delete_cached_concert_detail(concert_id)
-        # See notify_managers_of_draw_completion's own docstring — this is
-        # the persistent record that the draw actually finished, distinct
-        # from the lottery_draw_triggered notification fired back when it
-        # was only scheduled.
+        # The draw changed campaign status, draw_at and sold_quantity in the cached concert detail.
+        CacheInvalidation.delete_cached_concert_detail(concert_id)
+        # Separate from the "draw triggered" notification sent when the draw was scheduled.
         ConcertService.notify_managers_of_draw_completion(db, concert)
 
         return LotteryResult(

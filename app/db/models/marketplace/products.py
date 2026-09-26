@@ -17,7 +17,7 @@ class Product(Base):
     description = Column(String)
     quantity = Column(Integer)
     category_id = Column(UUID(as_uuid=True), ForeignKey("categories.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
-    image_url = Column(String, nullable=True)  # local path or S3/CDN URL — see app/utils/storage.py
+    image_url = Column(String, nullable=True)  # local path or S3/CDN URL
 
     cart_items = relationship("Cart", back_populates="product")
     category = relationship("Category", back_populates="products")

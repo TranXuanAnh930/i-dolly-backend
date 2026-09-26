@@ -180,7 +180,6 @@ def make_mock_album_detail(product_id, idol_id=None, group_id=None):
     album.group_id = group_id
     album.release_date = None
     album.track_count = None
-    album.cover_image_url = None
     return album
 
 def make_products_query_db(products, albums=None, merch=None, album_genres=None, idols=None, groups=None):

@@ -1,4 +1,4 @@
-"""Re-exports every public model class in this domain, so callers can do `from app.db.models.marketplace import X` instead of reaching into the individual submodule."""
+"""Re-exports this domain's model classes: `from app.db.models.marketplace import X`."""
 
 from .album_detail import AlbumDetail
 from .cart import Cart

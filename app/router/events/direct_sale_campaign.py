@@ -18,16 +18,13 @@ from app.services.events.ticket_type_service import TicketTypeService
 
 router = APIRouter(prefix="/direct_sale_campaigns", tags=["Direct Sale Campaigns"])
 
-# A campaign's own row has no concert_id column — it's reached via
-# ticket_type_id -> ticket_type.concert_id, resolved here through the
-# existing TicketTypeService read rather than a fresh ORM query in the
-# router (mirrors lottery_campaign.py's identical helper).
+# Resolve a campaign's concert via its ticket type (campaigns have no concert_id column).
 def _concert_id_for(db: Session, ticket_type_id: uuid.UUID) -> uuid.UUID | None:
     ticket_type = TicketTypeService.get_ticket_type(db, ticket_type_id)
     return ticket_type.concert_id if ticket_type else None
 
 @router.post("/add", response_model=DirectSaleCampaignRead)
-async def add_new_campaign(data: DirectSaleCampaignCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> DirectSaleCampaign:
+def add_new_campaign(data: DirectSaleCampaignCreate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> DirectSaleCampaign:
     try:
         result = DirectSaleCampaignService.add_campaign(db, data, current_user)
     except ServiceError as e:
@@ -37,29 +34,25 @@ async def add_new_campaign(data: DirectSaleCampaignCreate, current_user: Users =
         CacheService.delete_cached_concert_detail(concert_id)
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend. Campaign data is read
-# off the bundled GET /concerts/{id}/detail instead — DirectSaleCampaignService
-# only ever calls the inherited create() (POST /add) for the manager-facing
-# "add campaign" form; this read and update/delete below are unused.
+# Not used by the frontend.
 @router.get("/ticket_type/{ticket_type_id}", response_model=List[DirectSaleCampaignRead])
-async def list_campaigns(ticket_type_id: uuid.UUID, db: Session = Depends(get_db)) -> list[DirectSaleCampaign]:
+def list_campaigns(ticket_type_id: uuid.UUID, db: Session = Depends(get_db)) -> list[DirectSaleCampaign]:
     result = DirectSaleCampaignService.get_campaigns(db, ticket_type_id)
     if not result:
         raise HTTPException(status_code=404, detail="No direct sale campaigns found for this ticket type")
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.get("/{id}", response_model=DirectSaleCampaignRead)
-async def get_campaign_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> DirectSaleCampaign:
+def get_campaign_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> DirectSaleCampaign:
     campaign = DirectSaleCampaignService.get_campaign(db, id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Direct sale campaign not found")
     return campaign
 
-# FRONTEND: not currently called by i-dolly-frontend. A manager can create a
-# direct-sale campaign but has no UI to edit or cancel one afterward.
+# Not used by the frontend.
 @router.put("/update/{id}", response_model=DirectSaleCampaignRead)
-async def update_existing_campaign(id: uuid.UUID, data: DirectSaleCampaignUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> DirectSaleCampaign:
+def update_existing_campaign(id: uuid.UUID, data: DirectSaleCampaignUpdate, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> DirectSaleCampaign:
     try:
         result = DirectSaleCampaignService.update_campaign(db, id, data, current_user)
     except ServiceError as e:
@@ -69,9 +62,9 @@ async def update_existing_campaign(id: uuid.UUID, data: DirectSaleCampaignUpdate
         CacheService.delete_cached_concert_detail(concert_id)
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
-async def delete_existing_campaign(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
+def delete_existing_campaign(id: uuid.UUID, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(20, 60, user_key)), db: Session = Depends(get_db)) -> MessageResponse:
     try:
         result = DirectSaleCampaignService.delete_campaign(db, id, current_user)
     except ServiceError as e:

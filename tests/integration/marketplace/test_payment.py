@@ -117,7 +117,8 @@ def test_status_all_unauthenticated():
 def test_status_all_none_found(factory):
     fan = factory.fan()
     response = client.patch("/payment/status/all", headers=factory.token(fan))
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_status_all_found(factory):
     fan = factory.fan()
@@ -254,3 +255,23 @@ def test_webhook_unresolvable_order_still_200():
     with patch("app.router.marketplace.payment.verify_webhook_signature", return_value=True):
         response = client.post("/payment/paypal/webhook", json=_webhook_payload(f"PAYPAL-{uuid.uuid4()}"))
     assert response.status_code == 200
+
+@pytest.mark.parametrize("event", [
+    {"event_type": "PAYMENT.CAPTURE.REFUNDED", "resource": {"id": "REFUND-1"}},
+    {"event_type": "BILLING.PLAN.CREATED", "resource": {"id": "PLAN-1"}},
+    {"event_type": "PAYMENT.CAPTURE.COMPLETED"},
+])
+def test_webhook_event_without_order_id_is_acknowledged(event):
+    with patch("app.router.marketplace.payment.verify_webhook_signature", return_value=True), \
+         patch("app.router.marketplace.payment.PaymentService.finalize_paypal_payment") as finalize:
+        response = client.post("/payment/paypal/webhook", json=event)
+    assert response.status_code == 200
+    finalize.assert_not_called()
+
+def test_webhook_order_approved_event_finalizes_by_resource_id():
+    event = {"event_type": "CHECKOUT.ORDER.APPROVED", "resource": {"id": "PAYPAL-ORDER-7"}}
+    with patch("app.router.marketplace.payment.verify_webhook_signature", return_value=True), \
+         patch("app.router.marketplace.payment.PaymentService.finalize_paypal_payment") as finalize:
+        response = client.post("/payment/paypal/webhook", json=event)
+    assert response.status_code == 200
+    assert finalize.call_args.args[1] == "PAYPAL-ORDER-7"

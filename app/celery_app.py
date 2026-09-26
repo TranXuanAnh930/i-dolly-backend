@@ -2,10 +2,7 @@ from celery import Celery
 
 from app.config.settings import settings
 
-# Reuses the same Redis instance as app/cache/redis_client.py but a separate
-# DB index (CELERY_BROKER_DB, default 1 vs. REDIS_DB's default 0) so Celery's
-# broker/result keys never collide with the product-list cache or the rate
-# limiter's counters.
+# Same Redis instance as the cache, on a separate DB index (CELERY_BROKER_DB).
 _redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.CELERY_BROKER_DB}"
 
 celery_app = Celery(

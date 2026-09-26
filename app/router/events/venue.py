@@ -15,40 +15,35 @@ from app.schema.common import MessageResponse
 from app.schema.events import VenueCreate, VenueRead, VenueUpdate
 from app.services.events.venue_service import VenueService
 
-# Admin-only, like management_companies/categories: a venue is shared,
-# platform-level data, not owned by one company (database-design.md §3.7).
+# Admin-only: venues are shared across companies.
 router = APIRouter(prefix="/venues", tags=["Venues"])
 
-# FRONTEND: not currently called by i-dolly-frontend — and neither is anything
-# else on this router. The frontend's VenuesService was deleted once its only
-# caller (the concerts store) stopped pulling /venues/all it never actually
-# read; venue data reaches the UI embedded in the concert bundles instead
-# (EventsPageRead.venue, ConcertDetailRead.venue).
+# Not used by the frontend (nor is the rest of this router).
 @router.post("/add", response_model=VenueRead)
-async def add_new_venue(venue: VenueCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Venue:
+def add_new_venue(venue: VenueCreate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Venue:
     result = VenueService.add_venue(db, venue)
     CacheService.delete_cached_venues()
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend (see the note above).
+# Not used by the frontend.
 @router.get("/all", response_model=List[VenueRead])
-async def list_venues(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Venue]:
+def list_venues(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Venue]:
     result = CacheService.get_cached_venues(db)
     if not result:
         raise HTTPException(status_code=404, detail="No venues found")
     return result
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.get("/{id}", response_model=VenueRead)
-async def get_venue_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Venue:
+def get_venue_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Venue:
     venue = VenueService.get_venue(db, id)
     if not venue:
         raise HTTPException(status_code=404, detail="Venue not found")
     return venue
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.put("/update/{id}", response_model=VenueRead)
-async def update_existing_venue(id: uuid.UUID, data: VenueUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Venue:
+def update_existing_venue(id: uuid.UUID, data: VenueUpdate, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> Venue:
     try:
         db_venue = VenueService.update_venue(db, id, data)
     except ServiceError as e:
@@ -56,9 +51,9 @@ async def update_existing_venue(id: uuid.UUID, data: VenueUpdate, current_user: 
     CacheService.delete_cached_venues()
     return db_venue
 
-# FRONTEND: not currently called by i-dolly-frontend.
+# Not used by the frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
-async def delete_existing_venue(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
+def delete_existing_venue(id: uuid.UUID, current_user: Users = Depends(require_admin), db: Session = Depends(get_db)) -> MessageResponse:
     result = VenueService.delete_venue(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Venue not found")

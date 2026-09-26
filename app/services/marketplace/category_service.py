@@ -19,10 +19,6 @@ class CategoryService:
 
     @staticmethod
     def get_categories(db:Session) -> list[Category]:
-        # Was previously annotated `-> CategoryCreate`, which was wrong on two
-        # counts: this returns a list, not a single instance, and the actual
-        # rows are Category ORM objects, not the CategoryCreate input schema.
-        # Corrected while adding the annotations this file was missing.
         return db.query(Category).all()
 
     @staticmethod

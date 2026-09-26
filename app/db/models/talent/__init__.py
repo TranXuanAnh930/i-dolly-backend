@@ -1,4 +1,4 @@
-"""Re-exports every public model class in this domain, so callers can do `from app.db.models.talent import X` instead of reaching into the individual submodule."""
+"""Re-exports this domain's model classes: `from app.db.models.talent import X`."""
 
 from .group import Group
 from .idol import Idol

@@ -5,12 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.schema.events import ConcertWithVenue
 
-# Not the app.schema.marketplace package-level shortcut on purpose: marketplace
-# needs talent back (products.py imports GroupMini/IdolRead from here), so a
-# package-level import on EITHER side of that cycle needs the whole other
-# package's __init__ to have finished first, which it hasn't at this point in
-# an events/ticket-first import chain — direct submodule import sidesteps it
-# the same way products.py's own reordering already does on its side.
+# Submodule import (not the package) to avoid the talent <-> marketplace schema import cycle.
 from app.schema.marketplace.products import ProductCard
 from app.schema.talent.idol import IdolWithPositions
 
@@ -35,8 +30,7 @@ class GroupRead(GroupBase):
 
     model_config = {"from_attributes": True}
 
-# --- page-shaped reads — one bundled response per screen (see idol.py's
-# equivalent comment).
+# --- page-shaped reads: one bundled response per screen.
 
 class GroupWithCount(GroupRead):
     member_count: int
@@ -50,9 +44,6 @@ class GroupDetailRead(BaseModel):
     events: list[ConcertWithVenue]
     products: list[ProductCard]
 
-# --- manager/admin settings page — ManagerGroupsPage's table and
-# ManagerGroupFormPage's groupById lookup both only need the plain group
-# rows, no members/events/products. An empty list is a normal state (a
-# fresh company has no groups yet), not a 404.
+# --- manager/admin settings page (an empty list is a normal result, not a 404).
 class ManagerGroupsPageRead(BaseModel):
     groups: list[GroupRead]

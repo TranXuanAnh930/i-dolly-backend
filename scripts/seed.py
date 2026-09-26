@@ -12,7 +12,7 @@ Idol portraits and product covers are seeded from tests/fixtures/ — see that
 folder's README for how they were generated (procedural placeholder art, not
 real character art: no AI image-generation tool was available in the
 environment this project was built in). Each is pushed through the same
-get_storage().save() coroutine app/router/idol.py and app/router/products.py
+get_storage().save() that app/router/idol.py and app/router/products.py
 call on a real upload, via the tiny UploadFile duck-type below, so the seed
 data exercises the real storage abstraction end to end rather than writing
 image_url strings directly.
@@ -40,7 +40,6 @@ otherwise the default below. Set SEED_PASSWORD before seeding anything but a thr
 DB: this script's default is public (committed to this file), so a deploy seeded without
 overriding it is an admin account anyone reading the repo can log into.
 """
-import asyncio
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -95,28 +94,23 @@ FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 class _FixtureUploadFile:
     """Minimal UploadFile duck-type: StorageBackend.save() only ever touches
-    .content_type, .filename, and an async .read(size) — so this is enough
+    .content_type, .filename, and the sync .file handle — so this is enough
     to push a local fixture file through get_storage().save() exactly like
     a real multipart upload would, without needing a running request or an
     ASGI-provided UploadFile (and without pinning this script to whatever
     starlette version happens to be installed)."""
 
     def __init__(self, path: Path, content_type: str = "image/png"):
-        self._f = open(path, "rb")
+        self.file = open(path, "rb")
         self.filename = path.name
         self.content_type = content_type
 
-    async def read(self, size: int = -1) -> bytes:
-        return self._f.read(size)
-
     def close(self):
-        self._f.close()
+        self.file.close()
 
 
 def upload_fixture(filename: str, subfolder: str) -> str:
-    """Synchronous wrapper: this is a plain script, not an ASGI app, so
-    there's no event loop already running — asyncio.run() per call is fine
-    here (it would NOT be inside a real request handler)."""
+    """Push one fixture image through the real storage backend."""
     path = FIXTURES_DIR / subfolder / filename
     if not path.exists():
         raise FileNotFoundError(
@@ -124,14 +118,11 @@ def upload_fixture(filename: str, subfolder: str) -> str:
             f"script, or check the filename matches what it wrote."
         )
 
-    async def _do():
-        upload = _FixtureUploadFile(path)
-        try:
-            return await get_storage().save(upload, subfolder)
-        finally:
-            upload.close()
-
-    return asyncio.run(_do())
+    upload = _FixtureUploadFile(path)
+    try:
+        return get_storage().save(upload, subfolder)
+    finally:
+        upload.close()
 
 
 def color_id(db, name):
@@ -765,7 +756,6 @@ def seed(db):
             group_id=group.id if group else None,
             idol_id=idol.id if idol else None,
             release_date=release_date, track_count=track_count, format=fmt,
-            cover_image_url=image_url,
         ))
         db.add_all([AlbumGenre(product_id=product.id, genre_id=genre_id(db, g)) for g in genres])
     db.flush()

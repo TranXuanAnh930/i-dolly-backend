@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Column, Date, Enum, ForeignKey, Integer, String
+from sqlalchemy import CheckConstraint, Column, Date, Enum, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -16,7 +16,6 @@ class AlbumDetail(Base):
     release_date = Column(Date, nullable=True)
     track_count = Column(Integer, nullable=True)
     format = Column(Enum(ReleaseFormat, name="release_format_enum"), nullable=False, server_default="physical")
-    cover_image_url = Column(String, nullable=True)
 
     __table_args__ = (
         CheckConstraint("idol_id IS NOT NULL OR group_id IS NOT NULL", name="chk_album_details_artist"),
