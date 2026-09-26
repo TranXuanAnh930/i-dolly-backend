@@ -139,6 +139,7 @@ class OrderService:
             .first()
         )
 
+    # Out of scope: not used by the frontend. Doesn't restock, refund, or bust the product cache.
     @staticmethod
     def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order:
         order = OrderService.fetch_single_placed_order(db, user_id, order_id)

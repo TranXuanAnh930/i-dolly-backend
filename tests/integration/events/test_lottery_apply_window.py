@@ -12,6 +12,7 @@ from app.schema.events.lottery_campaign import CampaignStatus
 from app.services.events.lottery_entry_service import LotteryEntryService
 from tests.integration._concurrency import db_session
 from tests.integration.events.test_lottery_concurrency import (
+    cleanup_concert_scenario,
     create_concert,
     create_fan,
     create_management_company,
@@ -24,6 +25,17 @@ from tests.integration.events.test_lottery_concurrency import (
 
 HOLD_SECONDS = 1.0
 
+# (company_id, venue_id, [user_id]) per seed call. The integration DB is shared across the run,
+# so leftovers would show up in other suites (e.g. the "no companies" list test).
+_seeded: list[tuple] = []
+
+
+@pytest.fixture(autouse=True)
+def cleanup_seeded_rows():
+    yield
+    while _seeded:
+        cleanup_concert_scenario(*_seeded.pop())
+
 
 def _seed_open_campaign_with_ranked_fan():
     company = create_management_company()
@@ -31,6 +43,7 @@ def _seed_open_campaign_with_ranked_fan():
     concert = create_concert(company.id, venue.id)
     ticket_type = create_ticket_type(concert.id, total_quantity=10)
     fan = create_fan()
+    _seeded.append((company.id, venue.id, [fan.id]))
     now = datetime.now(timezone.utc)
     with db_session() as db:
         campaign = LotteryCampaign(

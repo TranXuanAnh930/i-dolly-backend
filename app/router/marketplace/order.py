@@ -78,7 +78,7 @@ def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
-# Not used by the frontend.
+# Not used by the frontend; out of scope.
 @router.patch("/cancel/{order_id}", response_model=Order)
 def cancel_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> OrderModel:
     try:

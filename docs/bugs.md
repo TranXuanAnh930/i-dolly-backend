@@ -73,9 +73,17 @@ they're fixed.
   after commit, so checkout/payment 500 on an order that actually succeeded.
 - [ ] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
   live (`ticket_service.py:54`) but direct tickets have no deadline/sweep.
+  **DEFERRED**: to be fixed later, with #26 and #27.
 - [ ] **13. Resale cap counts cancelled/declined orders** (`order_service.py:71`, no status
-  filter), and is computed before the lock (concurrent checkouts can both pass).
+  filter), and is computed before the lock (concurrent checkouts can both pass). Abandoned PayPal
+  checkouts make this worse: each one leaves a `pending` order that counts toward the cap forever
+  (#27), so a fan can hit `ResaleCapExceededError` without owning a unit. Count only `confirmed`
+  orders.
+  **OUT OF SCOPE**: the user-cancel path (`cancel_placed_order`) isn't used by the frontend; not in
+  current scope. Note that declined mock payments (`payment_service.py:34`) and abandoned PayPal
+  orders (#27) still count toward the cap without that endpoint.
 - [ ] **14. `cancel_placed_order` doesn't restock, refund, or bust the product cache.**
+  **OUT OF SCOPE**: the frontend doesn't use this endpoint; not in current scope.
 - [x] **15. Cart price drift.** Re-adding an item updates `total_price` from the current price but
   leaves `Cart.price` stale (`cart_service.py` add_to_cart); checkout uses `total_price` for the
   order total and `price` for line items → they don't reconcile.
@@ -88,6 +96,12 @@ they're fixed.
   **FIXED**: `paypal_client.order_id_from_webhook` reads the order id from `CHECKOUT.ORDER.*` (`resource.id`)
   or `PAYMENT.CAPTURE.*` (`supplementary_data`) events; anything else gets a 200 and is ignored.
   What happens after an order id is found is unchanged (#8).
+- [ ] **26. Unpaid PayPal orders can be shipped.** The PayPal path creates the order's
+  `shipping_status` row as `pending` before payment (`payment_service.py:51`), and `ship_order`
+  checks only the shipping status, not `order.status` (`order_service.py:198`). An abandoned or
+  not-yet-captured order shows up on the manager orders page and can be marked shipped. Require
+  `order.status == confirmed` in `ship_order`.
+  **DEFERRED**: to be fixed later, with #12 and #27.
 
 ## 🟡 Medium
 
@@ -104,6 +118,13 @@ they're fixed.
 - [ ] **24.** Draw is O(entries × preferences) plus O(ranks × campaigns × entries).
 - [ ] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
   `except` notifies managers the draw *failed*.
+- [ ] **27. Abandoned PayPal marketplace orders stay `pending` forever.** If the fan never approves
+  on PayPal, `finalize_paypal_payment` never runs: the order, its payment and its shipping status
+  stay `pending` with no deadline or sweep. No stock is held and the cart isn't cleared, so the fan
+  can re-checkout, but the stale orders clutter order history and the manager orders page, feed the
+  resale cap (#13), and look shippable (#26). Same root cause as #12 (no expiry for PayPal pending
+  state); fix them together.
+  **DEFERRED**: to be fixed later, with #12 and #26.
 
 ## 🔵 Code smells
 
@@ -131,8 +152,10 @@ Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, and three code smells.
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. **Security:** #7 spoofable IP rate limits (plan in `docs/plans/rate-limit-client-ip.md`).
 3. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
-   soft delete or block); #14 cancel doesn't restock, together with #13 resale cap counting cancelled
-   orders.
-4. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation; #12 abandoned
-   direct-sale PayPal ticket locks the fan out; #11 Redis outage handling.
+   soft delete or block). (#13 and #14 are out of scope — the frontend doesn't call
+   `cancel_placed_order`.)
+4. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation; #11 Redis
+   outage handling.
 5. **Test debt:** #9's `checkout_ticket` race test.
+6. **Deferred (fix later):** PayPal pending-state bugs #12 (abandoned ticket locks the fan out),
+   #26 (unpaid orders shippable), #27 (abandoned orders never expire).

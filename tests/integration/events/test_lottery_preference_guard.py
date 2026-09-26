@@ -13,6 +13,7 @@ from app.schema.events.ticket_type import SaleMethod, TicketTier
 from app.services.events.lottery_preference_service import LotteryPreferenceService
 from tests.integration._concurrency import db_session
 from tests.integration.events.test_lottery_concurrency import (
+    cleanup_concert_scenario,
     create_concert,
     create_fan,
     create_management_company,
@@ -23,6 +24,17 @@ from tests.integration.events.test_lottery_concurrency import (
 # is running), and a tier the fan has applied to can't be removed from it.
 
 HOLD_SECONDS = 1.0
+
+# (company_id, venue_id, [user_id]) per _seed() call. The integration DB is shared across the run,
+# so leftovers would show up in other suites (e.g. the "no companies" list test).
+_seeded: list[tuple] = []
+
+
+@pytest.fixture(autouse=True)
+def cleanup_seeded_rows():
+    yield
+    while _seeded:
+        cleanup_concert_scenario(*_seeded.pop())
 
 
 def _lottery_tier(concert_id, tier):
@@ -43,6 +55,7 @@ def _seed(entry_end_at=None):
     tier_a = _lottery_tier(concert.id, TicketTier.vip)
     tier_b = _lottery_tier(concert.id, TicketTier.regular)
     fan = create_fan()
+    _seeded.append((company.id, venue.id, [fan.id]))
     now = datetime.now(timezone.utc)
     with db_session() as db:
         campaigns = [

@@ -88,7 +88,7 @@ class TicketService:
     # so two fans can't both buy the last seat.
     @staticmethod
     def checkout_ticket(db: Session, user_id: uuid.UUID, data: TicketCheckoutCreate) -> Ticket:
-        user = db.get(Users, user_id)
+        user = db.query(Users).filter(Users.id == user_id).with_for_update().first()
         if not user or user.role != UserRole.fan:
             # Primary check; trg_tickets_fan_only is the backstop.
             raise FanOnlyPurchaseError("Only fan accounts can purchase tickets")

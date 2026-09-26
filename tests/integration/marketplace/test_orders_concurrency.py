@@ -178,10 +178,6 @@ def cleanup_fans(user_ids: list[uuid.UUID]) -> None:
         db.commit()
 
 
-# ───────────────────────────────────────────────────────────────
-# Tests — fill these in.
-# ───────────────────────────────────────────────────────────────
-
 def test_concurrent_checkout_oversells_nothing():
     category = create_category()
     product = create_product(category.id, quantity=1)
