@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.cache.rate_limit import ip_key, rate_limit, user_key
+from app.cache.rate_limit import rate_limit, user_key
 from app.db.models.identity import Users
 from app.db.models.marketplace import ShippingAddress as ShippingAddressModel
 from app.deps.auth import get_current_user
@@ -21,14 +21,14 @@ def add_new_address(data:ShippingBase, user:Users=Depends(get_current_user), db:
     return ShippingService.create_shipping_address(db, user.id, data)
 
 @router.get("/fetch", response_model=List[ShippingAddress])
-def see_address(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> list[ShippingAddressModel]:
+def see_address(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(20,60,user_key)), db:Session=Depends(get_db)) -> list[ShippingAddressModel]:
     address = ShippingService.fetch_address(db, user.id)
     if not address:
         raise HTTPException(status_code=404, detail="No shipping addresses found")
     return address
 
 @router.get("/fetch_byid/{address_id}", response_model=ShippingAddress)
-def get_user_address_byid(address_id:uuid.UUID, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> ShippingAddressModel:
+def get_user_address_byid(address_id:uuid.UUID, _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> ShippingAddressModel:
     address = ShippingService.get_address_by_id(db, address_id)
     if not address:
         raise HTTPException(status_code=404, detail="address not found")

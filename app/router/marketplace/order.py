@@ -35,8 +35,10 @@ def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:N
     try:
         order = OrderService.checkout(db, user.id, data)
         if order.status != OrderStatus.cancelled:  # no confirmation email for a declined payment
+            # Only confirmed (paid) or pending (PayPal not yet captured) orders reach here.
+            payment_status = "Paid" if order.status == OrderStatus.confirmed else "Awaiting payment confirmation"
             email_body = EmailTemplate.ORDER_PLACED.render(
-                email=user.email, order_id=order.id, total=order.total_price, status=order.status.value
+                email=user.email, order_id=order.id, total=order.total_price, payment_status=payment_status
             )
             celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.ORDER_PLACED.subject, email_body])
         return order
@@ -72,7 +74,7 @@ def fetch_placed_order_for_user(user:Users=Depends(get_current_user), _:None=Dep
 
 # Not used by the frontend.
 @router.get("/single_placed_order/{order_id}", response_model=Order)
-def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(3,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
+def single_placed_order(order_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(15,60,user_key)), db:Session=Depends(get_db)) -> OrderModel:
     order = OrderService.fetch_single_placed_order(db, user.id, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")

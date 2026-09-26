@@ -149,7 +149,7 @@ class TicketService:
         # Only after the commit succeeded, so a failed commit never sends a confirmation.
         if confirmed:
             email_body = EmailTemplate.TICKET_CONFIRMED.render(
-                email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+                email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=total_amount
             )
             celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
         db.refresh(ticket)
@@ -197,7 +197,7 @@ class TicketService:
         user = db.get(Users, user_id) if confirmed else None
         if user:
             email_body = EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.render(
-                email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+                email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=total_amount
             )
             celery_app.send_task(
                 "app.tasks.email.send_email", args=[user.email, EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.subject, email_body]

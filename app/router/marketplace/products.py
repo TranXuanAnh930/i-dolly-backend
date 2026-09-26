@@ -32,21 +32,21 @@ router = APIRouter(prefix="/products", tags=["Products"])
 
 # Not used by the frontend.
 @router.get("/all", response_model=List[ProductRead])
-def list_of_existing_products(_:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
+def list_of_existing_products(_:None=Depends(rate_limit(30,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
     db_products = CacheService.get_cached_products(db)
     if not db_products:
         raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
 @router.get("/store-page", response_model=StorePageRead)
-def get_store_page_data(_:None=Depends(rate_limit(5,60,ip_key)),db: Session = Depends(get_db)) -> StorePageRead:
+def get_store_page_data(_:None=Depends(rate_limit(30,60,ip_key)),db: Session = Depends(get_db)) -> StorePageRead:
     result = CacheService.get_cached_store_page(db)
     if not result:
         raise HTTPException(status_code=404, detail="Products not found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
-def get_product_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> ProductDetailRead:
+def get_product_detail_by_id(id: uuid.UUID, _: None = Depends(rate_limit(30, 60, ip_key)), db: Session = Depends(get_db)) -> ProductDetailRead:
     result = CacheService.get_cached_product_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Product not found")

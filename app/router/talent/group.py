@@ -58,7 +58,7 @@ def get_manager_groups_page_data(db: Session = Depends(get_db)) -> ManagerGroups
     return CacheService.get_cached_manager_groups_page(db)
 
 @router.get("/{id}/detail", response_model=GroupDetailRead)
-def get_group_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> GroupDetailRead:
+def get_group_detail_by_id(id: uuid.UUID, _: None = Depends(rate_limit(30, 60, ip_key)), db: Session = Depends(get_db)) -> GroupDetailRead:
     result = CacheService.get_cached_group_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Group not found")

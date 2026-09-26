@@ -85,7 +85,7 @@ def get_members_page_data(db: Session = Depends(get_db)) -> MembersPageRead:
     return result
 
 @router.get("/{id}/detail", response_model=IdolDetailRead)
-def get_idol_detail_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> IdolDetailRead:
+def get_idol_detail_by_id(id: uuid.UUID, _: None = Depends(rate_limit(30, 60, ip_key)), db: Session = Depends(get_db)) -> IdolDetailRead:
     result = CacheService.get_cached_idol_detail(db, id)
     if not result:
         raise HTTPException(status_code=404, detail="Idol not found")
