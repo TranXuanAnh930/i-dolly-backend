@@ -139,17 +139,19 @@ class TicketService:
         payment = PaymentService.create_ticket_payment(db, user_id, ticket, data)
         if not payment:
             raise UnsupportedGatewayError("Unsupported payment gateway!")
-        if payment.status == PaymentStatus.success:
-            if ticket.status == TicketStatus.paid:
-                ticket_type.sold_quantity += 1
-                NotificationService.create_notification(db, user_id, NotificationType.ticket_confirmation, ticket_id=ticket.id)
-                email_body = EmailTemplate.TICKET_CONFIRMED.render(
-                    email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
-                )
-                celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
+        confirmed = payment.status == PaymentStatus.success and ticket.status == TicketStatus.paid
+        if confirmed:
+            ticket_type.sold_quantity += 1
+            NotificationService.create_notification(db, user_id, NotificationType.ticket_confirmation, ticket_id=ticket.id)
         commit_or_raise(db)
         # sold_quantity is part of the cached concert detail.
         CacheInvalidation.delete_cached_concert_detail(ticket_type.concert_id)
+        # Only after the commit succeeded, so a failed commit never sends a confirmation.
+        if confirmed:
+            email_body = EmailTemplate.TICKET_CONFIRMED.render(
+                email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+            )
+            celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
         db.refresh(ticket)
         return ticket
 
@@ -186,18 +188,20 @@ class TicketService:
         payment = PaymentService.create_ticket_payment(db, user_id, ticket, data)
         if not payment:
             raise UnsupportedGatewayError("Unsupported payment gateway!")
-        if payment.status == PaymentStatus.success:
+        confirmed = payment.status == PaymentStatus.success
+        if confirmed:
             NotificationService.create_notification(db, user_id, NotificationType.lottery_payment_confirmation, ticket_id=ticket.id)
-            user = db.get(Users, user_id)
-            if user:
-                email_body = EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.render(
-                    email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
-                )
-                celery_app.send_task(
-                    "app.tasks.email.send_email", args=[user.email, EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.subject, email_body]
-                )
 
         commit_or_raise(db)
+        # Only after the commit succeeded, so a failed commit never sends a confirmation.
+        user = db.get(Users, user_id) if confirmed else None
+        if user:
+            email_body = EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.render(
+                email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=ticket_type.price
+            )
+            celery_app.send_task(
+                "app.tasks.email.send_email", args=[user.email, EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.subject, email_body]
+            )
         db.refresh(ticket)
         return ticket
 

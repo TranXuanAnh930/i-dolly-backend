@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     RESEND_API_KEY : str
 
     # When true, send_email() prints emails (including tokens) to the console instead of sending.
-    # Dev only; never enable in production.
-    DEBUG: bool = True
+    # Dev only; never enable in production. Defaults to off so a missing env var fails safe.
+    DEBUG: bool = False
 
     # Public URL of this API, used in links sent by email.
     BASE_URL: str = "http://localhost:8000"

@@ -30,6 +30,8 @@ class CartService:
         stmt = db.query(Cart).filter(Cart.user_id==user_id, Cart.product_id==cart_item.product_id).with_for_update().first()
         if stmt:
             stmt.quantity+=cart_item.quantity
+            # Reprice the whole row at the current price, so price * quantity == total_price.
+            stmt.price=product.price
             stmt.total_price=product.price*stmt.quantity
         else:
             stmt = Cart(**cart_item.model_dump(), user_id=user_id, price=product.price, total_price=product.price*cart_item.quantity)

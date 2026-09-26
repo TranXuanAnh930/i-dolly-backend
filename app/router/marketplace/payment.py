@@ -12,7 +12,7 @@ from app.deps.db import get_db
 from app.schema.common import MessageResponse
 from app.schema.marketplace import PaymentResponse
 from app.services.marketplace.payment_service import PaymentService
-from app.utils.paypal_client import verify_webhook_signature
+from app.utils.paypal_client import order_id_from_webhook, verify_webhook_signature
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
 
@@ -56,9 +56,10 @@ def paypal_webhook(request: Request, raw_body: bytes = Depends(_raw_body), db: S
     if not verify_webhook_signature(request.headers, raw_body):
         raise HTTPException(status_code=400, detail="Webhook signature verification failed")
 
-    webhook_event = json.loads(raw_body)
-    pg_order_id = webhook_event["resource"]["supplementary_data"]["related_ids"]["order_id"]
-    PaymentService.finalize_paypal_payment(db, pg_order_id)
+    pg_order_id = order_id_from_webhook(json.loads(raw_body))
+    # Events that don't refer to an order are acknowledged and ignored.
+    if pg_order_id:
+        PaymentService.finalize_paypal_payment(db, pg_order_id)
 
     # Return 200 whenever the signature is valid, even if nothing was left to do; a non-2xx
     # response makes PayPal retry.

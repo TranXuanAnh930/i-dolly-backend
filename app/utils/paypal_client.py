@@ -88,6 +88,21 @@ def extract_approval_url(order_response: dict) -> str | None:
     return None
 
 
+def order_id_from_webhook(event: dict) -> str | None:
+    """PayPal order id a webhook event refers to, or None for events that don't carry one.
+
+    CHECKOUT.ORDER.* events carry the order itself as `resource`; PAYMENT.CAPTURE.* events carry
+    the capture, with the order id under supplementary_data.related_ids.
+    """
+    resource = event.get("resource") if isinstance(event, dict) else None
+    if not isinstance(resource, dict):
+        return None
+    if str(event.get("event_type", "")).startswith("CHECKOUT.ORDER."):
+        return resource.get("id")
+    related = (resource.get("supplementary_data") or {}).get("related_ids") or {}
+    return related.get("order_id")
+
+
 def capture_order(paypal_order_id: str) -> dict:
     """Capture an approved order. Raises httpx.HTTPStatusError (e.g. 422) if not approved yet."""
     response = httpx.post(

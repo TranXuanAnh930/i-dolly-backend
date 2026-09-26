@@ -17,7 +17,7 @@ they're fixed.
 - [ ] **2. Deleting a product deletes order history.** `order_items.product_id` is
   `ON DELETE CASCADE` (`models/marketplace/order.py:34`) and `delete_product` hard-deletes
   (`product_service.py:206`). Any manager can do this to ownerless merch. Same class as item 17.
-- [ ] **3. Cart IDOR.** `CartService.remove_cart` (`cart_service.py:51`) filters only by
+- [x] **3. Cart IDOR.** **FIXED**: the query now also filters by `Cart.user_id`. `CartService.remove_cart` (`cart_service.py:51`) filters only by
   `Cart.id`; `user_id` is accepted but unused — any user can delete anyone's cart row.
 - [x] **4. Lottery apply ignores entry window and campaign status.** `_stage_entry`
   (`lottery_entry_service.py:31`) never checks `entry_start_at`/`entry_end_at`/`status == open`;
@@ -48,6 +48,7 @@ they're fixed.
 - [ ] **7. IP rate limits spoofable.** `ProxyHeadersMiddleware(trusted_hosts="*")` (`main.py:75`)
   makes uvicorn 0.38 take the *leftmost* `X-Forwarded-For` hop, which the client controls
   (Render appends, doesn't strip). Rotating the header bypasses login/register limits.
+  **Fix planned:** `docs/plans/rate-limit-client-ip.md`.
 - [ ] **8. PayPal capture under row locks, no reconciliation.** `finalize_paypal_payment` calls
   `capture_order` (network, 10s timeout) while holding `FOR UPDATE` on payment/ticket_type/products
   (`payment_service.py:159`, `:190`). If PayPal captures but the response times out or our commit
@@ -63,11 +64,11 @@ they're fixed.
   body in an async dependency. Verified via TestClient that uploads and the webhook run in the
   threadpool. S3 uploads now read at most MAX+1 bytes (fixes the whole-file-in-memory smell below).
   Still open:
-  - Set `pool_size`/`max_overflow` explicitly in `app/db/session.py`. The default pool of 15 DB
-    connections is smaller than the threadpool's roughly 40 concurrent requests.
+  - ~~Set `pool_size`/`max_overflow` explicitly in `app/db/session.py`~~ — done (5 + 5, 10s timeout).
   - Add the missing `checkout_ticket` race test, now that routes really run concurrently.
-- [ ] **10. `DEBUG` defaults to `True`** (`settings.py`), contradicting `deployment.md` and the
+- [x] **10. `DEBUG` defaults to `True`** (`settings.py`), contradicting `deployment.md` and the
   `email_sender.py` comment. An env missing `DEBUG` prints reset tokens to logs and sends no email.
+  **FIXED**: `DEBUG` now defaults to `False`, matching `deployment.md`.
 - [ ] **11. Redis outage → 500s.** `CacheService` has no `RedisError` handling. Invalidation runs
   after commit, so checkout/payment 500 on an order that actually succeeded.
 - [ ] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
@@ -75,12 +76,18 @@ they're fixed.
 - [ ] **13. Resale cap counts cancelled/declined orders** (`order_service.py:71`, no status
   filter), and is computed before the lock (concurrent checkouts can both pass).
 - [ ] **14. `cancel_placed_order` doesn't restock, refund, or bust the product cache.**
-- [ ] **15. Cart price drift.** Re-adding an item updates `total_price` from the current price but
+- [x] **15. Cart price drift.** Re-adding an item updates `total_price` from the current price but
   leaves `Cart.price` stale (`cart_service.py` add_to_cart); checkout uses `total_price` for the
   order total and `price` for line items → they don't reconcile.
-- [ ] **16. Emails dispatched before commit** in `checkout_ticket` / `checkout_won_ticket`.
-- [ ] **17. Webhook `KeyError`** on `resource.supplementary_data.related_ids.order_id` for any
+  **FIXED**: re-adding an item reprices the row (`price` and `total_price` both from the current price).
+- [x] **16. Emails dispatched before commit** in `checkout_ticket` / `checkout_won_ticket`.
+  **FIXED**: both checkouts send the confirmation email only after `commit_or_raise`; unit tests check the order
+  and that a failed commit sends nothing (they fail against the old code).
+- [x] **17. Webhook `KeyError`** on `resource.supplementary_data.related_ids.order_id` for any
   event type lacking it → 500 → PayPal retries.
+  **FIXED**: `paypal_client.order_id_from_webhook` reads the order id from `CHECKOUT.ORDER.*` (`resource.id`)
+  or `PAYMENT.CAPTURE.*` (`supplementary_data`) events; anything else gets a 200 and is ignored.
+  What happens after an order id is found is unchanged (#8).
 
 ## 🟡 Medium
 
@@ -117,7 +124,15 @@ they're fixed.
 - `MAX_RANK` upper-case local; `create_order` currency default `"USD"` while all callers pass
   `"JPY"`; leftover tutorial comment in `main.py`.
 
-## Suggested order
+## Suggested order (updated 2026-09-26)
 
-1. #1 (in the working tree) → 2. #3, #7, #10 (quick security) → 3. #4–#6 (lottery integrity) →
-4. #2 (`RESTRICT`/soft-delete) → 5. #9 (`async def` → `def`).
+Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, and three code smells.
+
+1. ~~Quick wins: #10, #15, #16, #17~~ (done).
+2. **Security:** #7 spoofable IP rate limits (plan in `docs/plans/rate-limit-client-ip.md`).
+3. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
+   soft delete or block); #14 cancel doesn't restock, together with #13 resale cap counting cancelled
+   orders.
+4. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation; #12 abandoned
+   direct-sale PayPal ticket locks the fan out; #11 Redis outage handling.
+5. **Test debt:** #9's `checkout_ticket` race test.
