@@ -137,6 +137,8 @@ Send/resend the email-verification link to the current user.
 Confirm an email via the token from the verification link.
 - Request: query param `token` (str)
 - Response: `{"msg": "Email verified successfully"}`
+- Errors: `400` (invalid or expired token, or the token's user no longer exists), `409` (account
+  already verified)
 - UI: the landing page a verification-email link opens
 
 ### `GET /profile/me` 🔒 fan
@@ -752,7 +754,7 @@ rename.)
 ### `POST /order/checkout` 🔒 fan
 Converts the cart into an order and a payment in one call. **Response is the `Order`, not the
 payment** — it has no `payment_id`/`pg_order_id` of its own, so a `gateway="paypal"` checkout must
-follow up with `PATCH /payment/status/order/{order_id}` (below) to fetch the payment and its
+follow up with `GET /payment/status/order/{order_id}` (below) to fetch the payment and its
 `pg_approval_url`. See "PayPal checkout flow" below for the full redirect sequence.
 - Request (`PaymentCreate`): `amount` (int — must equal the cart's current total, checked
   server-side), `shipping_address_id` (uuid), `gateway` (`"mock"` | `"paypal"`, default `"mock"`),
@@ -808,9 +810,9 @@ same commit as the status flip.
   (order isn't in `pending`/`processing` — already shipped/delivered, or cancelled)
 - UI: manager orders page — a "Ship" button per order row, or on the order detail page
 
-### `PATCH /payment/status/order/{order_id}` 🔒 fan
-Was `PATCH /payment/status/{order_id}` in an earlier revision of this doc — the path changed when
-tickets got their own lookup below, nothing else about the contract did.
+### `GET /payment/status/order/{order_id}` 🔒 fan
+Read-only lookup of the order's payment. `404` if there's no payment for that order, or the order
+isn't the caller's.
 - Response (`PaymentResponse`): `id`, `order_id`, `ticket_id` (null here — set only for a ticket
   payment), `user_id`, `amount`, `status` (`"pending"|"success"|"failed"|"cancelled"`),
   `payment_gateway` (`"mock"|"paypal"`), `is_paid`, `pg_order_id`, `pg_payment_id`, `pg_signature`,
@@ -818,12 +820,12 @@ tickets got their own lookup below, nothing else about the contract did.
   payment has resolved), `created_at`, `updated_at`
 - UI: order detail / checkout success page — poll this while waiting on an async gateway
 
-### `PATCH /payment/status/ticket/{ticket_id}` 🔒 fan
+### `GET /payment/status/ticket/{ticket_id}` 🔒 fan
 Same `PaymentResponse` shape as above, looked up by `ticket_id` instead (`order_id` null,
 `ticket_id` set). Used the same way for a direct-sale ticket checkout.
 
-### `PATCH /payment/status/all` 🔒 fan
-- Response: `List[PaymentResponse]`
+### `GET /payment/status/all` 🔒 fan
+- Response: `List[PaymentResponse]` — `[]` if the fan has no payments
 - UI: "My payments" page, if surfaced separately from orders
 
 ### PayPal checkout flow (redirect + capture)
@@ -833,7 +835,7 @@ Everything below only applies when `gateway="paypal"` was passed to `POST /order
 
 1. **Checkout** — `POST /order/checkout` (or `/tickets/checkout`) with `gateway="paypal"`. The
    order/ticket comes back `"pending"` — no error, this is expected, not a stuck state.
-2. **Fetch the approval link** — `PATCH /payment/status/order/{order_id}` (or
+2. **Fetch the approval link** — `GET /payment/status/order/{order_id}` (or
    `.../ticket/{ticket_id}`) and read `pg_approval_url` off the response.
 3. **Redirect the fan** to `pg_approval_url` (a `paypal.com` page, not this API). This is a full
    page redirect, not an API call — treat it like sending the fan to a third-party checkout, same

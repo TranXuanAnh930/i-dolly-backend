@@ -69,6 +69,8 @@ they're fixed.
   **FIXED**: `DEBUG` now defaults to `False`, matching `deployment.md`.
 - [ ] **11. Redis outage → 500s.** `CacheService` has no `RedisError` handling. Invalidation runs
   after commit, so checkout/payment 500 on an order that actually succeeded.
+  **Fix planned:** `docs/plans/redis-outage.md` (fail-open reads, best-effort invalidation and
+  email dispatch, client timeouts).
 - [ ] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
   live (`ticket_service.py:54`) but direct tickets have no deadline/sweep.
   **DEFERRED**: to be fixed later, with #26 and #27.
@@ -107,15 +109,26 @@ they're fixed.
 - [ ] **19.** Password-reset JWTs are reusable until expiry (no `jti` / password-hash binding).
 - [ ] **20.** Refresh tokens stored plaintext; every login revokes all other sessions
   (`auth_service.py` `create_tokens`).
-- [ ] **21.** `get_current_user`: `uuid.UUID(payload.get("sub"))` 500s on missing `sub`; unknown
+- [x] **21.** `get_current_user`: `uuid.UUID(payload.get("sub"))` 500s on missing `sub`; unknown
   user returns 404 instead of 401.
+  **FIXED**: a missing or malformed `sub` and an unknown user all return 401 (`None` for
+  `get_current_user_optional`).
 - [ ] **22.** Rate limiter `INCR` + `EXPIRE` aren't atomic (crash between → key never expires);
   `user_key` implicitly depends on `get_current_user` running first.
+  **Half fixed**: the counter is created with its TTL and incremented in one `MULTI` transaction
+  (`SET key 0 EX window NX` + `INCR`), so it can't exist without an expiry. The `user_key`
+  ordering dependency is still open.
 - [ ] **23.** Paginated pages return `count=len(data)` (page size, not total); manager orders page
   loads every product and order id into memory.
 - [ ] **24.** Draw is O(entries × preferences) plus O(ranks × campaigns × entries).
 - [ ] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
-  `except` notifies managers the draw *failed*.
+  `except` notifies managers the draw *failed*. Anything after `commit_or_raise` in `draw_lottery`
+  triggers it: the completion notification's own commit, or `delete_cached_concert_detail` when
+  Redis is down (#11). Managers see "failed" for a draw that committed, Celery records the task as
+  failed, and the failure notification's commit can itself fail and mask the original error. Fix:
+  treat post-commit steps as best-effort (log, don't re-raise) so only errors before the commit
+  reach the task's failure path.
+  **Fix planned:** `docs/plans/lottery-draw-post-commit.md` (move post-commit steps into the task).
 - [ ] **27. Abandoned PayPal marketplace orders stay `pending` forever.** If the fan never approves
   on PayPal, `finalize_paypal_payment` never runs: the order, its payment and its shipping status
   stay `pending` with no deadline or sweep. No stock is held and the cart isn't cleared, so the fan
@@ -127,25 +140,30 @@ they're fixed.
 ## 🔵 Code smells
 
 - Money as `float` (`total_price=float(...)`, `with_tax(float(...))`).
-- Read-only `/payment/status/*` endpoints use `PATCH`.
+- ~~Read-only `/payment/status/*` endpoints use `PATCH`~~ — fixed: they're `GET` (frontend
+  `payment.service.js` must switch in the same release).
 - ~~Empty lists return 404 (`/order/fetch_placed_order`, `/payment/status/all`)~~ — fixed, both return `[]`.
-- `/account/verify` returns 401 for "already verified".
+- ~~`/account/verify` returns 401 for "already verified"~~ — fixed: `409` for already verified,
+  `400` for a bad token or unknown user (`ConflictError` added to `app/exception/common.py`).
 - No `logging` anywhere in `app/` — `print()` only; email failures swallowed, never retried.
 - ~~`verify_token_and_get_user_id` / `verify_rtoken_and_get_user_id` near-duplicates~~ — fixed:
   merged into `jwt_manager.decode_email_token(token, expected_type)`.
 - ~~`CacheService` ↔ services import each other~~ — fixed: invalidation split into
   `app/cache/invalidation.py` (Redis only); `CacheService` inherits it (`architecture.md` §2).
-- Upload extension taken from client filename (`storage.py:46`) — `.html` with
-  `Content-Type: image/png` gets served as HTML by `StaticFiles` on the API origin (stored XSS).
-  Derive ext from the whitelisted content type. ~~S3 path reads the whole upload before size check~~ (fixed with #9).
+- ~~Upload extension taken from client filename — `.html` with `Content-Type: image/png` gets
+  served as HTML by `StaticFiles` on the API origin (stored XSS)~~ — fixed: the extension comes
+  from the whitelisted content type (`storage.IMAGE_EXTENSIONS`). ~~S3 path reads the whole upload
+  before size check~~ (fixed with #9).
 - ~~PayPal `pg_payment_id` set from `generate_mock_id()` instead of the real capture id (needed for
   refunds)~~ — fixed: set from the capture response via `paypal_client.capture_id_from_response`.
-- `MAX_RANK` upper-case local; `create_order` currency default `"USD"` while all callers pass
-  `"JPY"`; leftover tutorial comment in `main.py`.
+- ~~`MAX_RANK` upper-case local; `create_order` currency default `"USD"` while all callers pass
+  `"JPY"`; leftover tutorial comment in `main.py`~~ — fixed: renamed to `max_rank`, default is
+  `"JPY"`, and the comment is gone.
 
 ## Suggested order (updated 2026-09-26)
 
-Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, and four code smells.
+Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, #10, #15, #16, #17, #21, half of #22,
+and eight code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. **Security:** #7 spoofable IP rate limits (plan in `docs/plans/rate-limit-client-ip.md`).
@@ -153,6 +171,6 @@ Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, and four code smells.
    soft delete or block). (#13 and #14 are out of scope — the frontend doesn't call
    `cancel_placed_order`.)
 4. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation; #11 Redis
-   outage handling.
+   outage handling (plan in `docs/plans/redis-outage.md`).
 5. **Deferred (fix later):** PayPal pending-state bugs #12 (abandoned ticket locks the fan out),
    #26 (unpaid orders shippable), #27 (abandoned orders never expire).

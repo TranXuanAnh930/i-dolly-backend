@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.celery_app import celery_app
 from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
-from app.exception.common import BadRequestError
+from app.exception.common import BadRequestError, ConflictError
 from app.schema.identity import UserCreate
 from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
@@ -81,17 +81,17 @@ class AuthService:
         celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.EMAIL_VERIFICATION.subject, email_body])
 
     @staticmethod
-    def verify_email_token(db: Session, token: str) -> bool | None:
+    def verify_email_token(db: Session, token: str) -> None:
+        """Mark the token's user verified. Raises BadRequestError (bad token or unknown user) or
+        ConflictError (already verified)."""
         user_id = decode_email_token(token, "verify")
-        if not user_id:
-            return None
-        db_user = db.query(Users).filter(Users.id == user_id).first()
-        if not db_user or db_user.is_verified:
-            return False
+        db_user = db.query(Users).filter(Users.id == user_id).first() if user_id else None
+        if not db_user:
+            raise BadRequestError("Invalid or expired token")
+        if db_user.is_verified:
+            raise ConflictError("Account already verified")
         db_user.is_verified = True
         db.commit()
-        db.refresh(db_user)
-        return True
 
     @staticmethod
     def cleanup_expired_tokens(db: Session) -> int:

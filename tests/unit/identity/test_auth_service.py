@@ -150,19 +150,43 @@ class TestAuthService:
         db.query().filter().first.return_value = mock_user
 
         with patch("app.services.identity.auth_service.decode_email_token", return_value=DEFAULT_ID):
-            result = AuthService.verify_email_token(db, "valid-email-token")
+            AuthService.verify_email_token(db, "valid-email-token")
 
-        assert result is True
         assert mock_user.is_verified is True
         db.commit.assert_called_once()
 
     def test_verify_email_token_invalid(self):
+        from app.exception.common import BadRequestError
         from app.services.identity.auth_service import AuthService
 
         db = MagicMock()
         with patch("app.services.identity.auth_service.decode_email_token", return_value=None):
-            result = AuthService.verify_email_token(db, "invalid-token")
-        assert result is None
+            with pytest.raises(BadRequestError):
+                AuthService.verify_email_token(db, "invalid-token")
+        db.commit.assert_not_called()
+
+    def test_verify_email_token_unknown_user(self):
+        from app.exception.common import BadRequestError
+        from app.services.identity.auth_service import AuthService
+
+        db = MagicMock()
+        db.query().filter().first.return_value = None
+        with patch("app.services.identity.auth_service.decode_email_token", return_value=DEFAULT_ID):
+            with pytest.raises(BadRequestError):
+                AuthService.verify_email_token(db, "valid-email-token")
+        db.commit.assert_not_called()
+
+    def test_verify_email_token_already_verified(self):
+        from app.exception.common import ConflictError
+        from app.services.identity.auth_service import AuthService
+
+        db = MagicMock()
+        db.query().filter().first.return_value = make_mock_user(is_verified=True)
+        with patch("app.services.identity.auth_service.decode_email_token", return_value=DEFAULT_ID):
+            with pytest.raises(ConflictError) as exc_info:
+                AuthService.verify_email_token(db, "valid-email-token")
+        assert exc_info.value.status_code == 409
+        db.commit.assert_not_called()
 
     def test_email_verification_process(self):
         from app.services.identity.auth_service import AuthService

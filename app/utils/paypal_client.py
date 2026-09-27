@@ -50,7 +50,7 @@ def _auth_headers() -> dict:
     }
 
 
-def create_order(amount: str, currency: str = "USD") -> dict:
+def create_order(amount: str, currency: str = "JPY") -> dict:
     """Create a PayPal order (not yet approved or captured).
 
     `amount` is a string such as "1100", already tax-inclusive."""

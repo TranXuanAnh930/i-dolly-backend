@@ -55,9 +55,8 @@ def send_verification_link(user:Users=Depends(get_current_user), _:None=Depends(
 # Not used by the frontend.
 @router.get("/verify", response_model=MessageResponse)
 def verify_email(token:str, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
-    result = AuthService.verify_email_token(db, token)
-    if result is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
-    if result is False:
-        raise HTTPException(status_code=401, detail="user not found or account already verified")
+    try:
+        AuthService.verify_email_token(db, token)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     return MessageResponse(msg="Email verified successfully")

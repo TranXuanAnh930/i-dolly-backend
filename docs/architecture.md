@@ -168,13 +168,17 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
   `require_admin`-only.
 - **`app/cache/rate_limit.py::rate_limit(limit, window, key_func)`** — a dependency factory
   (`Depends(rate_limit(5, 60, ip_key))`). Keys fold in the route path (`_route_key`) so endpoints
-  sharing a `key_func` don't share a counter. The limiter uses one atomic Redis `INCR` (creates the
-  key at 1, else increments) with `EXPIRE` set only by the request that created the window — no
-  check-then-act race. On a Redis error it logs and lets the request through (fail-open). Behind
-  Render's reverse proxy, `main.py` wraps the app in
-  `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware` (`trusted_hosts="*"`, since only
-  Render's own network can reach the container directly) so `request.client.host` is the real
-  client IP before `ip_key` runs.
+  sharing a `key_func` don't share a counter. Each request runs one `MULTI` transaction:
+  `SET key 0 EX window NX` (create the window's counter with its TTL, only if it doesn't exist)
+  then `INCR`. Both run as one unit, so there's no check-then-act race between concurrent requests
+  and no way for a crash to leave a counter without an expiry (which would rate-limit that client
+  forever). A transaction is enough because neither command depends on the other's result; logic
+  that has to branch on a value read mid-way would need a Lua script instead. Past the limit it
+  reads the `TTL` (a separate call, only for the 429 message). On a Redis error it logs and lets
+  the request through (fail-open). Behind Render's reverse proxy, `main.py` wraps the app in
+  `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware` so `ip_key` sees a client IP rather
+  than the proxy's — but with `trusted_hosts="*"` that IP is the leftmost `X-Forwarded-For` hop,
+  which the client controls (`docs/bugs.md` #7; fix plan in `docs/plans/rate-limit-client-ip.md`).
 
   **Coverage policy**:
 

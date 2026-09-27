@@ -12,7 +12,6 @@ Everything below is scaffolding — fill in the TODOs yourself.
 import argparse
 import asyncio
 import csv
-import statistics
 import time
 from dataclasses import dataclass, field
 
@@ -36,8 +35,16 @@ BASE_URL = "http://localhost:8000"  # TODO: make overridable via --base-url
 #                      proof — successful checkouts must not exceed stock).
 #   - rate_limit:     hammer one route past its known limit/window, count 429s.
 SCENARIOS: dict[str, list[dict]] = {
+    # Worked example: GET /products/store-page is Redis-cached (5 min TTL)
+    # but also rate_limit(5, 60, ip_key)-gated — 5 requests/60s per IP. Run
+    # this with --concurrency 1 --duration <10s so you stay under that
+    # budget and measure cache-hit latency, not the limiter. See the
+    # "rate_limit" scenario below for deliberately exceeding it instead.
+    "product_store": [
+        {"method": "GET", "path": "/products/store-page"},
+    ],
     "cached_reads": [
-        # TODO: {"method": "GET", "path": "/products/all"},
+        
     ],
     "auth_writes": [
         # TODO
@@ -52,27 +59,61 @@ SCENARIOS: dict[str, list[dict]] = {
 # Result tracking
 # ---------------------------------------------------------------------------
 @dataclass
+class RequestRecord:
+    timestamp: float  # time.time(), for the CSV / "when did the slow one happen" question
+    status: int
+    latency_ms: float
+
+
+def _percentiles(sorted_data: list[float]) -> dict:
+    return {
+        "count": len(sorted_data),
+        "p50": _percentile(sorted_data, 50),
+        "p90": _percentile(sorted_data, 90),
+        "p99": _percentile(sorted_data, 99),
+        "max": sorted_data[-1] if sorted_data else None,
+    }
+
+
+@dataclass
 class Results:
-    latencies_ms: list[float] = field(default_factory=list)
-    status_counts: dict[int, int] = field(default_factory=dict)
+    records: list[RequestRecord] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def record(self, status: int, elapsed_ms: float) -> None:
-        self.latencies_ms.append(elapsed_ms)
-        self.status_counts[status] = self.status_counts.get(status, 0) + 1
+        self.records.append(RequestRecord(time.time(), status, elapsed_ms))
 
     def summary(self) -> dict:
-        # TODO: handle the empty-latencies case (no requests completed)
-        sorted_lat = sorted(self.latencies_ms)
+        # Blended (all statuses together) — kept for a quick glance, but see
+        # per_status below: a run mixing 200s and 429s makes this number mostly
+        # meaningless (see docs/project_status.md item 40 for why this split
+        # exists — a blended p99 couldn't tell a slow rejection from a slow
+        # cache-miss apart).
+        overall = sorted(r.latency_ms for r in self.records)
+
+        by_status: dict[int, list[float]] = {}
+        for r in self.records:
+            by_status.setdefault(r.status, []).append(r.latency_ms)
+
         return {
-            "count": len(sorted_lat),
-            "p50": statistics.quantiles(sorted_lat, n=100)[49] if sorted_lat else None,
-            "p90": statistics.quantiles(sorted_lat, n=100)[89] if sorted_lat else None,
-            "p99": statistics.quantiles(sorted_lat, n=100)[98] if sorted_lat else None,
-            "max": sorted_lat[-1] if sorted_lat else None,
-            "status_counts": self.status_counts,
+            **_percentiles(overall),
+            "status_counts": {status: len(lats) for status, lats in by_status.items()},
+            "per_status": {
+                status: _percentiles(sorted(lats)) for status, lats in by_status.items()
+            },
             "errors": len(self.errors),
         }
+
+
+def _percentile(sorted_data: list[float], pct: float) -> float | None:
+    """Nearest-rank percentile. statistics.quantiles(n=100) misbehaves with
+    small samples (e.g. 5 requests against a 5/60s rate-limited route) —
+    this stays correct at any sample size, which matters more here than
+    interpolation precision."""
+    if not sorted_data:
+        return None
+    index = max(0, int(round(pct / 100 * len(sorted_data))) - 1)
+    return sorted_data[min(index, len(sorted_data) - 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -99,15 +140,22 @@ async def worker(
     token: str | None = None,
 ) -> None:
     """Loop through the scenario's requests until stop_at, gated by semaphore."""
-    # TODO:
-    #   while time.monotonic() < stop_at:
-    #       for step in scenario:
-    #           async with semaphore:
-    #               start = time.perf_counter()
-    #               resp = await client.request(step["method"], step["path"], ...)
-    #               elapsed_ms = (time.perf_counter() - start) * 1000
-    #               results.record(resp.status_code, elapsed_ms)
-    raise NotImplementedError
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    while time.monotonic() < stop_at:
+        for step in scenario:
+            async with semaphore:
+                start = time.perf_counter()
+                try:
+                    resp = await client.request(
+                        step["method"], step["path"], headers=headers
+                    )
+                    elapsed_ms = (time.perf_counter() - start) * 1000
+                    results.record(resp.status_code, elapsed_ms)
+                except httpx.HTTPError as exc:
+                    # Network-level failure (timeout, connection reset) —
+                    # distinct from a 4xx/5xx response, which still counts
+                    # via results.record above.
+                    results.errors.append(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -141,13 +189,11 @@ async def run_scenario(
 
 
 def write_csv(results: Results, path: str) -> None:
-    # TODO: dump per-request rows (timestamp, status, latency_ms) instead of
-    # just latencies, if you want to plot latency-over-time later.
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["latency_ms"])
-        for lat in results.latencies_ms:
-            writer.writerow([lat])
+        writer.writerow(["timestamp", "status", "latency_ms"])
+        for r in results.records:
+            writer.writerow([r.timestamp, r.status, r.latency_ms])
 
 
 def main() -> None:
@@ -169,9 +215,17 @@ def main() -> None:
     summary = results.summary()
     print(f"\n=== {args.scenario} ===")
     print(f"requests:     {summary['count']}")
-    print(f"p50/p90/p99:  {summary['p50']:.1f} / {summary['p90']:.1f} / {summary['p99']:.1f} ms")
-    print(f"max:          {summary['max']:.1f} ms")
+    if summary["count"]:
+        print(f"blended p50/p90/p99: {summary['p50']:.1f} / {summary['p90']:.1f} / {summary['p99']:.1f} ms  (max {summary['max']:.1f} ms)")
     print(f"status codes: {summary['status_counts']}")
+    print("per-status latency:")
+    for status, stats in sorted(summary["per_status"].items()):
+        if stats["count"]:
+            print(
+                f"  {status}: n={stats['count']:<5} "
+                f"p50/p90/p99 = {stats['p50']:.1f} / {stats['p90']:.1f} / {stats['p99']:.1f} ms  "
+                f"(max {stats['max']:.1f} ms)"
+            )
     print(f"errors:       {summary['errors']}")
 
     if args.csv_out:
