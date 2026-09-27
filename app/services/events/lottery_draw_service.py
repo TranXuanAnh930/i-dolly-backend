@@ -27,7 +27,7 @@ class LotteryDrawService:
 
     @staticmethod
     def draw_lottery(db: Session, current_user: Users, concert_id: uuid.UUID) -> LotteryResult:
-        MAX_RANK = 0
+        max_rank = 0
         concert = db.query(Concert).filter(Concert.id == concert_id).first()
         if not concert:
             raise NotFoundError("Concert not found")
@@ -53,13 +53,13 @@ class LotteryDrawService:
         preferences_by_entry = {}
         for entry in entries:
             preference = next(p for p in preferences if (p.user_id == entry.user_id and p.ticket_type_id == entry.campaign.ticket_type_id))
-            MAX_RANK = max(MAX_RANK, preference.rank)
+            max_rank = max(max_rank, preference.rank)
             preferences_by_entry[entry.id] = preference.rank
 
         won_user_ids: set[uuid.UUID] = set()
         lost_user_ids: set[uuid.UUID] = set()
 
-        for rank in range(1, MAX_RANK + 1):
+        for rank in range(1, max_rank + 1):
             for campaign in campaigns:
                 ticket_type =next(ticket_type for ticket_type in ticket_types if ticket_type.id == campaign.ticket_type_id)
                 if ticket_type.total_quantity - ticket_type.sold_quantity > 0:

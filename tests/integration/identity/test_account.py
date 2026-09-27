@@ -125,4 +125,4 @@ def test_verify_email_already_verified_rejected():
 
     token_again = create_email_verification_token(uuid.UUID(user_id))
     response = client.get("/account/verify", params={"token": token_again})
-    assert response.status_code == 401
+    assert response.status_code == 409

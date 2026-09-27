@@ -32,9 +32,12 @@ def rate_limit(limit:int, window:int, key_func: Callable[[Request], str]) -> Cal
     def limiter(request:Request) -> None:
         try:
             key = key_func(request)
-            count = redis_client.incr(key)
-            if count == 1:
-                redis_client.expire(key, window) 
+            # One MULTI transaction: the key is created with its TTL before it's incremented, so a
+            # counter can never exist without an expiry.
+            pipe = redis_client.pipeline(transaction=True)
+            pipe.set(key, 0, ex=window, nx=True)
+            pipe.incr(key)
+            _, count = pipe.execute()
 
             if int(count) > limit:
                 ttl = redis_client.ttl(key)

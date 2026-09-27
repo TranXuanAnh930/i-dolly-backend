@@ -24,3 +24,8 @@ class ForbiddenError(ServiceError):
 
 class BadRequestError(ServiceError):
     """A business-rule violation such as a duplicate or a blocking state (400)."""
+
+
+class ConflictError(ServiceError):
+    """The request conflicts with the resource's current state, e.g. already done (409)."""
+    status_code = 409

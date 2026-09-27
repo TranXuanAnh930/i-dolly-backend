@@ -107,16 +107,16 @@ def _buy_ticket(factory, fan, gateway="mock", simulate_succ=True):
     return response.json()
 
 # ───────────────────────────────────────────────────────────────
-# PATCH /payment/status/all
+# GET /payment/status/all
 # ───────────────────────────────────────────────────────────────
 
 def test_status_all_unauthenticated():
-    response = client.patch("/payment/status/all")
+    response = client.get("/payment/status/all")
     assert response.status_code == 401
 
 def test_status_all_none_found(factory):
     fan = factory.fan()
-    response = client.patch("/payment/status/all", headers=factory.token(fan))
+    response = client.get("/payment/status/all", headers=factory.token(fan))
     assert response.status_code == 200
     assert response.json() == []
 
@@ -126,34 +126,34 @@ def test_status_all_found(factory):
         _buy_ticket(factory, fan)
         mock_create_order.assert_not_called()  # mock gateway never calls PayPal
 
-    response = client.patch("/payment/status/all", headers=factory.token(fan))
+    response = client.get("/payment/status/all", headers=factory.token(fan))
     assert response.status_code == 200
     assert len(response.json()) == 1
 
 # ───────────────────────────────────────────────────────────────
-# PATCH /payment/status/order/{order_id}
+# GET /payment/status/order/{order_id}
 # ───────────────────────────────────────────────────────────────
 
 def test_status_order_unauthenticated():
-    response = client.patch(f"/payment/status/order/{FAKE_ID}")
+    response = client.get(f"/payment/status/order/{FAKE_ID}")
     assert response.status_code == 401
 
 def test_status_order_not_found(factory):
     fan = factory.fan()
-    response = client.patch(f"/payment/status/order/{FAKE_ID}", headers=factory.token(fan))
+    response = client.get(f"/payment/status/order/{FAKE_ID}", headers=factory.token(fan))
     assert response.status_code == 404
 
 # ───────────────────────────────────────────────────────────────
-# PATCH /payment/status/ticket/{ticket_id}
+# GET /payment/status/ticket/{ticket_id}
 # ───────────────────────────────────────────────────────────────
 
 def test_status_ticket_unauthenticated():
-    response = client.patch(f"/payment/status/ticket/{FAKE_ID}")
+    response = client.get(f"/payment/status/ticket/{FAKE_ID}")
     assert response.status_code == 401
 
 def test_status_ticket_not_found(factory):
     fan = factory.fan()
-    response = client.patch(f"/payment/status/ticket/{FAKE_ID}", headers=factory.token(fan))
+    response = client.get(f"/payment/status/ticket/{FAKE_ID}", headers=factory.token(fan))
     assert response.status_code == 404
 
 def test_status_ticket_not_mine_not_found(factory):
@@ -161,14 +161,14 @@ def test_status_ticket_not_mine_not_found(factory):
     other_fan = factory.fan()
     ticket = _buy_ticket(factory, owner)
 
-    response = client.patch(f"/payment/status/ticket/{ticket['id']}", headers=factory.token(other_fan))
+    response = client.get(f"/payment/status/ticket/{ticket['id']}", headers=factory.token(other_fan))
     assert response.status_code == 404
 
 def test_status_ticket_found(factory):
     fan = factory.fan()
     ticket = _buy_ticket(factory, fan)
 
-    response = client.patch(f"/payment/status/ticket/{ticket['id']}", headers=factory.token(fan))
+    response = client.get(f"/payment/status/ticket/{ticket['id']}", headers=factory.token(fan))
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
@@ -244,7 +244,7 @@ def test_webhook_resolves_pending_payment(factory):
 
     assert response.status_code == 200
 
-    status_response = client.patch("/payment/status/all", headers=factory.token(fan))
+    status_response = client.get("/payment/status/all", headers=factory.token(fan))
     assert status_response.json()[0]["status"] == "success"
 
 def test_webhook_unresolvable_order_still_200():
