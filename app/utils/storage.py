@@ -4,7 +4,6 @@ Callers use get_storage().save(upload, subfolder), which returns the file's publ
 save() is synchronous: Starlette has already spooled the upload into UploadFile.file before the
 handler runs, and the calling routes are `def` (they run in the threadpool).
 """
-import os
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -13,7 +12,14 @@ from fastapi import UploadFile
 
 from app.config.settings import settings
 
-ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+# Allowed content type -> stored file extension.
+IMAGE_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+ALLOWED_IMAGE_CONTENT_TYPES = set(IMAGE_EXTENSIONS)
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
@@ -33,9 +39,9 @@ def _new_filename(file: UploadFile) -> str:
             f"Unsupported image type: {file.content_type!r}. "
             f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_CONTENT_TYPES))}"
         )
-    # Random filename; only the extension comes from the client.
-    ext = os.path.splitext(file.filename or "")[1].lower() or ".jpg"
-    return f"{uuid.uuid4().hex}{ext}"
+    # Random filename; the extension follows the whitelisted content type, never the client's
+    # filename, so an upload can't be stored (and served) as .html or .svg.
+    return f"{uuid.uuid4().hex}{IMAGE_EXTENSIONS[file.content_type]}"
 
 
 class LocalStorageBackend(StorageBackend):

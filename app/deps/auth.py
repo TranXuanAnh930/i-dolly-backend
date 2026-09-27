@@ -14,14 +14,21 @@ oauth_scheme = OAuth2PasswordBearer(tokenUrl="account/login")
 # personalize responses for logged-in users.
 oauth_scheme_optional = OAuth2PasswordBearer(tokenUrl="account/login", auto_error=False)
 
-def get_current_user(request:Request, token:str=Depends(oauth_scheme), db:Session=Depends(get_db)) -> Users:
+def _user_from_token(token: str, db: Session) -> Users | None:
+    """The token's user, or None if the token is invalid, has no valid `sub`, or the user is gone."""
     payload = decode_token(token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    user_id = uuid.UUID(payload.get("sub"))
-    user = db.get(Users, user_id)
+        return None
+    try:
+        user_id = uuid.UUID(str(payload["sub"]))
+    except (KeyError, ValueError):
+        return None
+    return db.get(Users, user_id)
+
+def get_current_user(request:Request, token:str=Depends(oauth_scheme), db:Session=Depends(get_db)) -> Users:
+    user = _user_from_token(token, db)
     if not user:
-        raise HTTPException(status_code=404, detail="user not found")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     request.state.user = user
     return user
 
@@ -29,10 +36,7 @@ def get_current_user_optional(request:Request, token:str|None=Depends(oauth_sche
     """Current user if a valid token is present, otherwise None (never raises)."""
     if not token:
         return None
-    payload = decode_token(token)
-    if not payload:
-        return None
-    user = db.get(Users, uuid.UUID(payload.get("sub")))
+    user = _user_from_token(token, db)
     if user:
         request.state.user = user
     return user

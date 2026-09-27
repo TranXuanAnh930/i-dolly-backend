@@ -176,9 +176,9 @@ recommendation logic, `finalize_paypal_payment`'s ticket/order branches, `verify
 
 **Deliberately not covered here**: `ticket_service.checkout_ticket`/`checkout_won_ticket` and
 `order_service.checkout` — the `with_for_update()` pessimistic-locking paths behind item 1's
-overselling-race fix. `lottery_draw_service`, which uses the same locking pattern, already has its
-own dedicated test file; these two don't. Left out on purpose rather than gold-plated in a pass
-that was otherwise routine CRUD/RBAC coverage — see §5.
+overselling-race fix. They're race-tested against real Postgres instead (see §5): `checkout`
+in `test_orders_concurrency.py`, `checkout_ticket` in `test_ticket_checkout_concurrency.py`;
+`checkout_won_ticket` has no race test yet.
 
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
@@ -230,8 +230,8 @@ newly introduced.
    let an attacker mint a fresh bucket per request.
    ~~**Two more real bugs**~~ — **FIXED**: (a) the limiter's `GET` → conditional `SETEX`/`INCR`
    sequence was a non-atomic check-then-act, so a burst of concurrent requests could all see "no
-   counter yet" and never trip the limit. Replaced with one atomic `INCR` plus `EXPIRE` set only
-   by the request that created the window. (b) no error handling around the Redis calls — an
+   counter yet" and never trip the limit. Replaced with one `MULTI` transaction (`SET key 0 EX
+   window NX` + `INCR`, see the note below). (b) no error handling around the Redis calls — an
    outage 500'd every rate-limited route, including login. Now wrapped in
    `try/except redis.RedisError`, fail-open (lets the request through) rather than fail-closed,
    since availability matters more than enforcement during an outage. Covered by
@@ -240,11 +240,16 @@ newly introduced.
    `get_current_user` running first to populate `request.state.user` — an unenforced ordering
    that holds by convention, not a bug in itself.
 
-   **Considered, not built: a Lua/`EVAL` version.** The atomic `INCR` + conditional `EXPIRE`
-   above is still two round-trips — a crash between them leaves a key that never expires. A Lua
-   script would close this (Redis runs it as one indivisible unit), but `fakeredis` doesn't
-   support `EVAL` without an extra dependency this project doesn't otherwise need. A documented,
-   accepted residual risk, not an oversight.
+   ~~**Residual risk: `INCR` then conditional `EXPIRE` were two separate calls**~~ — **FIXED**
+   (`docs/bugs.md` #22). A crash, restart or dropped connection between them left a counter with
+   no TTL, which only ever grows, so that client got 429 on that route permanently. Now
+   `SET key 0 EX window NX` and `INCR` go in one `MULTI`/`EXEC` transaction: the key is always
+   created with its TTL, and nothing can run between the two commands. A Lua script would also
+   work, but isn't needed: the old version needed Lua only because it branched on `INCR`'s result
+   (`if count == 1`), and `SET … NX` moves that condition into Redis, so a fixed command list is
+   enough. It also avoids `fakeredis`' extra `lupa` dependency for `EVAL`. Unit test:
+   `test_counter_always_has_a_ttl` (checks the TTL is set; the crash window itself can't be
+   reproduced in a unit test).
 3. ~~`app/db/base.py` didn't import every model~~ — **FIXED**. `Base` now lives in
    `app/db/base_class.py`; `app/db/base.py` is a pure aggregator. See `architecture.md` §5.
 4. ~~**Webhook handling isn't idempotent**~~ — **FIXED**, once PayPal was actually integrated
@@ -499,8 +504,8 @@ newly introduced.
     `CacheService.delete_cached_products()` — which also clears `products:store_page`. Both spots
     only cleared the `/products/all` cache, so a product added through either endpoint left the
     store page's cached product list stale for up to 5 minutes; now fixed as a side effect of
-    routing both through `CacheService`. `rate_limit.py`'s direct `redis_client.incr`/`expire`/`ttl`
-    calls were deliberately left alone — fixed-window rate limiting is a different concern from
+    routing both through `CacheService`. `rate_limit.py`'s direct Redis calls (now a
+    `SET NX` + `INCR` transaction, then `ttl`) were deliberately left alone — fixed-window rate limiting is a different concern from
     page caching and has no `CacheService` equivalent to route through.
 33. **Cached `GET /products/{id}/detail` and `GET /concerts/{id}/detail`**, both reported by the
     frontend as hot paths (`ProductDetailPage.vue`/`EventDetailPage.vue`). The product one is a
@@ -984,10 +989,11 @@ newly introduced.
   invisible to inspection and only surfaced under genuine concurrent transactions).
   `order_service.checkout` and `lottery_draw_service.draw_lottery` (item 8) are now covered —
   `tests/integration/marketplace/test_orders_concurrency.py`,
-  `tests/integration/events/test_lottery_concurrency.py`. Still open: `ticket_service
-  .checkout_ticket`/`checkout_won_ticket` use the same lock-hold-commit-once pattern against
-  `ticket_type.sold_quantity` but have no equivalent race test yet — worth the same treatment
-  given item 1's fix shows this pattern can look correct and still have a bypassable lock.
+  `tests/integration/events/test_lottery_concurrency.py`, and `ticket_service.checkout_ticket`
+  in `tests/integration/events/test_ticket_checkout_concurrency.py` (last seat sold once, a
+  double submit, two tiers of one concert at once, and the same idempotency key twice). Still
+  open: `checkout_won_ticket` uses the same lock-hold-commit-once pattern but has no race test
+  (e.g. a winner double-submitting payment, or paying while the deadline passes).
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.

@@ -53,6 +53,19 @@ class TestRateLimit:
             limiter(request)
         assert exc_info.value.status_code == 429
 
+    def test_counter_always_has_a_ttl(self):
+        limiter = rate_limit(limit=5, window=60, key_func=ip_key)
+        request = _FakeRequest(path="/ttl-route")
+
+        limiter(request)
+        key = ip_key(request)
+        assert int(fake_redis.get(key)) == 1
+        assert 0 < fake_redis.ttl(key) <= 60
+
+        limiter(request)
+        assert int(fake_redis.get(key)) == 2
+        assert 0 < fake_redis.ttl(key) <= 60
+
     def test_concurrent_requests_never_exceed_the_limit(self):
         # Proves the fix for the non-atomic get-then-setex/incr race: fire more
         # concurrent requests than the limit allows, on one shared key, and
