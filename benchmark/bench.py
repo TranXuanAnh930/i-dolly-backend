@@ -86,7 +86,7 @@ class Results:
     def summary(self) -> dict:
         # Blended (all statuses together) — kept for a quick glance, but see
         # per_status below: a run mixing 200s and 429s makes this number mostly
-        # meaningless (see docs/project_status.md item 40 for why this split
+        # meaningless (see docs/project_status.md item 46 for why this split
         # exists — a blended p99 couldn't tell a slow rejection from a slow
         # cache-miss apart).
         overall = sorted(r.latency_ms for r in self.records)

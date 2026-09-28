@@ -52,6 +52,17 @@ class EmailTemplate(Enum):
         '<p><a href="{link}">{link}</a></p>'
         "<p>This link expires in 15 minutes.</p>",
     )
+    # Deliberately omits the user's own text: echoing it would let anyone send arbitrary content
+    # from our address to any inbox they type in.
+    INQUIRY_RECEIVED = (
+        "We've received your inquiry",
+        "<p>Hi {email},</p>"
+        "<p>Thank you for contacting us. We've received your inquiry and will reply to this "
+        "address as soon as we can.</p>"
+        "<p>Reference: {inquiry_id}<br>"
+        "Topic: {topic}</p>"
+        "<p>If you didn't send this, you can ignore this email.</p>",
+    )
 
     @property
     def subject(self) -> str:

@@ -132,7 +132,8 @@ causes it, not on a cron — so only the worker needs deploying, not a second sc
 | `EMAIL_TOKEN_EXPIRE_MINUTES` | `60` | |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | from §4 | internal hostname, usually `6379`, `0` |
 | `CELERY_BROKER_DB` | `1` (default, can be omitted) | only relevant if the Celery worker (§5) is deployed too |
-| `RESEND_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | only exercised by the email-verification/password-reset flows |
+| `RESEND_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | sends every transactional email, including contact-form confirmations |
+| `ANTHROPIC_API_KEY` | Claude API key, or **omit** | turns on AI answers on the contact page (`POST /inquiries/instant-answer`). Omitted = the endpoint always answers "not answerable" and the frontend just shows the form. |
 | `DEBUG` | **omit, or `false`** | dev-only: prints verification/reset tokens to the console when a placeholder `RESEND_API_KEY` can't actually deliver (`architecture.md`'s Resend note). Leaving it unset defaults to `false`, which is what you want here — these token bodies have no business in Render's shared logs. |
 | `BASE_URL` | `https://<your-render-service>.onrender.com` | used to build the email verification link |
 | `CORS_ORIGINS` | your frontend's real origin(s), comma-separated | e.g. `https://your-frontend.vercel.app` |

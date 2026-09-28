@@ -898,3 +898,45 @@ surface to the user.
 ### `POST /notifications/read-all` 🔒 fan
 - Response: `{"msg": "<n> notification(s) marked as read"}`
 - UI: "mark all as read" action
+
+## 8. Inquiries (contact form, お問い合わせ)
+
+### `POST /inquiries/submit` 🔓 (auth optional)
+Anyone can submit. If a valid `Authorization` header is sent, the inquiry is linked to that
+account; the `email` field is still required either way.
+- Body (`InquiryCreate`): `email` (valid email), `topic`
+  (`"tickets"|"lottery"|"orders"|"payment"|"account"|"other"`), `content` (string, 5–2000
+  characters, counted as Unicode code points; leading/trailing whitespace, including the
+  full-width space `U+3000`, is trimmed before the length check). The minimum is 5 because a
+  complete Japanese question can be very short.
+- `email` must use normal (half-width) characters. A full-width `＠` or letters get a `422`, so
+  the frontend should normalize the email with NFKC before sending.
+- Response (`InquiryCreated`): `{"id": uuid, "msg": "Your inquiry has been received"}`
+- Side effect: a confirmation email to `email` with the topic and reference id (never the
+  message text). An address that already received 3 confirmations in the past hour gets no
+  further email, but the response is still `200` and the inquiry is still saved, so don't
+  promise the user an email in the UI copy.
+- Errors: `422` (validation: bad email, unknown topic, content too short/long), `429` (more than
+  3 submissions per 10 minutes from the same account, or the same IP for guests; `detail` says
+  how many seconds to wait)
+- UI: contact page form
+
+### `POST /inquiries/instant-answer` 🔓 (auth optional)
+An AI answer taken only from the site FAQ, meant to be shown before the user submits the contact
+form. Nothing is saved. Logged-in users are rate-limited per account, guests per IP.
+- Body (`InstantAnswerRequest`): `topic` (same values as `/inquiries/submit`), `content` (5–2000
+  characters, same rules as `/inquiries/submit`), `lang` (`"en"` or `"ja"`, default `"en"`).
+- `lang` picks which FAQ is used: `app/content/faq.md` (`en`) or `app/content/faq.ja.md` (`ja`).
+  Send the UI's current language. The answer comes back in the language of the question, so a
+  Japanese question gets a Japanese answer even with `lang: "en"`, but matching `lang` gives
+  wording closest to the site's own.
+- Response (`InstantAnswerRead`): `{"answerable": bool, "answer": string | null}`. `answer` is
+  set only when `answerable` is `true`.
+- `answerable: false` covers every case where there's nothing to show: the FAQ doesn't cover the
+  question, the feature is switched off (no `ANTHROPIC_API_KEY`), or the AI call failed. It is
+  never an error; just show the form.
+- Errors: `422` (validation), `429` (more than 5 requests per 10 minutes). Treat a `429` like
+  `answerable: false` rather than showing an error.
+- Can take several seconds. Show a loading state and let the user skip straight to submitting.
+- UI: contact page, between typing the question and the submit button. Label the answer as
+  AI-generated.

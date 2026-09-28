@@ -28,6 +28,7 @@ from app.router.marketplace.order import router as order_router
 from app.router.marketplace.payment import router as payment_router
 from app.router.marketplace.products import router as product_router
 from app.router.marketplace.shipping import router as shipping_router
+from app.router.shared.inquiry import router as inquiry_router
 from app.router.shared.notification import router as notification_router
 from app.router.talent.group import router as group_router
 from app.router.talent.idol import router as idol_router
@@ -102,3 +103,4 @@ app.include_router(album_detail_router)
 app.include_router(genre_router)
 app.include_router(merch_detail_router)
 app.include_router(notification_router)
+app.include_router(inquiry_router)
