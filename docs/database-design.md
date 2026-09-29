@@ -4,9 +4,7 @@ Companion to `../CLAUDE.md` and `architecture.md`/`project_status.md`. `schema.s
 throughout as the reference DDL but doesn't exist as a file in the repo — treat every citation as
 pointing at DDL that still needs to be extracted from the live migrations (see
 `project_status.md`). Two editable draw.io exports live in `docs/`: `idol-ticket-erd.drawio` (the §2
-ER diagram — 28 of the 31 tables; it predates `notifications`, `inquiries` and
-`direct_sale_campaigns`, and still shows `merch_details` under its old name `lightstick_details`)
-and `lottery-business-logic.drawio` (the §5 business-logic flowchart) — open either in [diagrams.net](https://app.diagrams.net) or the desktop app to edit.
+ER diagram, all 31 tables, with a "Shared" cluster for `notifications`/`inquiries`) and `lottery-business-logic.drawio` (the §5 business-logic flowchart) — open either in [diagrams.net](https://app.diagrams.net) or the desktop app to edit.
 
 **Source draft (as given):**
 - Three user kinds: admin, company manager, end user (fan who buys albums and tickets).
