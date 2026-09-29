@@ -171,6 +171,13 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   `database-design.md` §4 lists (fan-only purchasing, the anti-resale cap, concert
   ticket-capacity, the lottery entry cap, the preference-required check, the lottery
   preference/concert match, the album/merch mutual-exclusivity pair).
+- **Machine-readable error codes** (2026-09-29): every error body is `{"detail", "code"}`;
+  exceptions carry a `code` (`CodedError`), `app/exception/handlers.py` adds it to the response,
+  and empty results return `200` (`[]` or an empty page object) instead of `404`. Unexpected
+  exceptions return a JSON 500 (`internal_error`) that keeps its CORS headers
+  (`UnhandledErrorMiddleware`), and hand-validated form models return the same 422 field-error
+  list as FastAPI's own. Catalog: `api-spec.md` §0; mechanics:
+  `architecture.md` §2. Additive, so existing clients reading only `detail` are unaffected.
 
 ## 3. Verification method (and its limit)
 

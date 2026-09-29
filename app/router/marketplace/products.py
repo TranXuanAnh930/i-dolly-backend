@@ -12,6 +12,7 @@ from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.exception.handlers import request_validation_error
 from app.schema.common import MessageResponse
 from app.schema.marketplace import (
     ManagerProductFormPageRead,
@@ -34,15 +35,11 @@ router = APIRouter(prefix="/products", tags=["Products"])
 @router.get("/all", response_model=List[ProductRead])
 def list_of_existing_products(_:None=Depends(rate_limit(30,60,ip_key)), db:Session=Depends(get_db)) -> List[ProductRead]:
     db_products = CacheService.get_cached_products(db)
-    if not db_products:
-        raise HTTPException(status_code=404, detail="Products not found")
     return db_products
 
 @router.get("/store-page", response_model=StorePageRead)
 def get_store_page_data(_:None=Depends(rate_limit(30,60,ip_key)),db: Session = Depends(get_db)) -> StorePageRead:
     result = CacheService.get_cached_store_page(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="Products not found")
     return result
 
 @router.get("/{id}/detail", response_model=ProductDetailRead)
@@ -142,7 +139,7 @@ def add_new_product_with_detail(
             edition=edition, color_id=color_id,
         )
     except ValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        raise request_validation_error(e) from e
 
     image_url = None
     if image is not None:

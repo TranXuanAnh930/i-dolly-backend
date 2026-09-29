@@ -56,7 +56,8 @@ def test_see_cart_unauthenticated():
 def test_see_cart_empty():
     headers = auth_headers()
     response = client.get("/cart/see_cart", headers=headers)
-    assert response.status_code in (200, 404)
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total_price": 0}
 
 def test_add_to_cart_unauthenticated():
     response = client.post("/cart/add_cart", json={"product_id": FAKE_ID, "quantity": 1})

@@ -42,15 +42,11 @@ def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(requir
 @router.get("/all", response_model=List[ConcertRead])
 def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Concert]:
     result = ConcertService.get_concerts(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/events-page", response_model=EventsPageRead)
 def get_events_page_data(db: Session = Depends(get_db)) -> EventsPageRead:
     result = CacheService.get_cached_events_page(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/manager-events-page", response_model=ManagerEventsPageRead)
@@ -117,8 +113,6 @@ def assign_concert_performer(data: ConcertPerformerAssign, current_user: Users =
 @router.get("/performers/concert/{concert_id}", response_model=List[ConcertPerformerRead])
 def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_performers(db, concert_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="This concert has no performers assigned")
     return result
 
 # Every performer link across all concerts, in one request.
@@ -126,8 +120,6 @@ def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)
 @router.get("/performers/all", response_model=List[ConcertPerformerRead])
 def list_all_concert_performers(db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_all_performers(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
 # Not used by the frontend.

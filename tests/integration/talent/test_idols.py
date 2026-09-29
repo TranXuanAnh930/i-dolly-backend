@@ -61,11 +61,13 @@ def auth_headers(email="demo@example.com", password="demo123"):
 
 def test_list_idols_empty():
     response = client.get("/idols/all")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_get_members_page_empty():
     response = client.get("/idols/members-page")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json()["idols"] == []
 
 def test_get_manager_idols_page_never_404s():
     response = client.get("/idols/manager-idols-page")

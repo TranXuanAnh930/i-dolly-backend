@@ -41,13 +41,13 @@ class LotteryEntryService:
             raise NotFoundError("Lottery campaign not found")
         now = datetime.now(timezone.utc)
         if campaign.status == CampaignStatus.cancelled:
-            raise BadRequestError("This lottery campaign is cancelled")
+            raise BadRequestError("This lottery campaign is cancelled", code="campaign_cancelled")
         if campaign.status != CampaignStatus.open:
-            raise BadRequestError("This lottery campaign is no longer accepting entries")
+            raise BadRequestError("This lottery campaign is no longer accepting entries", code="campaign_not_open")
         if now < campaign.entry_start_at:
-            raise BadRequestError("Entries for this lottery campaign haven't opened yet")
+            raise BadRequestError("Entries for this lottery campaign haven't opened yet", code="entries_not_open")
         if now > campaign.entry_end_at:
-            raise BadRequestError("Entries for this lottery campaign have closed")
+            raise BadRequestError("Entries for this lottery campaign have closed", code="entries_closed")
         ticket_type = db.get(TicketType, campaign.ticket_type_id)
         if not ticket_type:
             raise NotFoundError("Lottery campaign not found")
@@ -64,7 +64,7 @@ class LotteryEntryService:
             .first()
         )
         if existing_ticket:
-            raise BadRequestError("You already hold a ticket for this concert")
+            raise BadRequestError("You already hold a ticket for this concert", code="duplicate_concert_ticket")
 
         # trg_lottery_entries_require_preference: must have ranked this tier.
         has_preference = (
@@ -78,7 +78,7 @@ class LotteryEntryService:
             is not None
         )
         if not has_preference:
-            raise BadRequestError("Rank this ticket tier in your lottery preferences before applying")
+            raise BadRequestError("Rank this ticket tier in your lottery preferences before applying", code="lottery_preference_required")
 
         # trg_lottery_entries_cap: existing entries for this (campaign, user) < max_entries_per_user.
         existing_count = (
@@ -87,7 +87,7 @@ class LotteryEntryService:
             .count()
         )
         if existing_count >= campaign.max_entries_per_user:
-            raise BadRequestError("You've already used all your entries for this campaign")
+            raise BadRequestError("You've already used all your entries for this campaign", code="lottery_entry_cap_exceeded")
 
         db_entry = LotteryEntry(campaign_id=campaign_id, user_id=current_user.id)
         db.add(db_entry)
@@ -99,7 +99,7 @@ class LotteryEntryService:
     @staticmethod
     def apply_to_lottery(db: Session, data: LotteryEntryApply, current_user: Users) -> LotteryEntry:
         if current_user.role != UserRole.fan:
-            raise ForbiddenError("Only fan accounts can apply to a lottery")
+            raise ForbiddenError("Only fan accounts can apply to a lottery", code="fan_only_purchase")
         db_entry = LotteryEntryService._stage_entry(db, data.campaign_id, current_user)
         commit_or_raise(db)
         db.refresh(db_entry)
@@ -109,7 +109,7 @@ class LotteryEntryService:
     def apply_to_lotteries(db: Session, data: LotteryEntryApplyBatch, current_user: Users) -> list[LotteryEntry]:
         """Apply to several campaigns at once; either every entry is created or none is."""
         if current_user.role != UserRole.fan:
-            raise ForbiddenError("Only fan accounts can apply to a lottery")
+            raise ForbiddenError("Only fan accounts can apply to a lottery", code="fan_only_purchase")
         entries = [
             LotteryEntryService._stage_entry(db, campaign_id, current_user)
             for campaign_id in data.campaign_ids

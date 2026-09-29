@@ -98,6 +98,7 @@ def test_verify_request_success():
 def test_verify_email_invalid_token():
     response = client.get("/account/verify", params={"token": "garbage-token"})
     assert response.status_code == 400
+    assert response.json()["code"] == "invalid_token"
 
 def test_verify_email_success_then_marks_user_verified():
     email, password = f"verify-{uuid.uuid4()}@example.com", "pass123"
@@ -126,3 +127,4 @@ def test_verify_email_already_verified_rejected():
     token_again = create_email_verification_token(uuid.UUID(user_id))
     response = client.get("/account/verify", params={"token": token_again})
     assert response.status_code == 409
+    assert response.json() == {"detail": "Account already verified", "code": "already_verified"}

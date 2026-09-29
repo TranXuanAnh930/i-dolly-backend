@@ -321,10 +321,8 @@ class ProductService:
         return cards
 
     @staticmethod
-    def get_store_page(db: Session) -> StorePageRead | None:
+    def get_store_page(db: Session) -> StorePageRead:
         products = db.query(Product).options(joinedload(Product.category)).all()
-        if not products:
-            return None
         groups = db.query(Group).all()
         return StorePageRead(products=ProductService._build_product_cards(db, products), groups=groups)
 

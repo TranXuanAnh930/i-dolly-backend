@@ -195,10 +195,8 @@ class ConcertService:
     # --- page-shaped reads ---
 
     @staticmethod
-    def get_events_page(db: Session) -> EventsPageRead | None:
+    def get_events_page(db: Session) -> EventsPageRead:
         concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
-        if not concerts:
-            return None
         return EventsPageRead(concerts=concerts)
 
     @staticmethod

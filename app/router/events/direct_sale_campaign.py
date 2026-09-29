@@ -38,8 +38,6 @@ def add_new_campaign(data: DirectSaleCampaignCreate, current_user: Users = Depen
 @router.get("/ticket_type/{ticket_type_id}", response_model=List[DirectSaleCampaignRead])
 def list_campaigns(ticket_type_id: uuid.UUID, db: Session = Depends(get_db)) -> list[DirectSaleCampaign]:
     result = DirectSaleCampaignService.get_campaigns(db, ticket_type_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="No direct sale campaigns found for this ticket type")
     return result
 
 # Not used by the frontend.

@@ -57,7 +57,7 @@ class OrderService:
 
         cart_items = db.query(Cart).filter(Cart.user_id==user_id).all()
         if not cart_items:
-            raise CartItemError("No item in cart")
+            raise CartItemError("No item in cart", code="cart_empty")
         total_amount = sum(with_tax(item.total_price) for item in cart_items)
         if payment_data.amount!=total_amount:
             raise PaymentAmountMismatch("Payment amount does not match cart total!")
@@ -146,7 +146,7 @@ class OrderService:
         if not order:
             raise NotFoundError("Order not found")
         if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
-            raise BadRequestError("Order is already shipped and cannot be cancelled")
+            raise BadRequestError("Order is already shipped and cannot be cancelled", code="order_already_shipped")
         order.status = OrderStatus.cancelled
         order.shippingstatus.status = SchemaShippingStatus.cancelled
         db.commit()
@@ -164,7 +164,7 @@ class OrderService:
         if not order_shippingstatus:
             raise NotFoundError("Order not found")
         if order_shippingstatus.status == SchemaShippingStatus.cancelled:
-            raise BadRequestError("Order is cancelled and its shipping status can no longer be updated")
+            raise BadRequestError("Order is cancelled and its shipping status can no longer be updated", code="order_cancelled")
         order_shippingstatus.status = new_status
         # Set explicitly; server_onupdate isn't backed by a DB trigger.
         order_shippingstatus.updated_at = datetime.now(timezone.utc)
@@ -199,7 +199,7 @@ class OrderService:
             raise ForbiddenError("Managers can only ship orders containing their own company's products")
         if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
             current = order.shippingstatus.status.value if order.shippingstatus else "unknown"
-            raise BadRequestError(f"Order cannot be marked shipped from its current status ({current})")
+            raise BadRequestError(f"Order cannot be marked shipped from its current status ({current})", code="invalid_shipping_transition")
         order.shippingstatus.status = SchemaShippingStatus.shipped
         order.shippingstatus.updated_at = datetime.now(timezone.utc)
         NotificationService.create_notification(db, order.user_id, NotificationType.order_shipped, order_id=order.id)

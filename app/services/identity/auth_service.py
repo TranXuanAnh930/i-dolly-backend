@@ -19,7 +19,7 @@ class AuthService:
     def create_user(db:Session, user: UserCreate) -> Users:
         check_existing_user = db.query(Users).filter(Users.email == user.email).first()
         if check_existing_user:
-            raise BadRequestError("Email already registered")
+            raise BadRequestError("Email already registered", code="email_taken")
         new_user = Users(
             name = user.name,
             email = user.email,
@@ -87,9 +87,9 @@ class AuthService:
         user_id = decode_email_token(token, "verify")
         db_user = db.query(Users).filter(Users.id == user_id).first() if user_id else None
         if not db_user:
-            raise BadRequestError("Invalid or expired token")
+            raise BadRequestError("Invalid or expired token", code="invalid_token")
         if db_user.is_verified:
-            raise ConflictError("Account already verified")
+            raise ConflictError("Account already verified", code="already_verified")
         db_user.is_verified = True
         db.commit()
 

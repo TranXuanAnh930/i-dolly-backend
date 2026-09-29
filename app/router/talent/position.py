@@ -27,8 +27,6 @@ def add_new_position(position: PositionCreate, current_user: Users = Depends(req
 @router.get("/all", response_model=List[PositionRead])
 def list_positions(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Position]:
     result = PositionService.get_positions(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No positions found")
     return result
 
 # Not used by the frontend.
@@ -62,8 +60,6 @@ def assign_position_to_idol(data: IdolPositionAssign, current_user: Users = Depe
 @router.get("/idol_positions/idol/{idol_id}", response_model=List[IdolPositionRead])
 def list_idol_positions(idol_id: uuid.UUID, db: Session = Depends(get_db)) -> list[IdolPosition]:
     result = PositionService.get_idol_positions(db, idol_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="This idol has no positions assigned")
     return result
 
 # Every idol's positions in one request.
@@ -71,8 +67,6 @@ def list_idol_positions(idol_id: uuid.UUID, db: Session = Depends(get_db)) -> li
 @router.get("/idol_positions/all", response_model=List[IdolPositionRead])
 def list_all_idol_positions(db: Session = Depends(get_db)) -> list[IdolPosition]:
     result = PositionService.get_all_idol_positions(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No idol positions found")
     return result
 
 # Not used by the frontend.

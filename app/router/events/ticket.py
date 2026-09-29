@@ -82,8 +82,6 @@ def add_new_ticket(data: TicketCreate, current_user: Users = Depends(require_adm
 @router.get("/mine", response_model=List[TicketRead])
 def list_my_tickets(current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Ticket]:
     result = TicketService.get_my_tickets(db, current_user)
-    if not result:
-        raise HTTPException(status_code=404, detail="You have no tickets")
     return result
 
 @router.get("/concert/{concert_id}/sales", response_model=TicketSalesPageRead)

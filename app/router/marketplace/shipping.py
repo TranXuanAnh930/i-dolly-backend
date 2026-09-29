@@ -23,8 +23,6 @@ def add_new_address(data:ShippingBase, user:Users=Depends(get_current_user), db:
 @router.get("/fetch", response_model=List[ShippingAddress])
 def see_address(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(20,60,user_key)), db:Session=Depends(get_db)) -> list[ShippingAddressModel]:
     address = ShippingService.fetch_address(db, user.id)
-    if not address:
-        raise HTTPException(status_code=404, detail="No shipping addresses found")
     return address
 
 @router.get("/fetch_byid/{address_id}", response_model=ShippingAddress)

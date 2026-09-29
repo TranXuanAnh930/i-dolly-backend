@@ -81,7 +81,7 @@ class UserService:
 
         Raises BadRequestError for a taken email, NotFoundError for a missing company."""
         if db.query(Users).filter(Users.email == data.email).first():
-            raise BadRequestError("Email already registered")
+            raise BadRequestError("Email already registered", code="email_taken")
         if not db.get(ManagementCompany, data.company_id):
             raise NotFoundError("Management company not found")
         new_user = Users(

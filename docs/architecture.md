@@ -117,11 +117,10 @@ except ServiceError as e:
     anything different from just returning the list. The same collapse applies to a single-object
     read that's *only* `db.get(...)`/`.first()` immediately returned — `return db.get(X, id)`
     directly, still typed `X | None` since that call itself can genuinely return `None`. It does
-    **not** apply once the query result gets wrapped into a bigger Pydantic object before
-    returning (`EventsPageRead(concerts=...)`, `IdolDetailRead(idol=..., ...)`, `CartDetailRead(...)`)
-    — a Pydantic model instance has no `__bool__`/`__len__`, so it's always truthy, and the
-    `if not entity: return None` guard in front of it is the only way the router can still tell
-    "nothing here" from "found." That guard stays.
+    **not** apply to a detail object built around one looked-up row (`IdolDetailRead(idol=...)`):
+    a Pydantic model instance is always truthy, so its `if not entity: return None` guard is the
+    only way the router can still tell "not found." Page and list objects built from collections
+    (`EventsPageRead`, `CartDetailRead`, ...) have no such guard: empty is a valid result.
 - **Checkout/payment exceptions** (`app/exception/checkout.py`): `CartItemError` and subclasses
   (`InsufficientStockError`, `PaymentAmountMismatch`, `UnsupportedGatewayError`, etc.), raised in
   the service, caught in the router, mapped to a status code. Use this shape for new multi-step
@@ -131,6 +130,32 @@ except ServiceError as e:
   `flush_or_raise()` replace a bare `db.commit()`/`db.flush()` at any write a trigger can fire on;
   each subclass carries its own `status_code`. A function can raise both a `TriggerViolationError`
   and a `ServiceError` (e.g. `ticket_service.checkout_ticket`) — the router catches both.
+
+### Error codes in the response
+
+Every error body is `{"detail": ..., "code": ...}` (the catalog is in `api-spec.md` §0). `detail`
+is FastAPI's usual value; `code` is a stable snake_case identifier the frontend branches on instead
+of parsing English text.
+
+- All three families above (`ServiceError`, `CartItemError`, `TriggerViolationError`) inherit
+  `CodedError` (`app/exception/common.py`), which gives each class a `code`. A raise site can
+  override it for a more specific case: `BadRequestError("...", code="entries_closed")`. Give a
+  new fan-facing business rule its own code; generic manager-form checks can keep the class code.
+- `app/exception/handlers.py` (registered in `main.py`) builds the body. The code comes from, in
+  order: an `ApiHTTPException` raised in a router (e.g. `code="invalid_credentials"`); the error
+  the `HTTPException` was raised **from**; a default for the status (`not_found`,
+  `not_authenticated`, `rate_limited`, ...). So routers keep the `raise HTTPException(...) from e`
+  pattern above; **dropping `from e` silently downgrades the code** to the status default.
+- Empty results aren't errors: list endpoints return `[]`, page endpoints an object with empty
+  lists. `404` is only for a specific missing resource.
+- A model validated by hand inside a router (e.g. from `Form(...)` fields) re-raises through
+  `request_validation_error(e)`, so its 422 has the same field-error list as FastAPI's own.
+- **Unexpected exceptions**: `UnhandledErrorMiddleware` (same module, added in `main.py` *before*
+  `CORSMiddleware` so CORS wraps it) logs the traceback and returns a JSON 500 with
+  `code: "internal_error"`. Without it, FastAPI builds the 500 outside every middleware, the
+  response has no CORS headers, and the browser reports a network error instead of the 500.
+- 422 request-validation errors keep FastAPI's list-of-field-errors `detail`, with
+  `code: "validation_error"`.
 
 ### Route handlers: `def`, not `async def`
 

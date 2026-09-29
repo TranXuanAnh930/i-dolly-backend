@@ -226,7 +226,7 @@ class TestProductPages:
         db.query().options().all.return_value = []
 
         result = ProductService.get_store_page(db)
-        assert result is None
+        assert result.products == []
 
     def test_get_store_page_resolves_idol_artist_from_album_detail(self):
         from app.services.marketplace.product_service import ProductService

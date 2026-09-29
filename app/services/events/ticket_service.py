@@ -179,7 +179,7 @@ class TicketService:
             ticket_type.sold_quantity -= 1
             commit_or_raise(db)
             CacheInvalidation.delete_cached_concert_detail(ticket_type.concert_id)
-            raise TicketNotPayableError("The payment deadline for this ticket has passed")
+            raise TicketNotPayableError("The payment deadline for this ticket has passed", code="payment_deadline_passed")
 
         total_amount = with_tax(float(ticket_type.price))
         if data.amount != total_amount:

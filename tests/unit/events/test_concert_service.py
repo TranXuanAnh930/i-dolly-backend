@@ -444,7 +444,7 @@ class TestEventsPages:
         db.query().options().all.return_value = []
 
         result = ConcertService.get_events_page(db)
-        assert result is None
+        assert result.concerts == []
 
     def test_get_manager_events_page(self):
         from app.services.events.concert_service import ConcertService

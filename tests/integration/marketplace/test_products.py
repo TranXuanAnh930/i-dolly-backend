@@ -51,7 +51,7 @@ def auth_headers(email="demo@example.com", password="demo123"):
 
 def test_get_all_products_unauthenticated():
     response = client.get("/products/all")
-    assert response.status_code in (200, 404, 429)
+    assert response.status_code in (200, 429)
 
 def test_get_products_pagination():
     response = client.get("/products/pagination?page=1&limit=10")

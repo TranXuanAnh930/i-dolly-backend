@@ -34,7 +34,69 @@ additionally 403 when a manager acts outside their own company's resources (note
 - 🔒 manager+ — `require_manager_or_admin`: role is `manager` or `admin`
 - 🔒 admin — `require_admin`: role is `admin` only
 
-**Error shape.** Most errors are FastAPI's default `HTTPException` body: `{"detail": "<message>"}`.
+**Error shape.** Every error body is `{"detail": ..., "code": "<snake_case>"}`.
+- `detail` is a human-readable English string — except for a `422` from request validation, where
+  it's FastAPI's list of `{loc, msg, type}` field errors. Show it as secondary text at most; don't
+  parse it.
+- `code` is stable: branch on it (and translate it) in the UI. Unlisted codes may be added later —
+  fall back to the status code.
+
+| Code | Status | When |
+|---|---|---|
+| `not_authenticated` | 401 | Missing, invalid or expired access token, or its user no longer exists |
+| `invalid_credentials` | 401 | `POST /account/login`: wrong email or password |
+| `invalid_refresh_token` | 401 | `POST /account/refresh`: cookie missing, expired or revoked |
+| `invalid_token` | 400 / 401 | Email-verification link (400) or password-reset token (401) invalid or expired |
+| `incorrect_password` | 400 | `PUT /profile/change-password`: old password wrong |
+| `email_taken` | 400 | Register / create manager with an existing email |
+| `already_verified` | 409 | `GET /account/verify` on a verified account |
+| `forbidden` | 403 | Wrong role, or a manager acting outside their company |
+| `fan_only_purchase` | 403 | A manager or admin tried to buy, add to cart or enter a lottery |
+| `not_found` | 404 | The requested resource doesn't exist (or isn't the caller's) |
+| `validation_error` | 422 | Request body/query/path failed validation |
+| `rate_limited` | 429 | Too many requests; `detail` says how many seconds to wait |
+| `method_not_allowed` | 405 | Wrong HTTP method |
+| `internal_error` | 500 | Unexpected server error (logged server-side); safe to retry reads |
+| `invalid_image` | 400 | Image upload rejected: unsupported type, over 5 MB, or storage misconfigured |
+| `insufficient_stock` | 400 | Cart add or order checkout: not enough stock |
+| `cart_empty` | 404 | `POST /order/checkout` with an empty cart |
+| `address_not_found` | 404 | Checkout with an unknown shipping address |
+| `amount_mismatch` | 400 | Checkout `amount` doesn't match the current total (prices changed — refetch) |
+| `unsupported_gateway` | 400 | Unknown `gateway` value |
+| `resale_cap_exceeded` | 400 | More than 3 units of one product per fan |
+| `duplicate_idempotency_key` | 409 | Checkout retried with an already-used `idempotency_key` (a double submit) |
+| `ticket_type_not_found` | 404 | `POST /tickets/checkout` with an unknown ticket type |
+| `wrong_sale_method` | 400 | Buying a lottery tier directly, or ranking a direct-sale tier |
+| `not_on_sale` | 400 | No open direct-sale campaign covers now |
+| `sold_out` | 400 | No seats left in the tier |
+| `duplicate_concert_ticket` | 400 | The fan already holds a live ticket for this concert |
+| `lottery_entry_unresolved` | 400 | Direct purchase blocked by a pending or won lottery entry for the concert |
+| `ticket_not_found` | 404 | Paying for a won ticket that doesn't exist or isn't the caller's |
+| `ticket_not_payable` | 400 | The ticket isn't an unpaid lottery win |
+| `payment_deadline_passed` | 400 | The lottery win's payment deadline passed; the ticket is now expired |
+| `ranking_locked` | 400 | Changing lottery rankings after entries closed |
+| `no_lottery_campaign` | 404 | Ranking a tier that has no lottery campaign |
+| `entries_not_open` | 400 | Ranking or applying before the entry window opens |
+| `entries_closed` | 400 | Applying after the entry window closed |
+| `campaign_not_open` | 400 | Applying to a campaign that's already drawn |
+| `campaign_cancelled` | 400 | Applying to a cancelled campaign |
+| `tier_already_applied` | 400 | Removing a ranked tier the fan has already applied to |
+| `duplicate_ranked_tier` | 400 | The same tier twice in one ranking |
+| `lottery_preference_required` | 400 | Applying to a tier the fan hasn't ranked |
+| `lottery_entry_cap_exceeded` | 400 | Already applied to this campaign |
+| `no_open_campaigns` / `entries_not_ended` | 400 | Lottery draw triggered too early, or with nothing to draw (manager) |
+| `order_already_shipped` / `order_cancelled` / `invalid_shipping_transition` | 400 | Order cancel / shipping-status changes not allowed from the current status (manager/admin) |
+| `bad_request` / `conflict` / `rule_violation` | 400 / 409 / 400 | Generic fallbacks, mostly manager/admin form checks — show `detail` |
+| other trigger codes | 400 | `ticket_type_concert_mismatch`, `product_detail_kind_conflict`, `concert_capacity_exceeded`, `duplicate_ticket_type` (manager/admin forms) |
+
+**Empty results are never errors.** Every list endpoint returns `200 []` when there's nothing to
+list, and the page endpoints (`/products/store-page`, `/concerts/events-page`, `/idols/members-page`,
+`/groups/groups-page`) return their object with empty lists. `GET /cart/see_cart` on an empty cart
+returns `{"items": [], "total_price": 0}`. `404` always means a specific resource is missing.
+
+Payment outcomes that aren't errors: a declined mock payment returns **200** with the order's or
+ticket's `status: "cancelled"`; a PayPal checkout returns **200** with `status: "pending"`.
+
 A handful of endpoints return `{"msg": "<message>"}` on success for simple actions (deletes,
 password changes) instead of the resource itself — called out per-endpoint below since it affects
 whether the frontend can optimistically update from the response or must refetch.
@@ -485,7 +547,8 @@ request per winner needed.
 - Response (`List[LotteryDrawResultRead]`): `lottery_entry_id`, `user_id`, `email`, `ticket_type_id`,
   `tier`, `status` (`won`|`lost` only), `drawn_at`, `ticket_id`, `payment_status`,
   `payment_deadline_at` — the last three are `null` for a `lost` row (no ticket was ever issued)
-- Errors: `404` if the concert has no decided entries yet (including "hasn't been drawn at all")
+- Returns `[]` if the concert has no decided entries yet (including "hasn't been drawn at all")
+- Errors: `404` (unknown concert), `403` (another company's concert)
 - UI: manager — post-draw results table/export for a concert; poll or refresh after
   `lottery_draw_completed`/`lottery_draw_failed` notifications land (see `project_status.md` §8)
 
@@ -766,9 +829,10 @@ follow up with `GET /payment/status/order/{order_id}` (below) to fetch the payme
   `"confirmed"`, until the payment is captured), `created_at`, `items`, `shippingstatus`
   (always present — every order gets a `shipping_status` row at `"pending"` in the same checkout
   transaction, not created lazily later), `shippingaddress`
-- Errors: `404` (empty cart / bad address), `402` (mock payment failed), `400` (stock/amount
-  mismatch, unsupported gateway, or a resale-cap trigger violation), `409` (idempotency key already
-  used) — distinguish these in the UI rather than showing one generic "checkout failed"
+- Errors: `404` (`cart_empty` / `address_not_found`), `400` (`insufficient_stock`,
+  `amount_mismatch`, `unsupported_gateway`, `resale_cap_exceeded`), `403` (`fan_only_purchase`),
+  `409` (`duplicate_idempotency_key`). A declined mock payment is **not** an error: `200` with
+  `status: "cancelled"` — distinguish these in the UI rather than showing one generic "checkout failed"
 - UI: checkout page's final "place order" action
 
 ### `GET /order/fetch_placed_order` 🔒 fan
@@ -887,7 +951,7 @@ surface to the user.
   "lottery_payment_reminder"|"lottery_payment_confirmation"|"event_reminder"|"password_reset"`),
   `order_id`/`ticket_id`/`lottery_entry_id`/`concert_id` (exactly one set, depending on `type`),
   `status`, `sent_at`, `is_read`, `read_at`, `created_at`
-- Errors: `404` if the fan has no notifications at all (not just none matching `unread_only`)
+- Returns `[]` when there are none (or none matching `unread_only`)
 - UI: notification feed/dropdown
 
 ### `POST /notifications/{notification_id}/read` 🔒 fan

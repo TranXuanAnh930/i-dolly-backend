@@ -938,7 +938,9 @@ def test_set_preferences_success_then_list_then_clear(factory):
     assert delete_response.status_code == 200
     factory.created = [obj for obj in factory.created if not isinstance(obj, LotteryPreference)]  # already deleted by the request above
 
-    assert client.get(f"/lottery_preferences/mine/{concert.id}", headers=factory.token(fan)).status_code == 404
+    response = client.get(f"/lottery_preferences/mine/{concert.id}", headers=factory.token(fan))
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_set_preferences_tier_without_campaign_not_found(factory):
@@ -959,7 +961,8 @@ def test_set_preferences_tier_without_campaign_not_found(factory):
 def test_list_my_preferences_none_set(factory):
     fan = factory.user(role="fan")
     response = client.get(f"/lottery_preferences/mine/{uuid.uuid4()}", headers=factory.token(fan))
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_clear_my_preferences_none_set(factory):
@@ -976,7 +979,8 @@ def test_clear_my_preferences_none_set(factory):
 def test_list_my_entries_none(factory):
     fan = factory.user(role="fan")
     response = client.get("/lottery_entries/mine", headers=factory.token(fan))
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_list_my_entries_found(factory):
