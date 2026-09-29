@@ -9,6 +9,7 @@ from app.db.models.identity import Users
 from app.db.models.marketplace import Payment
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
+from app.exception.handlers import ApiHTTPException
 from app.schema.common import MessageResponse
 from app.schema.marketplace import PaymentResponse
 from app.services.marketplace.payment_service import PaymentService
@@ -54,7 +55,7 @@ def capture_paypal_payment(pg_order_id: str, user: Users = Depends(get_current_u
 @router.post("/paypal/webhook", response_model=MessageResponse)
 def paypal_webhook(request: Request, raw_body: bytes = Depends(_raw_body), db: Session = Depends(get_db)) -> MessageResponse:
     if not verify_webhook_signature(request.headers, raw_body):
-        raise HTTPException(status_code=400, detail="Webhook signature verification failed")
+        raise ApiHTTPException(status_code=400, detail="Webhook signature verification failed", code="invalid_webhook_signature")
 
     pg_order_id = order_id_from_webhook(json.loads(raw_body))
     # Events that don't refer to an order are acknowledged and ignored.

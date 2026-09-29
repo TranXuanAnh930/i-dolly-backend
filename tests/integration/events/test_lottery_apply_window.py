@@ -105,5 +105,6 @@ def test_apply_after_window_closed_is_rejected():
         campaign.entry_start_at = datetime.now(timezone.utc) - timedelta(days=2)
         campaign.entry_end_at = datetime.now(timezone.utc) - timedelta(minutes=1)
         db.commit()
-    with pytest.raises(BadRequestError, match="have closed"):
+    with pytest.raises(BadRequestError, match="have closed") as exc_info:
         _apply(campaign_id, fan)
+    assert exc_info.value.code == "entries_closed"

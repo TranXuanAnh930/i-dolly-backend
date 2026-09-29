@@ -93,7 +93,8 @@ def test_list_mine_unauthenticated():
 
 def test_list_mine_empty(fan_headers_no_notifications):
     response = client.get("/notifications/mine", headers=fan_headers_no_notifications)
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_list_mine_found(fan_with_notification):
     headers, notification_id = fan_with_notification
@@ -112,7 +113,8 @@ def test_list_mine_unread_only(fan_with_notification):
     assert mark_response.status_code == 200
 
     response = client.get("/notifications/mine", params={"unread_only": True}, headers=headers)
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 # ───────────────────────────────────────────────────────────────
 # POST /notifications/{id}/read

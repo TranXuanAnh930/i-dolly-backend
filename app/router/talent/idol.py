@@ -72,16 +72,12 @@ def add_new_idol(
 @router.get("/all", response_model=List[IdolRead])
 def list_idols(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Idol]:
     result = IdolService.get_idols(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No idols found")
     return result
 
 # Page-shaped reads. Registered before /{id} so these paths aren't parsed as an id.
 @router.get("/members-page", response_model=MembersPageRead)
 def get_members_page_data(db: Session = Depends(get_db)) -> MembersPageRead:
     result = CacheService.get_cached_members_page(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No idols found")
     return result
 
 @router.get("/{id}/detail", response_model=IdolDetailRead)

@@ -24,8 +24,6 @@ def get_unread_count(current_user: Users = Depends(get_current_user), _: None = 
 @router.get("/mine", response_model=List[NotificationRead])
 def list_my_notifications(unread_only: bool = False, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(10, 60, user_key)), db: Session = Depends(get_db)) -> list[Notification]:
     result = NotificationService.get_my_notifications(db, current_user, unread_only)
-    if not result:
-        raise HTTPException(status_code=404, detail="You have no notifications")
     return result
 
 @router.post("/{notification_id}/read", response_model=NotificationRead)

@@ -304,7 +304,7 @@ class TestGroupService:
         db.query().filter().all.return_value = []
 
         result = GroupService.get_groups_page(db)
-        assert result is None
+        assert result.groups == []
 
     def test_get_group_detail_found(self):
         from app.schema.marketplace import ArtistRef, ProductCard

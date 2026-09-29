@@ -160,7 +160,8 @@ class TestCartService:
         db.query().filter().all.return_value = []
 
         result = CartService.see_cart(db, DEFAULT_ID)
-        assert result is None
+        assert result.items == []
+        assert result.total_price == 0
 
     def test_remove_cart_success(self):
         from app.services.marketplace.cart_service import CartService

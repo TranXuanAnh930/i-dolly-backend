@@ -157,7 +157,8 @@ they're fixed.
 - Money as `float` (`total_price=float(...)`, `with_tax(float(...))`).
 - ~~Read-only `/payment/status/*` endpoints use `PATCH`~~ — fixed: they're `GET` (frontend
   `payment.service.js` must switch in the same release).
-- ~~Empty lists return 404 (`/order/fetch_placed_order`, `/payment/status/all`)~~ — fixed, both return `[]`.
+- ~~Empty lists return 404~~ — fixed: every list endpoint returns `[]` and page endpoints an
+  empty page object (2026-09-29).
 - ~~`/account/verify` returns 401 for "already verified"~~ — fixed: `409` for already verified,
   `400` for a bad token or unknown user (`ConflictError` added to `app/exception/common.py`).
 - No `logging` anywhere in `app/` — `print()` only; email failures swallowed, never retried.

@@ -26,8 +26,6 @@ def add_new_category(category:CategoryBase, db:Session=Depends(get_db), current_
 @router.get("/all", response_model=List[CategoryRead])
 def see_categories(_:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> list[Category]:
     result = CategoryService.get_categories(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No categories found")
     return result
 
 # Not used by the frontend.

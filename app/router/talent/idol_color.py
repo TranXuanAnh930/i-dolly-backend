@@ -32,8 +32,6 @@ def add_new_idol_color(color: IdolColorCreate, current_user: Users = Depends(req
 @router.get("/all", response_model=List[IdolColorRead])
 def list_idol_colors(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[IdolColor]:
     result = CacheService.get_cached_idol_colors(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No idol colors found")
     return result
 
 # Not used by the frontend.

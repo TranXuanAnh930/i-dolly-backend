@@ -42,15 +42,11 @@ def add_new_group(group: GroupCreate, current_user: Users = Depends(require_mana
 @router.get("/all", response_model=List[GroupRead])
 def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Group]:
     result = GroupService.get_groups(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No groups found")
     return result
 
 @router.get("/groups-page", response_model=GroupsPageRead)
 def get_groups_page_data(db: Session = Depends(get_db)) -> GroupsPageRead:
     result = CacheService.get_cached_groups_page(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No groups found")
     return result
 
 @router.get("/manager-groups-page", response_model=ManagerGroupsPageRead)

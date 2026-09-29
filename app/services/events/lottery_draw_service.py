@@ -42,10 +42,10 @@ class LotteryDrawService:
         ticket_type_ids = [ticket_type.id for ticket_type in ticket_types]
         campaigns = db.query(LotteryCampaign).filter(LotteryCampaign.ticket_type_id.in_(ticket_type_ids), LotteryCampaign.status == CampaignStatus.open).with_for_update().all()
         if not campaigns:
-            raise BadRequestError("No open lottery campaigns for this concert")
+            raise BadRequestError("No open lottery campaigns for this concert", code="no_open_campaigns")
         for campaign in campaigns:
             if campaign.entry_end_at > datetime.now(timezone.utc):
-                raise BadRequestError("Not every lottery campaign for this concert has ended yet")
+                raise BadRequestError("Not every lottery campaign for this concert has ended yet", code="entries_not_ended")
 
         preferences = db.query(LotteryPreference).filter(LotteryPreference.concert_id == concert_id, LotteryPreference.ticket_type_id.in_(ticket_type_ids)).all()
         entries = db.query(LotteryEntry).filter(LotteryEntry.campaign_id.in_([campaign.id for campaign in campaigns]), LotteryEntry.status == LotteryEntryStatus.pending).options(selectinload(LotteryEntry.campaign)).with_for_update().all()

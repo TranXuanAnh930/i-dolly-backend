@@ -87,11 +87,9 @@ class GroupService:
     # --- page-shaped reads ---
 
     @staticmethod
-    def get_groups_page(db: Session) -> GroupsPageRead | None:
+    def get_groups_page(db: Session) -> GroupsPageRead:
         # Active groups only.
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
-        if not groups:
-            return None
         counts = dict(
             db.query(Idol.group_id, func.count(Idol.id))
             .filter(Idol.group_id.isnot(None))

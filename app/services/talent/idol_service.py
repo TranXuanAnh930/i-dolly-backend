@@ -97,11 +97,9 @@ class IdolService:
     # --- page-shaped reads ---
 
     @staticmethod
-    def get_members_page(db: Session) -> MembersPageRead | None:
+    def get_members_page(db: Session) -> MembersPageRead:
         # Active idols only; the group dropdown lists active groups only.
         idols = db.query(Idol).options(*IdolService._with_positions_and_color()).filter(Idol.is_active.is_(True)).all()
-        if not idols:
-            return None
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
         return MembersPageRead(idols=idols, groups=groups)
 

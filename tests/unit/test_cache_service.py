@@ -94,10 +94,13 @@ class TestProductsCache:
         from app.services.marketplace.product_service import ProductService
 
         db = MagicMock()
-        with patch.object(ProductService, "list_of_products", return_value=False):
+        with patch.object(ProductService, "list_of_products", return_value=[]):
             result = CacheService.get_cached_products(db)
         assert result == []
-        assert fake_redis.get("products:list") is None  # empty result never cached
+        # Cached like any other result; the next product write invalidates it.
+        with patch.object(ProductService, "list_of_products") as mock_list:
+            assert CacheService.get_cached_products(db) == []
+        mock_list.assert_not_called()
 
     def test_get_cached_store_page_miss_then_hit(self):
         from app.cache.cache_service import CacheService
@@ -116,14 +119,16 @@ class TestProductsCache:
             assert second.products[0].id == DEFAULT_ID
             mocked.assert_called_once()
 
-    def test_get_cached_store_page_not_found(self):
+    def test_get_cached_store_page_empty(self):
         from app.cache.cache_service import CacheService
+        from app.schema.marketplace import StorePageRead
         from app.services.marketplace.product_service import ProductService
 
         db = MagicMock()
-        with patch.object(ProductService, "get_store_page", return_value=False):
+        with patch.object(ProductService, "get_store_page", return_value=StorePageRead(products=[], groups=[])):
             result = CacheService.get_cached_store_page(db)
-        assert result is None
+        assert result.products == []
+        assert result.groups == []
 
     def test_delete_cached_products_clears_both_keys(self):
         from app.cache.cache_service import CacheService
@@ -336,9 +341,9 @@ class TestLookupTableCaches:
         from app.services.events.venue_service import VenueService
 
         db = MagicMock()
-        with patch.object(VenueService, "get_venues", return_value=False):
+        with patch.object(VenueService, "get_venues", return_value=[]):
             result = CacheService.get_cached_venues(db)
-        assert result is None
+        assert result == []
 
     def test_delete_cached_venues(self):
         from app.cache.cache_service import CacheService

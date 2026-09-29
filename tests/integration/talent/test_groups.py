@@ -61,11 +61,13 @@ def auth_headers(email="demo@example.com", password="demo123"):
 
 def test_list_groups_empty():
     response = client.get("/groups/all")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_get_groups_page_empty():
     response = client.get("/groups/groups-page")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == {"groups": []}
 
 def test_get_manager_groups_page_never_404s():
     # Manager/admin settings pages deliberately return an empty list rather

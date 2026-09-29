@@ -27,8 +27,6 @@ def add_new_company(company: ManagementCompanyCreate, current_user: Users = Depe
 @router.get("/all", response_model=List[ManagementCompanyRead])
 def list_companies(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[ManagementCompany]:
     result = CacheService.get_cached_management_companies(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No management companies found")
     return result
 
 # Not used by the frontend.
