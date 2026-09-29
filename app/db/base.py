@@ -8,4 +8,4 @@ from app.db.models.talent import ManagementCompany, IdolColor, Position, IdolPos
 # (e.g. scripts/seed.py, Celery tasks). Keep in sync with app/db/models/.
 from app.db.models.events import Venue, Concert, ConcertPerformer, TicketType, DirectSaleCampaign, LotteryPreference, LotteryCampaign, LotteryEntry, Ticket
 from app.db.models.marketplace import AlbumDetail, Genre, AlbumGenre, MerchDetail
-from app.db.models.shared import Notification
+from app.db.models.shared import Inquiry, Notification

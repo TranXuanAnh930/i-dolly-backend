@@ -741,6 +741,26 @@ registered a fan, drove a real password reset end to end, confirmed the resultin
 through `GET /notifications/mine`/`unread-count`/mark-read), unlike most migrations in this repo
 (§3's standing gap).
 
+### 3.20 `inquiries` (new, contact form)
+
+One row per contact-form submission (`POST /inquiries/submit`): `email`, `topic`
+(`inquiry_topic_enum`: `tickets`/`lottery`/`orders`/`payment`/`account`/`other`), `content`
+(text, 5–2000 characters after trimming; 5 because Japanese questions can be very short),
+nullable `user_id`, `created_at`.
+
+- `user_id` is `ON DELETE SET NULL`, not `CASCADE`: a question someone asked is still worth keeping
+  after they delete their account, and guests submit with no account at all.
+- `email` is stored lowercased so the per-address confirmation cap can't be sidestepped by
+  changing letter case. The composite index `(email, created_at)` serves that "how many
+  confirmations did this address get in the last hour" count.
+- `topic` is a fixed enum rather than free text so it can be shown in the confirmation email
+  safely and used for routing later.
+- No `status`/answer columns yet. They belong with whichever staff reply flow (or AI-drafted
+  answer) gets designed, not guessed at ahead of it.
+
+Migration `b8e2d4f6a1c3`, chained onto `cf3e0da38a99`. Not yet applied to a database
+(`project_status.md` §1).
+
 ## 4. Role-based access
 
 | Action | admin | manager | fan |

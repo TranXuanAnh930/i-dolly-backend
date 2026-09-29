@@ -8,8 +8,10 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `a9d3f5b7c1e2`** (`unique_shipping_status_order_id`) — 62 migrations,
-one linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
+**Chain head: `b8e2d4f6a1c3`** (`create_inquiries_table`) — 64 migrations,
+one linear chain, no branches. `b8e2d4f6a1c3` itself has only been checked statically so far
+(`py_compile`, `alembic heads` reports it as the single head); it hasn't been applied to a
+database yet, since Docker Desktop's engine was unreachable when it was written (§2, Inquiries). Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
 applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
 empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
 the models. The notification feature was also exercised over real HTTP end to end (password reset
@@ -97,6 +99,52 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   `event_reminder` still has no producer. `notifications.status`/`sent_at`
   sit at `pending`/`null` forever regardless — that pair tracks a push-to-inbox step this table
   itself doesn't drive (see Email dispatch below, a separate path).
+- **Inquiries (contact form, お問い合わせ)**: `POST /inquiries/submit`, open to guests (a
+  logged-in sender is linked via `user_id`). Every inquiry is saved to an `inquiries` table
+  (`database-design.md` §3.20) and a confirmation is emailed to the address given, through the
+  same Celery `send_email` task as every other email. Two anti-abuse choices, since the email goes
+  to whatever address is typed: the confirmation never includes the user's own text (only the
+  topic label and a reference id), so the form can't be used to send arbitrary content from our
+  address; and one address gets at most 3 confirmations per hour
+  (`InquiryService.CONFIRMATIONS_PER_ADDRESS`), with the route itself limited to 3 submissions per
+  10 minutes per user or IP. Over the per-address cap, the inquiry is still saved and only the
+  email is skipped. Known gaps: two simultaneous submissions to the same address can both pass
+  the cap check (not money-critical, accepted); `+tag` aliases count as separate addresses; and
+  **there's no staff-facing read path yet** — inquiries are only visible in the database, and
+  nobody is notified when one arrives. Verified by 8 unit tests and the full unit suite
+  (475/475), plus `import main` confirming the route registers. Not yet run against a live
+  database or sent through Resend (Docker Desktop was down at the time).
+- **FAQ instant answers on the contact page — AI call implemented (hand-written), not yet run
+  against the real API**. Model: `claude-haiku-4-5`, the cheapest option, with no `effort`
+  setting (Haiku 4.5 rejects it) and no prompt caching (Haiku 4.5 only caches prompts of 4,096+
+  tokens, and on a low-traffic site cache writes would cost more than they save). With
+  `DEBUG=true` the service prints the question and never calls Claude, matching `send_email()`.
+  A cut-off (`max_tokens`) or refused answer returns "not answerable". Unit tests set `DEBUG`
+  themselves and fake `_client` wherever the call path runs, so none can make a real request
+  whatever `.env` says. Tone decided by the developer: cheerful and cute, with facts stated
+  exactly (see §5, product personality). Original plumbing notes:
+  `POST /inquiries/instant-answer` (auth optional, 5 per 10 minutes per user or IP) runs
+  `FaqAnswerService.answer`, which answers only from `app/content/faq.md` and returns
+  `{"answerable": false}` whenever it can't help: the FAQ doesn't cover it, `ANTHROPIC_API_KEY` is
+  unset, the model declined, or the call failed. It never errors, since the contact form is always
+  the fallback. The Claude API call itself (`faq_answer_service._ask_claude`) is a documented TODO
+  boilerplate left for hand-implementation (structured output via `messages.parse` into
+  `FaqAnswer`, FAQ in a cached system prompt); until then the endpoint always answers "not
+  answerable". `anthropic==1.8.0` added to `requirements.txt` (a dry-run install showed no
+  conflicts). The FAQ holds only facts confirmed in code; refund, ticket-transfer, venue-entry,
+  shipping-fee and payment-method policies are listed as TODOs in the file's header comment,
+  because those aren't decided anywhere yet. Verified: 9 unit tests (484/484 unit suite), and an
+  in-process HTTP call returning `200 {"answerable": false}` with no key set.
+  **Japanese support**: a Japanese FAQ (`app/content/faq.ja.md`) mirrors `faq.md` entry by entry,
+  chosen by a new `lang` field (`"en"`/`"ja"`, default `"en"`) on the instant-answer request; the
+  two files must be kept in sync by hand. The minimum message length on both inquiry endpoints
+  dropped from 10 to 5 characters, because a complete Japanese question can be shorter than 10
+  (「返金できますか？」 is 8). Confirmed: full-width spaces are trimmed like normal ones,
+  full-width email characters are rejected (the frontend normalizes with NFKC), and the server
+  counts length in Unicode code points. **Still English-only**: the confirmation email
+  (`EmailTemplate.INQUIRY_RECEIVED`, and every other transactional email) and the `422`/`429`
+  error text; the frontend maps errors to its own Japanese messages instead of showing them.
+  489/489 unit suite after this change.
 - **Email dispatch**: every transactional email — verification link, order placed, ticket
   confirmed, lottery ticket payment confirmed — goes through
   `celery_app.send_task("app.tasks.email.send_email", ...)`, picked up by the worker task in
@@ -869,7 +917,7 @@ newly introduced.
 
     Verification: all three templates rendered with int/float/`Decimal` amounts; unit suite
     444/444. No real email was sent.
-39. **Rate-limit tuning pass**, prompted by benchmarking `GET /products/store-page` and finding its
+45. **Rate-limit tuning pass**, prompted by benchmarking `GET /products/store-page` and finding its
     `5, 60` budget (per-IP) exhausted almost immediately under any real browsing pattern, not just
     an attacker's. Audited every `rate_limit(limit, window, key_func)` call across `app/router`
     and grouped them by what each is actually defending: money/inventory mutations (checkout, cart,
@@ -913,7 +961,7 @@ newly introduced.
     Manager/admin CRUD (`20/60` uniform across campaigns/album/ticket-type/genre/merch) and
     admin-sensitive actions (`make-admin`/`create-manager`, `3/60`) were reviewed and left as-is —
     authenticated, privileged, not a normal-usage friction point.
-40. **Benchmarking `GET /products/store-page` surfaced a latency-under-concurrency question, not
+46. **Benchmarking `GET /products/store-page` surfaced a latency-under-concurrency question, not
     yet resolved.** Two local runs against the new `30/60` limit: concurrency 1 (15s) gave
     p50/p90/p99/max of 76/88/111/680ms; concurrency 3 (20s) gave 133/220/1735/1853ms — the tail
     grows sharply with concurrency while throughput barely does (~9.7 → ~11.6 req/s, nowhere near
@@ -1028,7 +1076,9 @@ newly introduced.
   is worth resolving before this gets built, not after.
 - **Product "personality"** — the brief's third goal (tone of copy, idol/fandom-specific
   flourishes, branding on `/docs`, error messages, email templates). `idol_colors`' pastel palette
-  is the one seed of it so far; nothing else is designed. Don't invent details speculatively —
+  is one seed of it; the other is the FAQ assistant's tone ("cheerful, whimsical and cute", with
+  facts stated exactly), chosen by the developer in `faq_answer_service.SYSTEM_PROMPT`. Nothing
+  else is designed. Don't invent details speculatively —
   flag it in the next planning conversation.
 - **`schema.sql`** — cited throughout `database-design.md` as if it exists; it doesn't (§1 above).
   Either generate one from the live migrations/models, or stop citing it and treat the migrations
