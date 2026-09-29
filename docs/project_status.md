@@ -229,7 +229,7 @@ in `test_orders_concurrency.py`, `checkout_ticket` in `test_ticket_checkout_conc
 `checkout_won_ticket` in `test_won_ticket_checkout.py`.
 
 **Integration coverage pass 2 (`pytest --cov=app` against real Postgres 16 + Redis, 85.3% →
-94.6% line coverage, 745 → 911 tests, all passing)**: aimed at the RBAC/company-scoping and money paths that the first
+94.6% line coverage, 745 → 923 tests, all passing)**: aimed at the RBAC/company-scoping and money paths that the first
 two passes left to mocks or skipped. Added `tests/integration/_seed.py` (direct-DB fixture rows +
 minted JWTs for any role, torn down with bulk `DELETE`s so Postgres' `ON DELETE CASCADE` also
 removes rows the API created), HTTP-level suites for order fulfilment (cancel/ship/admin override,
@@ -237,8 +237,8 @@ company-scoped manager orders page), product management (create-with-detail scop
 bulk add, manager pages, sales history, artist resolution), idol/group writes, shipping-address
 ownership, and ticket/concert router error mapping; a service-level suite for
 `checkout_won_ticket` including three race tests; and unit tests for the Celery tasks,
-`email_sender`, `db_triggers` and both storage backends. Found and fixed one real bug on the way
-(§4 item 47). Per-module numbers, what each suite proves, and the remaining gaps:
+`email_sender`, `db_triggers` and both storage backends. Found and fixed a real bug on the way
+(§4 item 47) and closed the manager-page auth gap it surfaced (item 48). Per-module numbers, what each suite proves, and the remaining gaps:
 **`docs/test-coverage.md`**.
 
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
@@ -527,12 +527,10 @@ newly introduced.
     actually touched — an O(N) scan, fine at this project's key count, not something a
     high-traffic deployment would want unchanged. Idol/group/idol-color mutations cross-invalidate
     into whichever manager pages embed their rows (the idol/group form dropdowns, the color
-    picker), same reasoning as item 28's members/groups cross-invalidation. **Separately noticed,
-    not fixed here**: none of these seven manager/admin GET endpoints actually check
-    `require_manager_or_admin`/`require_admin` — no auth dependency at all, unlike every mutating
-    endpoint on the same resources. Caching makes an unauthenticated read of this data cheaper,
-    not more exposed than it already was; flagging so it doesn't get missed as this list is
-    extended further.
+    picker), same reasoning as item 28's members/groups cross-invalidation. None of these GET
+    endpoints checked auth at the time; the six `manager-*-page` ones now do (item 48).
+    `/management_companies/all` stays public by design (company names only, for pickers,
+    `api-spec.md`).
 30. ~~**`POST /order/checkout` emailed "your order has been placed" even on a declined mock
     payment**~~ — **FIXED**. `OrderService.checkout` correctly gates the in-app
     `order_confirmation` notification on `payment.status == PaymentStatus.success`, but the
@@ -1048,15 +1046,27 @@ newly introduced.
     `tests/integration/marketplace/test_shipping_addresses.py` — 5 of its 10 tests fail against
     the old code.
 
-48. **The manager/admin settings-page reads have no auth dependency** — open. `GET
-    /products/manager-products-page`, `/products/manager-product-form-page`,
-    `/idols/manager-idols-page`, `/idols/manager-idol-form-page`, `/groups/manager-groups-page`
-    and `/concerts/manager-events-page` are callable anonymously, and the two products pages take
-    any `company_id` as a query parameter, unlike `GET /order/manager-orders-page`, which requires
-    `require_manager_or_admin` and pins a manager to their own company. What they return is catalog
-    data the public store/members/events pages largely expose already, so the impact is low, but
-    nothing documents this as deliberate. Found during the coverage pass (item 47), not changed:
-    adding auth changes the API contract and the frontend's calls, so it needs a decision first.
+48. ~~**The manager/admin settings-page reads had no auth and no server-side company scoping**~~ —
+    **FIXED** (`docs/bugs.md` #29). `GET /products/manager-products-page`,
+    `/products/manager-product-form-page`, `/idols/manager-idols-page`,
+    `/idols/manager-idol-form-page`, `/groups/manager-groups-page` and
+    `/concerts/manager-events-page` were callable anonymously (confirmed over HTTP: a deactivated
+    idol and an unlisted product came back to a caller with no token), and the two products pages
+    took any `company_id` from the query string. All six now require `require_manager_or_admin`
+    and `rate_limit(30, 60, user_key)` (the manager/admin tier, `architecture.md` §3), matching
+    `GET /order/manager-orders-page`. A manager only receives their own company's rows:
+    - the products pages pin `company_id` to the manager's company (an admin may still pass one,
+      or omit it for every product) — these caches were already keyed by company;
+    - the idol, group and events pages keep one all-company Redis entry, and the router filters
+      it per request through pure `scope_manager_*` helpers on each service, so cache keys and
+      write-side invalidation are unchanged; the product form page's idol/group pickers are
+      filtered the same way.
+    Venues, idol colors and categories are shared across companies and stay unfiltered.
+    Frontend impact (every call must send the token; client-side company filtering can go):
+    `docs/frontend-tasks/manager-pages-and-address-auth.md`. Tests:
+    `test_permissions.py::test_manager_settings_page_role_gate` (401/403/200 for all seven
+    manager pages), plus manager-vs-admin scoping tests in `test_idol_group_management.py`,
+    `test_product_management.py` and `test_ticket_and_concert_endpoints.py`.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

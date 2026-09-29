@@ -4,9 +4,10 @@ A snapshot of what the test suite covers, measured rather than estimated. It's k
 `project_status.md` because it's a point-in-time report: re-run the command below and update the
 tables when the numbers move meaningfully, rather than editing individual figures by hand.
 
-**Measured:** 2026-09-29, on `refactor/add-test-coverage` (branched from `develop` at `3abc98b`).
-**Result:** 911 passed, 0 failed, 0 skipped. **94.6% line coverage** of `app/` (5,874 / 6,211
-statements), up from 85.3% (745 tests) on `develop`.
+**Measured:** 2026-09-29, on `refactor/add-test-coverage` after merging `develop` (`e100b11`) and
+the manager-page auth fix. **Result:** 923 passed, 0 failed, 0 skipped. **94.6% line coverage** of
+`app/` (5,907 / 6,242 statements), up from 85.3% (745 tests, 6,211 statements) on `develop` at
+`3abc98b`, the baseline for every "Before" column below.
 
 ## 1. How it was measured
 
@@ -27,8 +28,8 @@ This is **line coverage only**. Branch coverage isn't enabled (`--cov-branch`), 
 | Suite | Tests | Line coverage on its own | Needs Postgres? |
 |---|---:|---:|---|
 | `tests/unit` | 531 | 66% | No (mocked `Session`, `fakeredis`) |
-| `tests/integration` | 380 | — | Yes (real Postgres; Redis is `fakeredis`) |
-| **Both** | **911** | **94.6%** | |
+| `tests/integration` | 392 | — | Yes (real Postgres; Redis is `fakeredis`) |
+| **Both** | **923** | **94.6%** | |
 
 The unit suite on its own reaches 66% because routers, real SQL and DB triggers are exercised
 only by the integration suite. The two suites are complementary; neither is meant to reach the
@@ -38,8 +39,8 @@ total alone.
 
 | Package | Statements | Before | After |
 |---|---:|---:|---:|
-| `app/services` | 2471 | 89.4% | 96.8% |
-| `app/router` | 1585 | 68.1% | 86.1% |
+| `app/services` | 2498 | 89.4% | 96.9% |
+| `app/router` | 1589 | 68.1% | 86.2% |
 | `app/schema` | 887 | 98.6% | 99.5% |
 | `app/db` | 541 | 100.0% | 100.0% |
 | `app/cache` | 327 | 97.6% | 98.8% |
@@ -49,7 +50,7 @@ total alone.
 | `app/config` | 40 | 100.0% | 100.0% |
 | `app/tasks` | 31 | 0.0% | 100.0% |
 | `app/celery_app` | 5 | 100.0% | 100.0% |
-| **Total** | **6211** | **85.3%** | **94.6%** |
+| **Total** | **6242** | **85.3%** | **94.6%** |
 
 `app/db` and `app/schema` are near 100% mostly because model and schema modules are declarative
 and execute at import. Their coverage says little about correctness; the trigger and constraint
@@ -71,8 +72,8 @@ Files that moved by 5 points or more:
 | `app/router/talent/group.py` | 47.9% | 100.0% |
 | `app/router/marketplace/shipping.py` | 57.1% | 100.0% |
 | `app/exception/db_triggers.py` | 59.5% | 100.0% |
-| `app/services/marketplace/order_service.py` | 60.1% | 95.3% |
-| `app/services/marketplace/product_service.py` | 59.4% | 94.5% |
+| `app/services/marketplace/order_service.py` | 60.1% | 95.9% |
+| `app/services/marketplace/product_service.py` | 59.4% | 94.9% |
 | `app/router/events/concert.py` | 63.2% | 97.4% |
 | `app/router/events/ticket.py` | 65.5% | 90.8% |
 | `app/router/marketplace/order.py` | 74.7% | 88.6% |
@@ -99,18 +100,25 @@ Files that moved by 5 points or more:
 - **`marketplace/test_product_management.py`**: create-with-detail (album/merch) scoped to the
   manager's company, deactivated-owner and missing-reference rejection, invalid detail
   combinations, image upload into a temp dir, image replace/update/delete scoping, all-or-nothing
-  bulk add, the company-keyed manager pages, sales history, and artist resolution/recommendations
-  on the product detail page.
+  bulk add, the manager pages (a manager's `company_id` is ignored in favour of their own; the
+  form page's idol/group pickers are scoped too), sales history, and artist
+  resolution/recommendations on the product detail page.
 - **`marketplace/test_shipping_addresses.py`**: ownership on every by-id read and write. This
   suite found a real IDOR (`project_status.md` §4 item 47, fixed in the same branch); 5 of its 10
   tests fail against the pre-fix code.
 - **`talent/test_idol_group_management.py`**: idol/group create, update, soft delete, reactivate
   and image upload for owning managers and admins; cross-company 403s; group-in-another-company,
-  deactivated-group and unknown-color validation; inactive rows disappearing from public reads.
+  deactivated-group and unknown-color validation; inactive rows disappearing from public reads;
+  the manager idol/group settings pages returning only the manager's company (every company for
+  an admin).
+- **Manager settings pages** (`test_permissions.py::test_manager_settings_page_role_gate`): all
+  seven `manager-*-page` reads return 401 without a token, 403 for a fan and 200 for a manager or
+  admin. The company scoping of each is checked in the suite for its domain (above and below).
 - **`events/test_ticket_and_concert_endpoints.py`**: which service exception maps to which status
   code for both ticket checkouts and the admin manual issue, `/tickets/mine`, per-viewer
   personalization on the concert detail page (guest vs. holder vs. other fan), performer
-  assign/remove scoping, and the lottery-draw trigger (enqueues the Celery task, notifies managers).
+  assign/remove scoping, the lottery-draw trigger (enqueues the Celery task, notifies managers),
+  and the manager events page returning only the manager's concerts (venues stay shared).
 
 Shared fixture: **`tests/integration/_seed.py`** (`seed`, registered in
 `tests/integration/conftest.py`) inserts rows directly, mints a JWT for any role, and tears down

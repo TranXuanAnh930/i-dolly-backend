@@ -102,13 +102,16 @@ they're fixed.
   not-yet-captured order shows up on the manager orders page and can be marked shipped. Require
   `order.status == confirmed` in `ship_order`.
   **DEFERRED**: to be fixed later, with #12 and #27.
-- [ ] **28. `GET /shipping_addresses/fetch_byid/{id}` always 500s, and has no ownership check.**
+- [x] **28. `GET /shipping_addresses/fetch_byid/{id}` always 500s, and has no ownership check.**
   The route (`app/router/marketplace/shipping.py:30`) has no `get_current_user` dependency but its
   limiter uses `user_key`, which reads `request.state.user` → `AttributeError` (the limiter only
   catches `RedisError`) → 500 on every call. Confirmed with `TestClient` (2026-09-29). Behind that,
   `ShippingService.get_address_by_id` filters only by id, so once the 500 is fixed it becomes an
   IDOR on other users' addresses. Fix: add `get_current_user` and filter by `user_id`, like the
   sibling `update`/`delete` routes.
+  **FIXED** (`project_status.md` §4 item 47): the route now requires login and filters by owner.
+  The sibling `update`/`delete` queries had the same hole (`user_id==user_id`, always true) and
+  were fixed with it.
 
 ## 🟡 Medium
 
@@ -143,7 +146,7 @@ they're fixed.
   resale cap (#13), and look shippable (#26). Same root cause as #12 (no expiry for PayPal pending
   state); fix them together.
   **DEFERRED**: to be fixed later, with #12 and #26.
-- [ ] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
+- [x] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
   `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
   `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
   `/products/manager-products-page` and `/products/manager-product-form-page` take no auth
@@ -151,6 +154,8 @@ they're fixed.
   the public listings, so nothing new leaks today, but they skip the RBAC every other manager
   route has and have no rate limit. `GET /order/manager-orders-page` is the exception and is
   scoped correctly.
+  **FIXED** (`project_status.md` §4 item 48): all six require `require_manager_or_admin`, are
+  rate-limited (`30/60s`, `user_key`), and a manager only gets their own company's rows.
 
 ## 🔵 Code smells
 
@@ -178,11 +183,11 @@ they're fixed.
 ## Suggested order (updated 2026-09-29)
 
 Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, #10, #15, #16, #17, #21, half of #22,
-and eight code smells.
+#28, #29, and eight code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
-2. **Security:** #28 broken/unguarded address lookup (small fix); #7 spoofable IP rate limits
-   (plan in `docs/plans/rate-limit-client-ip.md`); #29 unauthenticated manager pages.
+2. **Security:** ~~#28 broken/unguarded address lookup~~ (done); #7 spoofable IP rate limits
+   (plan in `docs/plans/rate-limit-client-ip.md`); ~~#29 unauthenticated manager pages~~ (done).
 3. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
    soft delete or block). (#13 and #14 are out of scope — the frontend doesn't call
    `cancel_placed_order`.)
