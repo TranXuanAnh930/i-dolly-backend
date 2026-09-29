@@ -9,9 +9,9 @@ a known issue gets fixed, don't let it drift into aspirational state.
 ## 1. Current migration state
 
 **Chain head: `b8e2d4f6a1c3`** (`create_inquiries_table`) — 64 migrations,
-one linear chain, no branches. `b8e2d4f6a1c3` itself has only been checked statically so far
-(`py_compile`, `alembic heads` reports it as the single head); it hasn't been applied to a
-database yet, since Docker Desktop's engine was unreachable when it was written (§2, Inquiries). Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
+one linear chain, no branches. CI runs `alembic upgrade head` from empty against Postgres 16 on
+every push/PR, then the full test suite; the chain through `b8e2d4f6a1c3` passed there on
+`develop` (2026-09-29, CI run 131). Not yet re-applied to Supabase. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
 applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
 empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
 the models. The notification feature was also exercised over real HTTP end to end (password reset
@@ -59,8 +59,10 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 - **Talent**: `groups`, `idols`, `idol_colors`, `positions`/`idol_positions` — full ORM + schema +
   service + router, company-scoped CRUD.
 - **Events & ticketing**: `venues`, `concerts`/`concert_performers`, `ticket_types`,
-  `lottery_preferences`, `lottery_campaigns`, `lottery_entries`, `tickets` — full ORM + schema +
-  service + router. `tickets` creation is admin-only (a manual stopgap — see §4).
+  `lottery_preferences`, `lottery_campaigns`, `lottery_entries`, `direct_sale_campaigns`,
+  `tickets` — full ORM + schema + service + router. Tickets are created three ways: the lottery
+  draw (§8), direct-sale checkout (`POST /tickets/checkout`, §5), and an admin-only manual issue
+  (`POST /tickets/add`, a stopgap kept for support/testing).
 - **Marketplace**: `categories.is_resale_capped`, `album_details`, `genres`/`album_genres`,
   `merch_details` — full ORM + schema + service + router.
 - **Image uploads**: `idols.profile_image_url` / `products.image_url`, a local/S3 storage
@@ -112,25 +114,23 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   the cap check (not money-critical, accepted); `+tag` aliases count as separate addresses; and
   **there's no staff-facing read path yet** — inquiries are only visible in the database, and
   nobody is notified when one arrives. Verified by 8 unit tests and the full unit suite
-  (475/475), plus `import main` confirming the route registers. Not yet run against a live
-  database or sent through Resend (Docker Desktop was down at the time).
-- **FAQ instant answers on the contact page — AI call implemented (hand-written), not yet run
-  against the real API**. Model: `claude-haiku-4-5`, the cheapest option, with no `effort`
+  (475/475), plus `import main` confirming the route registers; the migration and suite have
+  since passed in CI against Postgres (§1). Not yet sent through Resend for real, and there's no
+  integration test for the route.
+- **FAQ instant answers on the contact page — implemented, not yet run against the real API**. Model: `claude-haiku-4-5`, the cheapest option, with no `effort`
   setting (Haiku 4.5 rejects it) and no prompt caching (Haiku 4.5 only caches prompts of 4,096+
   tokens, and on a low-traffic site cache writes would cost more than they save). With
   `DEBUG=true` the service prints the question and never calls Claude, matching `send_email()`.
   A cut-off (`max_tokens`) or refused answer returns "not answerable". Unit tests set `DEBUG`
   themselves and fake `_client` wherever the call path runs, so none can make a real request
   whatever `.env` says. Tone decided by the developer: cheerful and cute, with facts stated
-  exactly (see §5, product personality). Original plumbing notes:
+  exactly (see §5, product personality).
   `POST /inquiries/instant-answer` (auth optional, 5 per 10 minutes per user or IP) runs
   `FaqAnswerService.answer`, which answers only from `app/content/faq.md` and returns
   `{"answerable": false}` whenever it can't help: the FAQ doesn't cover it, `ANTHROPIC_API_KEY` is
   unset, the model declined, or the call failed. It never errors, since the contact form is always
-  the fallback. The Claude API call itself (`faq_answer_service._ask_claude`) is a documented TODO
-  boilerplate left for hand-implementation (structured output via `messages.parse` into
-  `FaqAnswer`, FAQ in a cached system prompt); until then the endpoint always answers "not
-  answerable". `anthropic==1.8.0` added to `requirements.txt` (a dry-run install showed no
+  the fallback. The Claude call (`faq_answer_service._ask_claude`) uses `messages.parse` for
+  structured output into `FaqAnswer`, with the FAQ in the system prompt. `anthropic==1.8.0` added to `requirements.txt` (a dry-run install showed no
   conflicts). The FAQ holds only facts confirmed in code; refund, ticket-transfer, venue-entry,
   shipping-fee and payment-method policies are listed as TODOs in the file's header comment,
   because those aren't decided anywhere yet. Verified: 9 unit tests (484/484 unit suite), and an
@@ -145,8 +145,8 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   (`EmailTemplate.INQUIRY_RECEIVED`, and every other transactional email) and the `422`/`429`
   error text; the frontend maps errors to its own Japanese messages instead of showing them.
   489/489 unit suite after this change.
-- **Email dispatch**: every transactional email — verification link, order placed, ticket
-  confirmed, lottery ticket payment confirmed — goes through
+- **Email dispatch**: every transactional email — verification link, password reset, order
+  placed, ticket confirmed, lottery ticket payment confirmed, inquiry received — goes through
   `celery_app.send_task("app.tasks.email.send_email", ...)`, picked up by the worker task in
   `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s Resend wrapper. Subject/body
   text for each lives in `app/utils/email_templates.py`'s `EmailTemplate` enum (`.subject`,
@@ -161,7 +161,7 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   so testing the lottery flow against real seed-fan email addresses doesn't spam real inboxes on
   every draw; `LOTTERY_WON`/`LOTTERY_LOST` were removed from `EmailTemplate` since nothing
   references them anymore.
-- **Celery skeleton** (`app/celery_app.py`, `app/tasks/`): broker + result backend on the same
+- **Celery worker** (`app/celery_app.py`, `app/tasks/`): broker + result backend on the same
   Redis instance, a separate DB index from the cache/rate-limiter. Two task modules:
   `app.tasks.lottery.draw_lottery` (manager-triggered, §8) and `app.tasks.email.send_email` (every
   email dispatch above). No Celery Beat / scheduler is used or planned for this phase — every
@@ -952,7 +952,9 @@ newly introduced.
     keyed on `ip_key`, the only shipping endpoint not using `user_key` — everyone behind the same
     IP shared one bucket for arbitrary users' address-by-id lookups, and a user switching networks
     reset their own. Fixed to `user_key` to match every sibling endpoint on this resource; limit
-    left at `5/60` since only the key was wrong, not the number.
+    left at `5/60` since only the key was wrong, not the number. **This broke the route**: unlike its
+    siblings it has no `get_current_user` dependency, so `user_key` finds no user and every request
+    500s — open as `docs/bugs.md` #28.
 
     **Gap found while benchmarking, also fixed here**: `GET /products/{id}/detail`, `GET
     /groups/{id}/detail`, and `GET /idols/{id}/detail` had no `rate_limit` dependency at all,
@@ -978,7 +980,7 @@ newly introduced.
     yet resolved.** Two local runs against the new `30/60` limit: concurrency 1 (15s) gave
     p50/p90/p99/max of 76/88/111/680ms; concurrency 3 (20s) gave 133/220/1735/1853ms — the tail
     grows sharply with concurrency while throughput barely does (~9.7 → ~11.6 req/s, nowhere near
-    3x). Confirmed via `grep` that every one of the 161 route handlers across `app/router` is
+    3x). Confirmed via `grep` that every one of the 161 route handlers (163 today) across `app/router` is
     plain `def`, not `async def` (the sole `async def` in the tree, `payment.py::_raw_body`, is an
     async dependency for the webhook's raw-body read, not a route handler) — matches
     `architecture.md` §2 exactly, no doc drift there.
@@ -1087,11 +1089,10 @@ newly introduced.
   path — checks `ticket_types.sale_method == 'direct'`, an open `DirectSaleCampaign` window,
   remaining stock, and the same one-live-ticket-per-concert/unresolved-lottery-standing gates the
   lottery path uses, then locks and pays the same way `checkout_won_ticket` does. `add_ticket`
-  (admin-only manual issue) remains a separate stopgap, used for the lottery-draw path only.
-- **The draw job's actual runtime** — **decided: manager-triggered**, not a Celery Beat scheduled
-  task — see §8 for the full plan. The Celery skeleton (`app/celery_app.py`, broker on Redis)
-  stays unused for this specific job as a result; it may still end up used for winner-notification
-  dispatch (a separate concern from the draw itself, see §8).
+  (admin-only manual issue, `POST /tickets/add`) remains a separate stopgap; the lottery draw
+  inserts its own tickets and doesn't go through it.
+- ~~**The draw job's actual runtime**~~ — **DONE**: manager-triggered, not a Celery Beat
+  schedule. The trigger endpoint enqueues a Celery task that runs the draw (§8).
 - **No sweep job for expired unpaid lottery-won tickets** — designed in `database-design.md`
   §5.2's sequence diagram, not built; the one place this is even lazily discovered today
   (`PaymentService.finalize_paypal_payment`) only covers one narrow path to it. Full writeup,
@@ -1132,16 +1133,19 @@ newly introduced.
 
 ## 6. Suggested next steps, in order
 
-1. A real `alembic upgrade head` + endpoint smoke test against live Postgres/Redis — the standing
-   gap behind every "verified" claim in this project (§3).
+1. ~~A real `alembic upgrade head` + endpoint smoke test against live Postgres/Redis~~ — **DONE**:
+   deployed on Render + Supabase, and CI runs migrations + the full suite against Postgres (§3).
 2. ~~Fix the checkout/ticket-inventory race before building the draw job or direct purchase flow
    on top of it~~ — **DONE**, see §4 item 1.
-3. Build the draw job (§5/§8), with its concurrency guard designed in from the start.
+3. ~~Build the draw job (§5/§8), with its concurrency guard designed in from the start~~ —
+   **DONE**, see §8.
 4. ~~Fill in the missing *primary* fan-only-purchase check at the service layer~~ — **FIXED**.
-   `cart_service.add_to_cart`, `order_service.checkout`, `lottery_entry_service.apply_to_lottery`,
-   and `ticket_service.add_ticket` each check the buyer's `role == "fan"` before doing anything
-   else, raising `FanOnlyPurchaseError` (the existing DB-trigger-backstop exception, reused rather
-   than adding a new one).
+   `cart_service.add_to_cart`, `order_service.checkout` and `ticket_service.checkout_ticket` each
+   check the buyer's `role == "fan"` before doing anything else, raising `FanOnlyPurchaseError`
+   (the existing DB-trigger-backstop exception, reused rather than adding a new one).
+   `lottery_entry_service.apply_to_lottery`/`apply_to_lotteries` make the same check but raise
+   `ForbiddenError`, and `ticket_service.add_ticket` (admin manual issue) checks the *recipient*
+   is a fan and raises `ForbiddenError`.
 
 ## 7. PayPal gateway integration — implemented, partially verified
 
@@ -1217,8 +1221,11 @@ runs.
 
 **The trigger endpoint enqueues a Celery task rather than running the algorithm inline** — the
 draw touches every campaign/entry/preference/ticket_type row for a concert, which doesn't belong
-in a request/response cycle. The router stays synchronous and small: validate RBAC, confirm at
-least one campaign is `open`, dispatch the task, return `202`. The task opens its own DB session
+in a request/response cycle. The router stays synchronous and small: check the concert exists and
+the manager's company scope, send the `lottery_draw_triggered` notification, dispatch the task,
+return `200` with a "scheduled" message. The "is there an open campaign whose entries have closed"
+checks run inside the task, so their failures surface as `lottery_draw_failed`, not as an HTTP
+error. The task opens its own DB session
 via `app.db.session.session()` (not FastAPI's request-scoped `get_db`) and calls straight into
 the draw algorithm. Trigger granularity is per concert, not per campaign — `database-design.md`
 §5.2's rank cascade needs every tier's campaign for one concert drawn together, or a fan's
