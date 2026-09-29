@@ -23,12 +23,12 @@ class ShippingService:
         return db.query(ShippingAddress).filter(ShippingAddress.user_id==user_id).all()
 
     @staticmethod
-    def get_address_by_id(db:Session, address_id:uuid.UUID) -> ShippingAddress | None:
-        return db.query(ShippingAddress).filter(ShippingAddress.id==address_id).first()
+    def get_address_by_id(db:Session, user_id:uuid.UUID, address_id:uuid.UUID) -> ShippingAddress | None:
+        return db.query(ShippingAddress).filter(ShippingAddress.id==address_id, ShippingAddress.user_id==user_id).first()
 
     @staticmethod
     def update_address(db:Session, user_id:uuid.UUID, data:ShippingBase, address_id:uuid.UUID) -> ShippingAddress:
-        address = db.query(ShippingAddress).filter(ShippingAddress.id==address_id, user_id==user_id).first()
+        address = db.query(ShippingAddress).filter(ShippingAddress.id==address_id, ShippingAddress.user_id==user_id).first()
         if not address:
             raise NotFoundError("Address not found")
         address.address_line1 = data.address_line1
@@ -44,7 +44,7 @@ class ShippingService:
 
     @staticmethod
     def delete_address(db:Session, user_id:uuid.UUID, address_id:uuid.UUID) -> Literal[True] | None:
-        address = db.query(ShippingAddress).filter(ShippingAddress.id==address_id, user_id==user_id).first()
+        address = db.query(ShippingAddress).filter(ShippingAddress.id==address_id, ShippingAddress.user_id==user_id).first()
         if not address:
             return None
         db.delete(address)

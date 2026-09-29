@@ -740,8 +740,8 @@ rename.)
 - Response: `List[ShippingAddress]`
 - UI: checkout — saved-address picker; account settings — address list
 
-### `GET /shipping_addresses/fetch_byid/{address_id}` 🔓
-- Response: `ShippingAddress`
+### `GET /shipping_addresses/fetch_byid/{address_id}` 🔒 fan
+- Response: `ShippingAddress` — only the caller's own addresses; anyone else's id is a `404`
 - UI: address detail/edit form prefill
 
 ### `PUT /shipping_addresses/update/{address_id}` 🔒 fan

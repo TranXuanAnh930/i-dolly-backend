@@ -28,8 +28,8 @@ def see_address(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(
     return address
 
 @router.get("/fetch_byid/{address_id}", response_model=ShippingAddress)
-def get_user_address_byid(address_id:uuid.UUID, _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> ShippingAddressModel:
-    address = ShippingService.get_address_by_id(db, address_id)
+def get_user_address_byid(address_id:uuid.UUID, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> ShippingAddressModel:
+    address = ShippingService.get_address_by_id(db, user.id, address_id)
     if not address:
         raise HTTPException(status_code=404, detail="address not found")
     return address
