@@ -225,8 +225,21 @@ recommendation logic, `finalize_paypal_payment`'s ticket/order branches, `verify
 **Deliberately not covered here**: `ticket_service.checkout_ticket`/`checkout_won_ticket` and
 `order_service.checkout` — the `with_for_update()` pessimistic-locking paths behind item 1's
 overselling-race fix. They're race-tested against real Postgres instead (see §5): `checkout`
-in `test_orders_concurrency.py`, `checkout_ticket` in `test_ticket_checkout_concurrency.py`;
-`checkout_won_ticket` has no race test yet.
+in `test_orders_concurrency.py`, `checkout_ticket` in `test_ticket_checkout_concurrency.py`,
+`checkout_won_ticket` in `test_won_ticket_checkout.py`.
+
+**Integration coverage pass 2 (`pytest --cov=app` against real Postgres 16 + Redis, 85.3% →
+94.6% line coverage, 745 → 911 tests, all passing)**: aimed at the RBAC/company-scoping and money paths that the first
+two passes left to mocks or skipped. Added `tests/integration/_seed.py` (direct-DB fixture rows +
+minted JWTs for any role, torn down with bulk `DELETE`s so Postgres' `ON DELETE CASCADE` also
+removes rows the API created), HTTP-level suites for order fulfilment (cancel/ship/admin override,
+company-scoped manager orders page), product management (create-with-detail scoping, image upload,
+bulk add, manager pages, sales history, artist resolution), idol/group writes, shipping-address
+ownership, and ticket/concert router error mapping; a service-level suite for
+`checkout_won_ticket` including three race tests; and unit tests for the Celery tasks,
+`email_sender`, `db_triggers` and both storage backends. Found and fixed one real bug on the way
+(§4 item 47). Per-module numbers, what each suite proves, and the remaining gaps:
+**`docs/test-coverage.md`**.
 
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
@@ -1019,13 +1032,36 @@ newly introduced.
       after the last one. An earlier concurrency-1 run showed the same thing (34 requests in 15s,
       ~3.5s measured).
 
+47. ~~**Any logged-in user could update or delete any shipping address**~~ — **FIXED**.
+    `ShippingService.update_address`/`delete_address` filtered on `user_id==user_id` — the Python
+    argument compared with itself, always `True` — instead of `ShippingAddress.user_id==user_id`,
+    so the only real filter was the address id. Confirmed over real HTTP: a second fan's `PUT`
+    and `DELETE` on the first fan's address both returned `200`. The mocked-`Session` unit tests
+    couldn't catch it: a `MagicMock` `.filter()` accepts any condition. Separately,
+    `GET /shipping_addresses/fetch_byid/{address_id}` had no auth dependency at all and returned
+    `500` for every caller (its `user_key` rate limiter reads `request.state.user`, which only
+    `get_current_user` sets); its query didn't filter by owner either, so fixing the 500 alone would
+    have exposed every address by id. Now requires auth and filters by owner — anyone else's id is
+    a `404`. `docs/api-spec.md` updated (🔓 → 🔒). Regression tests:
+    `tests/integration/marketplace/test_shipping_addresses.py` — 5 of its 10 tests fail against
+    the old code.
+
+48. **The manager/admin settings-page reads have no auth dependency** — open. `GET
+    /products/manager-products-page`, `/products/manager-product-form-page`,
+    `/idols/manager-idols-page`, `/idols/manager-idol-form-page`, `/groups/manager-groups-page`
+    and `/concerts/manager-events-page` are callable anonymously, and the two products pages take
+    any `company_id` as a query parameter, unlike `GET /order/manager-orders-page`, which requires
+    `require_manager_or_admin` and pins a manager to their own company. What they return is catalog
+    data the public store/members/events pages largely expose already, so the impact is low, but
+    nothing documents this as deliberate. Found during the coverage pass (item 47), not changed:
+    adding auth changes the API contract and the frontend's calls, so it needs a decision first.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
-- **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
-  only reaches the RBAC/wiring boundary (401 unauthenticated, 403 wrong role/company, 404
-  not-found-in-empty-table); none proves an actual authenticated manager/admin successfully
-  creates/updates/deletes their own company's group or idol over real HTTP. `test_permissions.py`'s
-  `Factory` would need a `group()` builder (mirrors its existing `idol()`) to build this cheaply.
+- ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:
+  `tests/integration/talent/test_idol_group_management.py` covers an owning manager's and an
+  admin's create/update/soft-delete/reactivate/image upload over real HTTP, cross-company 403s,
+  and reference validation (group in another company, deactivated group, unknown color).
 - **`/payment/status/order/{id}`'s found-case** — only its 401/404 paths are integration-tested
   (item 34); a real found-case needs a full product/category/shipping-address chain behind an
   actual `/order/checkout` call, not built yet. The equivalent ticket-side endpoint
@@ -1039,9 +1075,10 @@ newly introduced.
   `tests/integration/marketplace/test_orders_concurrency.py`,
   `tests/integration/events/test_lottery_concurrency.py`, and `ticket_service.checkout_ticket`
   in `tests/integration/events/test_ticket_checkout_concurrency.py` (last seat sold once, a
-  double submit, two tiers of one concert at once, and the same idempotency key twice). Still
-  open: `checkout_won_ticket` uses the same lock-hold-commit-once pattern but has no race test
-  (e.g. a winner double-submitting payment, or paying while the deadline passes).
+  double submit, two tiers of one concert at once, and the same idempotency key twice), and
+  `ticket_service.checkout_won_ticket` in `tests/integration/events/test_won_ticket_checkout.py`
+  (a winner double-submitting payment pays once, the same idempotency key twice, and concurrent
+  attempts past the deadline release the seat exactly once).
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.
