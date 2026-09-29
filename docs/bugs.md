@@ -8,7 +8,7 @@ they're fixed.
 ## 🔴 Critical
 
 - [x] **1. Duplicate `shipping_status` rows per order** — FIXED (see `project_status.md` §4
-  item 43; migration `a9d3f5b7c1e2`, not yet run against a live DB). `OrderService.checkout`
+  item 43; migration `a9d3f5b7c1e2`, since applied against Postgres in the integration suite and CI). `OrderService.checkout`
   (`order_service.py:98`) now inserts one, but `PaymentService.create_payment`
   (`payment_service.py:54`) already did, and `finalize_paypal_payment` (line 210) adds another.
   No `UNIQUE(order_id)`; `Order.shippingstatus` is `uselist=False`, so which row loads is
@@ -45,7 +45,7 @@ they're fixed.
   DB default of 1. The draw itself still doesn't dedupe by user; fix that before exposing the field
   again. Any rows already set above 1 are unchanged; check with
   `SELECT id FROM lottery_campaigns WHERE max_entries_per_user > 1`.
-- [ ] **7. IP rate limits spoofable.** `ProxyHeadersMiddleware(trusted_hosts="*")` (`main.py:75`)
+- [ ] **7. IP rate limits spoofable.** `ProxyHeadersMiddleware(trusted_hosts="*")` (`main.py:66`)
   makes uvicorn 0.38 take the *leftmost* `X-Forwarded-For` hop, which the client controls
   (Render appends, doesn't strip). Rotating the header bypasses login/register limits.
   **Fix planned:** `docs/plans/rate-limit-client-ip.md`.
@@ -59,7 +59,7 @@ they're fixed.
 
 - [x] **9. `async def` routes doing sync work.** All 161 async handlers call sync SQLAlchemy,
   bcrypt, PayPal httpx and boto3 → block the event loop. Plain `def` routes would use the threadpool.
-  **HANDLERS FIXED**: all 162 route handlers are `def` (`architecture.md` §2). The 6 that
+  **HANDLERS FIXED**: every route handler (163 today) is `def` (`architecture.md` §2). The 6 that
   awaited something were converted too: `storage.save()` is now sync, and the webhook reads its
   body in an async dependency. Verified via TestClient that uploads and the webhook run in the
   threadpool. S3 uploads now read at most MAX+1 bytes (fixes the whole-file-in-memory smell below).
@@ -102,6 +102,13 @@ they're fixed.
   not-yet-captured order shows up on the manager orders page and can be marked shipped. Require
   `order.status == confirmed` in `ship_order`.
   **DEFERRED**: to be fixed later, with #12 and #27.
+- [ ] **28. `GET /shipping_addresses/fetch_byid/{id}` always 500s, and has no ownership check.**
+  The route (`app/router/marketplace/shipping.py:30`) has no `get_current_user` dependency but its
+  limiter uses `user_key`, which reads `request.state.user` → `AttributeError` (the limiter only
+  catches `RedisError`) → 500 on every call. Confirmed with `TestClient` (2026-09-29). Behind that,
+  `ShippingService.get_address_by_id` filters only by id, so once the 500 is fixed it becomes an
+  IDOR on other users' addresses. Fix: add `get_current_user` and filter by `user_id`, like the
+  sibling `update`/`delete` routes.
 
 ## 🟡 Medium
 
@@ -136,6 +143,14 @@ they're fixed.
   resale cap (#13), and look shippable (#26). Same root cause as #12 (no expiry for PayPal pending
   state); fix them together.
   **DEFERRED**: to be fixed later, with #12 and #26.
+- [ ] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
+  `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
+  `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
+  `/products/manager-products-page` and `/products/manager-product-form-page` take no auth
+  dependency; the product ones filter by a client-supplied `company_id`. The data is the same as
+  the public listings, so nothing new leaks today, but they skip the RBAC every other manager
+  route has and have no rate limit. `GET /order/manager-orders-page` is the exception and is
+  scoped correctly.
 
 ## 🔵 Code smells
 
@@ -160,13 +175,14 @@ they're fixed.
   `"JPY"`; leftover tutorial comment in `main.py`~~ — fixed: renamed to `max_rank`, default is
   `"JPY"`, and the comment is gone.
 
-## Suggested order (updated 2026-09-26)
+## Suggested order (updated 2026-09-29)
 
 Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, #10, #15, #16, #17, #21, half of #22,
 and eight code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
-2. **Security:** #7 spoofable IP rate limits (plan in `docs/plans/rate-limit-client-ip.md`).
+2. **Security:** #28 broken/unguarded address lookup (small fix); #7 spoofable IP rate limits
+   (plan in `docs/plans/rate-limit-client-ip.md`); #29 unauthenticated manager pages.
 3. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
    soft delete or block). (#13 and #14 are out of scope — the frontend doesn't call
    `cancel_placed_order`.)
