@@ -94,7 +94,8 @@ def test_checkout_as_manager_403(event):
 
 def test_my_tickets(event):
     fan = event["fan"]
-    assert client.get("/tickets/mine", headers=event["seed"].headers(fan)).status_code == 404
+    empty = client.get("/tickets/mine", headers=event["seed"].headers(fan))
+    assert (empty.status_code, empty.json()) == (200, [])
 
     bought = checkout(event, fan).json()
     mine = client.get("/tickets/mine", headers=event["seed"].headers(fan)).json()
@@ -208,7 +209,8 @@ def test_assign_and_remove_performer(event):
     seed, concert = event["seed"], event["concert"]
     idol = seed.idol(event["company"].id)
     group = seed.group(event["company"].id)
-    assert client.get(f"/concerts/performers/concert/{concert.id}").status_code == 404
+    empty = client.get(f"/concerts/performers/concert/{concert.id}")
+    assert (empty.status_code, empty.json()) == (200, [])
 
     idol_link = assign(event, event["manager"], idol_id=idol.id)
     group_link = assign(event, event["manager"], group_id=group.id)

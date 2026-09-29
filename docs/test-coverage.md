@@ -123,8 +123,9 @@ Files that moved by 5 points or more:
 Shared fixture: **`tests/integration/_seed.py`** (`seed`, registered in
 `tests/integration/conftest.py`) inserts rows directly, mints a JWT for any role, and tears down
 with bulk `DELETE`s in reverse order. Postgres' `ON DELETE CASCADE` then also removes rows a test
-created through the API. The existing "empty table returns 404" tests (e.g. `test_idols.py`) still
-pass after these suites run, which checks that the cleanup is complete.
+created through the API. The existing "empty table returns an empty list" tests (e.g.
+`test_idols.py::test_list_idols_empty`) still pass after these suites run, which checks that the
+cleanup is complete.
 
 ### Unit
 

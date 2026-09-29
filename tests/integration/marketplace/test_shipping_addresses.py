@@ -43,9 +43,10 @@ def test_add_then_list_own_addresses(people):
     assert {a["id"] for a in listed} == {str(existing.id), res.json()["id"]}
 
 
-def test_list_with_no_addresses_404(people):
+def test_list_with_no_addresses_is_empty(people):
     seed, _, other, _ = people
-    assert client.get("/shipping_addresses/fetch", headers=seed.headers(other)).status_code == 404
+    res = client.get("/shipping_addresses/fetch", headers=seed.headers(other))
+    assert (res.status_code, res.json()) == (200, [])
 
 
 def test_fetch_by_id_own_address(people):
