@@ -289,24 +289,29 @@ def test_delete_scoping(world, owned_products):
 # Manager pages + sales history
 # ───────────────────────────────────────────────────────────────
 
-def test_manager_products_page_scoped_by_company(world, owned_products):
+@pytest.mark.parametrize("path", ["/products/manager-products-page", "/products/manager-product-form-page"])
+def test_manager_product_pages_scoped_by_company(world, owned_products, path):
     product_a, product_b, ownerless = owned_products
     ids = {str(p.id) for p in owned_products}
 
-    def page_ids(company_id=None):
+    def page_ids(user, company_id=None):
         params = {"company_id": str(company_id)} if company_id else {}
-        res = client.get("/products/manager-products-page", params=params)
+        res = client.get(path, params=params, headers=world["seed"].headers(world[user]))
         assert res.status_code == 200
         return {p["id"] for p in res.json()["products"]} & ids
 
-    assert page_ids(world["company_a"].id) == {str(product_a.id), str(ownerless.id)}
-    assert page_ids(world["company_b"].id) == {str(product_b.id), str(ownerless.id)}
-    assert page_ids() == ids
+    # Admins choose the company, or omit it for every product.
+    assert page_ids("admin", world["company_a"].id) == {str(product_a.id), str(ownerless.id)}
+    assert page_ids("admin", world["company_b"].id) == {str(product_b.id), str(ownerless.id)}
+    assert page_ids("admin") == ids
+    # Managers always get their own company, whatever company_id they send.
+    assert page_ids("manager_a") == {str(product_a.id), str(ownerless.id)}
+    assert page_ids("manager_a", world["company_b"].id) == {str(product_a.id), str(ownerless.id)}
 
 
 def test_manager_product_form_page_includes_reference_data(world, owned_products):
     product_a, _, ownerless = owned_products
-    res = client.get("/products/manager-product-form-page", params={"company_id": str(world["company_a"].id)})
+    res = client.get("/products/manager-product-form-page", headers=world["seed"].headers(world["manager_a"]))
 
     assert res.status_code == 200
     body = res.json()
@@ -314,6 +319,15 @@ def test_manager_product_form_page_includes_reference_data(world, owned_products
     assert {str(product_a.id), str(ownerless.id)} <= product_ids
     assert str(owned_products[1].id) not in product_ids
     assert str(world["category"].id) in {c["id"] for c in body["categories"]}
+    # The idol/group pickers only offer the manager's own company.
+    assert {i["company_id"] for i in body["idols"]} == {str(world["company_a"].id)}
+    assert str(world["idol_a"].id) in {i["id"] for i in body["idols"]}
+    assert str(world["group_b"].id) not in {g["id"] for g in body["groups"]}
+
+
+def test_admin_product_form_page_offers_every_company(world):
+    body = client.get("/products/manager-product-form-page", headers=world["seed"].headers(world["admin"])).json()
+
     assert str(world["idol_a"].id) in {i["id"] for i in body["idols"]}
     assert str(world["group_b"].id) in {g["id"] for g in body["groups"]}
 

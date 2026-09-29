@@ -248,6 +248,38 @@ def test_group_public_reads(talent):
     assert client.get(f"/groups/{group.id}").json()["name"] == group.name
     page = {g["id"]: g for g in client.get("/groups/groups-page").json()["groups"]}
     assert page[str(group.id)]["member_count"] == 1
-    assert str(group.id) in {g["id"] for g in client.get("/groups/manager-groups-page").json()["groups"]}
+    assert str(group.id) in {g["id"] for g in client.get("/groups/manager-groups-page", headers=h(talent)).json()["groups"]}
     detail = client.get(f"/groups/{group.id}/detail").json()
     assert [m["id"] for m in detail["members"]] == [str(member.id)]
+
+
+# ───────────────────────────────────────────────────────────────
+# Manager settings pages: a manager sees only their own company; an admin sees every company
+# ───────────────────────────────────────────────────────────────
+
+def test_manager_talent_pages_scoped_to_own_company(talent):
+    seed = talent["seed"]
+    idol_a = seed.idol(talent["company_a"].id, group_id=talent["group_a"].id)
+    idol_b = seed.idol(talent["company_b"].id, group_id=talent["group_b"].id)
+    ours = {str(idol_a.id), str(idol_b.id), str(talent["group_a"].id), str(talent["group_b"].id)}
+
+    def ids(path, key, who):
+        res = client.get(path, headers=h(talent, who))
+        assert res.status_code == 200
+        return {row["id"] for row in res.json()[key]} & ours
+
+    for who, idols, groups in [
+        ("manager_a", {str(idol_a.id)}, {str(talent["group_a"].id)}),
+        ("admin", {str(idol_a.id), str(idol_b.id)}, {str(talent["group_a"].id), str(talent["group_b"].id)}),
+    ]:
+        assert ids("/idols/manager-idols-page", "idols", who) == idols
+        assert ids("/idols/manager-idols-page", "groups", who) == groups
+        assert ids("/idols/manager-idol-form-page", "idols", who) == idols
+        assert ids("/idols/manager-idol-form-page", "groups", who) == groups
+        assert ids("/groups/manager-groups-page", "groups", who) == groups
+
+
+def test_manager_idol_form_page_keeps_shared_colors(talent):
+    color = talent["seed"].color()
+    body = client.get("/idols/manager-idol-form-page", headers=h(talent)).json()
+    assert str(color.id) in {c["id"] for c in body["colors"]}

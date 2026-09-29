@@ -67,10 +67,10 @@ def test_get_groups_page_empty():
     response = client.get("/groups/groups-page")
     assert response.status_code == 404
 
-def test_get_manager_groups_page_never_404s():
+def test_get_manager_groups_page_never_404s(seed):
     # Manager/admin settings pages deliberately return an empty list rather
     # than 404 — a fresh company legitimately has zero groups yet.
-    response = client.get("/groups/manager-groups-page")
+    response = client.get("/groups/manager-groups-page", headers=seed.headers(seed.user("admin")))
     assert response.status_code == 200
     assert response.json() == {"groups": []}
 

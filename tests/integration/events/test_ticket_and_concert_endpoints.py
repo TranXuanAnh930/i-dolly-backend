@@ -177,7 +177,8 @@ def test_concert_reads(event):
     assert client.get(f"/concerts/{uuid.uuid4()}").status_code == 404
     assert str(concert.id) in {c["id"] for c in client.get("/concerts/all").json()}
     assert client.get("/concerts/events-page").status_code == 200
-    assert client.get("/concerts/manager-events-page").status_code == 200
+    manager_page = client.get("/concerts/manager-events-page", headers=event["seed"].headers(event["manager"]))
+    assert str(concert.id) in {c["id"] for c in manager_page.json()["concerts"]}
     assert client.get(f"/concerts/{uuid.uuid4()}/detail").status_code == 404
 
 
@@ -251,3 +252,20 @@ def test_draw_trigger_enqueues_task_and_notifies_managers(event, no_celery):
 
 def test_draw_trigger_missing_concert_404(event):
     assert client.put(f"/concerts/lottery-draw/{uuid.uuid4()}", headers=event["seed"].headers(event["admin"])).status_code == 404
+
+
+def test_manager_events_page_scoped_to_own_company(event):
+    seed = event["seed"]
+    other_concert = seed.concert(event["other_company"].id, seed.venue().id)
+    ours = {str(event["concert"].id), str(other_concert.id)}
+
+    def page(user):
+        res = client.get("/concerts/manager-events-page", headers=seed.headers(user))
+        assert res.status_code == 200
+        return res.json()
+
+    manager_page = page(event["manager"])
+    assert {c["id"] for c in manager_page["concerts"]} & ours == {str(event["concert"].id)}
+    # Venues are shared, so every venue stays available to the venue picker.
+    assert str(other_concert.venue_id) in {v["id"] for v in manager_page["venues"]}
+    assert {c["id"] for c in page(event["admin"])["concerts"]} & ours == ours

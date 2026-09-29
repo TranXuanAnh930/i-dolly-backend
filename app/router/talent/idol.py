@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.cache.cache_service import CacheService
-from app.cache.rate_limit import ip_key, rate_limit
+from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.db.models.talent import Idol
 from app.deps.auth import require_manager_or_admin
@@ -91,14 +91,14 @@ def get_idol_detail_by_id(id: uuid.UUID, _: None = Depends(rate_limit(30, 60, ip
         raise HTTPException(status_code=404, detail="Idol not found")
     return result
 
-# Manager/admin settings pages, also registered before /{id}.
+# Manager/admin settings pages, also registered before /{id}. Managers see only their own company.
 @router.get("/manager-idols-page", response_model=ManagerIdolsPageRead)
-def get_manager_idols_page_data(db: Session = Depends(get_db)) -> ManagerIdolsPageRead:
-    return CacheService.get_cached_manager_idols_page(db)
+def get_manager_idols_page_data(current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> ManagerIdolsPageRead:
+    return IdolService.scope_manager_idols_page(CacheService.get_cached_manager_idols_page(db), current_user)
 
 @router.get("/manager-idol-form-page", response_model=ManagerIdolFormPageRead)
-def get_manager_idol_form_page_data(db: Session = Depends(get_db)) -> ManagerIdolFormPageRead:
-    return CacheService.get_cached_manager_idol_form_page(db)
+def get_manager_idol_form_page_data(current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> ManagerIdolFormPageRead:
+    return IdolService.scope_manager_idol_form_page(CacheService.get_cached_manager_idol_form_page(db), current_user)
 
 @router.get("/{id}", response_model=IdolRead)
 def get_idol_by_id(id: uuid.UUID, db: Session = Depends(get_db)) -> Idol:

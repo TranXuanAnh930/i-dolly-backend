@@ -7,12 +7,13 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.cache.cache_service import CacheService
-from app.cache.rate_limit import ip_key, rate_limit
+from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import require_manager_or_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
 from app.schema.common import MessageResponse
+from app.schema.identity import UserRole
 from app.schema.marketplace import (
     ManagerProductFormPageRead,
     ManagerProductsPageRead,
@@ -52,13 +53,19 @@ def get_product_detail_by_id(id: uuid.UUID, _: None = Depends(rate_limit(30, 60,
         raise HTTPException(status_code=404, detail="Product not found")
     return result
 
+# Managers always get their own company's products (plus ownerless ones); only admins may choose
+# company_id, and omitting it returns every product.
+def _scoped_company_id(current_user: Users, company_id: uuid.UUID | None) -> uuid.UUID | None:
+    return current_user.company_id if current_user.role == UserRole.manager else company_id
+
 @router.get("/manager-products-page", response_model=ManagerProductsPageRead)
-def get_manager_products_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductsPageRead:
-    return CacheService.get_cached_manager_products_page(db, company_id)
+def get_manager_products_page_data(company_id: uuid.UUID | None = None, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> ManagerProductsPageRead:
+    return CacheService.get_cached_manager_products_page(db, _scoped_company_id(current_user, company_id))
 
 @router.get("/manager-product-form-page", response_model=ManagerProductFormPageRead)
-def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> ManagerProductFormPageRead:
-    return CacheService.get_cached_manager_product_form_page(db, company_id)
+def get_manager_product_form_page_data(company_id: uuid.UUID | None = None, current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> ManagerProductFormPageRead:
+    page = CacheService.get_cached_manager_product_form_page(db, _scoped_company_id(current_user, company_id))
+    return ProductService.scope_manager_product_form_page(page, current_user)
 
 @router.get("/{id}/sales", response_model=ProductSalesPageRead)
 def get_product_sales(

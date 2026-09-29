@@ -136,6 +136,28 @@ class IdolService:
             colors=db.query(IdolColor).all(),
         )
 
+    # The cached pages hold every company's rows; managers get only their own company's.
+
+    @staticmethod
+    def scope_manager_idols_page(page: ManagerIdolsPageRead, current_user: Users) -> ManagerIdolsPageRead:
+        if current_user.role != UserRole.manager:
+            return page
+        idols = [i for i in page.idols if i.company_id == current_user.company_id]
+        # groups only label the table's "Group" column and carry no company_id, so keep the ones
+        # the manager's idols belong to.
+        group_ids = {i.group_id for i in idols}
+        return ManagerIdolsPageRead(idols=idols, groups=[g for g in page.groups if g.id in group_ids])
+
+    @staticmethod
+    def scope_manager_idol_form_page(page: ManagerIdolFormPageRead, current_user: Users) -> ManagerIdolFormPageRead:
+        if current_user.role != UserRole.manager:
+            return page
+        return ManagerIdolFormPageRead(
+            idols=[i for i in page.idols if i.company_id == current_user.company_id],
+            groups=[g for g in page.groups if g.company_id == current_user.company_id],
+            colors=page.colors,
+        )
+
     @staticmethod
     def update_idol(db: Session, id: uuid.UUID, data: IdolUpdate, current_user: Users) -> Idol:
         db_idol = db.get(Idol, id)
