@@ -145,3 +145,10 @@ class GroupService:
     @staticmethod
     def get_manager_groups_page(db: Session) -> ManagerGroupsPageRead:
         return ManagerGroupsPageRead(groups=db.query(Group).all())
+
+    # The cached page holds every company's rows; managers get only their own company's.
+    @staticmethod
+    def scope_manager_groups_page(page: ManagerGroupsPageRead, current_user: Users) -> ManagerGroupsPageRead:
+        if current_user.role != UserRole.manager:
+            return page
+        return ManagerGroupsPageRead(groups=[g for g in page.groups if g.company_id == current_user.company_id])

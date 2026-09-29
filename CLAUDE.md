@@ -60,6 +60,9 @@ Don't re-derive these from the code — read the docs first, they're kept curren
   shapes. Update it when a route is added or changed.
 - **`docs/bugs.md`** — audit backlog of known bugs/code smells, with fix plans for the bigger ones
   in `docs/plans/`.
+- **`docs/test-coverage.md`** — measured line coverage per package/file, what each test suite
+  proves, and the known gaps. Read this before adding tests, so you target what's actually
+  uncovered.
 - **`docs/deployment.md`** — how to actually deploy this: Render (API), Supabase (Postgres), an
   S3-compatible bucket (image uploads), and Render's Key Value add-on (Redis). Read this before
   touching env-var handling, CORS, or storage/cache backend selection.

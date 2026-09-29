@@ -433,6 +433,17 @@ class ProductService:
             colors=colors,
         )
 
+    # Products are already scoped by the company_id the page was built for; this also limits the
+    # idol/group pickers to the manager's own company. Categories and colors are shared.
+    @staticmethod
+    def scope_manager_product_form_page(page: ManagerProductFormPageRead, current_user: Users) -> ManagerProductFormPageRead:
+        if current_user.role != UserRole.manager:
+            return page
+        return page.model_copy(update={
+            "idols": [i for i in page.idols if i.company_id == current_user.company_id],
+            "groups": [g for g in page.groups if g.company_id == current_user.company_id],
+        })
+
     # --- sales history: read-only view of a product's order items.
     @staticmethod
     def get_product_sales_page(db: Session, product_id: uuid.UUID, current_user: Users, page: int = 1, limit: int = 10) -> ProductSalesPageRead:

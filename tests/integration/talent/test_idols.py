@@ -69,13 +69,13 @@ def test_get_members_page_empty():
     assert response.status_code == 200
     assert response.json()["idols"] == []
 
-def test_get_manager_idols_page_never_404s():
-    response = client.get("/idols/manager-idols-page")
+def test_get_manager_idols_page_never_404s(seed):
+    response = client.get("/idols/manager-idols-page", headers=seed.headers(seed.user("admin")))
     assert response.status_code == 200
     assert response.json() == {"idols": [], "groups": []}
 
-def test_get_manager_idol_form_page_never_404s():
-    response = client.get("/idols/manager-idol-form-page")
+def test_get_manager_idol_form_page_never_404s(seed):
+    response = client.get("/idols/manager-idol-form-page", headers=seed.headers(seed.user("admin")))
     assert response.status_code == 200
     data = response.json()
     # idols/groups are app-created rows (empty in this test DB); colors is

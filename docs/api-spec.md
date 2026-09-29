@@ -115,8 +115,9 @@ short. Every other list endpoint returns the full collection unpaginated.
 everything the page needs in one response (e.g. `GET /products/store-page`,
 `GET /concerts/{id}/detail`). They're Redis-cached (5-minute TTL, invalidated on writes), so
 prefer them over stitching together the per-resource CRUD reads below. The `manager-*-page`
-reads are currently **unauthenticated** and not company-scoped server-side (`docs/bugs.md` #29) —
-the frontend filters by the manager's company.
+reads are 🔒 manager+ and **company-scoped on the server**: a manager only ever receives their own
+company's rows (plus ownerless products), and only an admin can pass `company_id` to choose one.
+The frontend doesn't need to filter them by company.
 
 **Image uploads.** `POST /idols/add` and `POST /products/add_product` are `multipart/form-data`,
 not JSON — every other write endpoint on this list is JSON. See §3 (`Idols`) and §5 (`Products`)
@@ -385,9 +386,11 @@ Everything the public groups page needs, cached.
 - Errors: `404` if the group doesn't exist
 - UI: group profile page
 
-### `GET /groups/manager-groups-page` 🔓 (unauthenticated — see §0)
-- Response (`ManagerGroupsPageRead`): `groups` (`List[GroupRead]`, every company's)
-- UI: manager — groups table (filter to the manager's `company_id` client-side)
+### `GET /groups/manager-groups-page` 🔒 manager+ (company-scoped)
+- Response (`ManagerGroupsPageRead`): `groups` (`List[GroupRead]`) — a manager's own company's
+  groups; every company's for an admin. Inactive groups are included (`is_active`)
+- Errors: `401` without a token, `403` for a fan
+- UI: manager — groups table
 
 ### `PUT /groups/update/{id}` 🔒 manager+ (company-scoped)
 - Request (`GroupUpdate`): `name`, `debut_date`, `description` — `is_active` is **not** settable
@@ -435,13 +438,19 @@ Reverses the delete above — sets `is_active = true`.
 - Errors: `404` if the idol doesn't exist
 - UI: idol profile page
 
-### `GET /idols/manager-idols-page` 🔓 (unauthenticated — see §0)
-- Response (`ManagerIdolsPageRead`): `idols` (`List[IdolRead]`), `groups` (`id`, `name`)
+### `GET /idols/manager-idols-page` 🔒 manager+ (company-scoped)
+- Response (`ManagerIdolsPageRead`): `idols` (`List[IdolRead]`, inactive included), `groups`
+  (`id`, `name` — the groups those idols belong to, for the table's "Group" column). A manager gets
+  their own company's; an admin gets every company's
+- Errors: `401` without a token, `403` for a fan
 - UI: manager — idols table
 
-### `GET /idols/manager-idol-form-page` 🔓 (unauthenticated — see §0)
+### `GET /idols/manager-idol-form-page` 🔒 manager+ (company-scoped)
 - Response (`ManagerIdolFormPageRead`): `idols`, `groups` (`id`, `name`, `company_id`,
-  `is_active` — for the group picker), `colors` (`List[IdolColorRead]`)
+  `is_active` — for the group picker), `colors` (`List[IdolColorRead]`, shared by every company).
+  `idols`/`groups` are the manager's own company's; an admin gets every company's and filters the
+  group picker by the company chosen in the form
+- Errors: `401` without a token, `403` for a fan
 - UI: manager — create/edit idol form
 
 ### `PUT /idols/update/{id}` 🔒 manager+ (company-scoped) — **JSON**, not multipart
@@ -525,9 +534,10 @@ computed per request and are `false`/empty for guests.
 - UI: concert detail page — pick "apply to lottery" vs. "buy now" per tier from the campaign
   lists, and hide actions the fan can't take from the per-viewer fields
 
-### `GET /concerts/manager-events-page` 🔓 (unauthenticated — see §0)
-- Response (`ManagerEventsPageRead`): `concerts` (`List[ConcertRead]`), `venues`
-  (`List[VenueRead]`, for the venue picker)
+### `GET /concerts/manager-events-page` 🔒 manager+ (company-scoped)
+- Response (`ManagerEventsPageRead`): `concerts` (`List[ConcertRead]` — a manager's own company's,
+  every company's for an admin), `venues` (`List[VenueRead]`, every venue — venues are shared)
+- Errors: `401` without a token, `403` for a fan
 - UI: manager — concerts table and create form
 
 ### `PUT /concerts/update/{id}` 🔒 manager+ (company-scoped)
@@ -810,15 +820,20 @@ Note: `id` is a query param here, not a path segment.
 - Errors: `404` if the product doesn't exist
 - UI: product detail page
 
-### `GET /products/manager-products-page` 🔓 (unauthenticated — see §0)
-- Request: query param `company_id` (uuid, optional — filters to that company's products)
-- Response (`ManagerProductsPageRead`): `products` (`List[ProductRead]`)
+### `GET /products/manager-products-page` 🔒 manager+ (company-scoped)
+- Request: query param `company_id` (uuid, optional, **admins only** — a manager always gets their
+  own company and the param is ignored; an admin omitting it gets every product)
+- Response (`ManagerProductsPageRead`): `products` (`List[ProductRead]`) — the company's products
+  plus ownerless ones (no album/merch detail)
+- Errors: `401` without a token, `403` for a fan
 - UI: manager — products table
 
-### `GET /products/manager-product-form-page` 🔓 (unauthenticated — see §0)
-- Request: query param `company_id` (uuid, optional)
-- Response (`ManagerProductFormPageRead`): `products`, `categories`, `idols`, `groups`, `colors`
-  — everything the create/edit form's pickers need
+### `GET /products/manager-product-form-page` 🔒 manager+ (company-scoped)
+- Request: query param `company_id` (uuid, optional, **admins only** — as above)
+- Response (`ManagerProductFormPageRead`): `products` (scoped as above), `categories`, `idols`,
+  `groups`, `colors` — everything the create/edit form's pickers need. For a manager, `idols` and
+  `groups` are their own company's; an admin gets every company's. `categories`/`colors` are shared
+- Errors: `401` without a token, `403` for a fan
 - UI: manager — create/edit product form
 
 ### `GET /products/{id}/sales` 🔒 manager+ (company-scoped)
@@ -1006,11 +1021,8 @@ rename.)
 - Response: `List[ShippingAddress]`
 - UI: checkout — saved-address picker; account settings — address list
 
-### `GET /shipping_addresses/fetch_byid/{address_id}` 🔓 — **currently broken**
-- Response: `ShippingAddress`
-- Currently returns `500` on every request: the route has no auth dependency but its rate limiter
-  keys on the logged-in user. It also doesn't check that the address belongs to the caller
-  (`docs/bugs.md` #28). Use `GET /shipping_addresses/fetch` instead until it's fixed.
+### `GET /shipping_addresses/fetch_byid/{address_id}` 🔒 fan
+- Response: `ShippingAddress` — only the caller's own addresses; anyone else's id is a `404`
 - UI: address detail/edit form prefill
 
 ### `PUT /shipping_addresses/update/{address_id}` 🔒 fan

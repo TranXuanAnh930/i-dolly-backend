@@ -1184,3 +1184,27 @@ def test_delete_ticket_admin_success(factory):
     assert response.status_code == 200
     # Already deleted by the request above — nothing left for the fixture's
     # own teardown to clean up.
+
+
+# ───────────────────────────────────────────────────────────────
+# Manager/admin settings-page reads: login + manager/admin role required
+# ───────────────────────────────────────────────────────────────
+
+MANAGER_SETTINGS_PAGES = [
+    "/products/manager-products-page",
+    "/products/manager-product-form-page",
+    "/idols/manager-idols-page",
+    "/idols/manager-idol-form-page",
+    "/groups/manager-groups-page",
+    "/concerts/manager-events-page",
+    "/order/manager-orders-page",
+]
+
+
+@pytest.mark.parametrize("path", MANAGER_SETTINGS_PAGES)
+def test_manager_settings_page_role_gate(seed, path):
+    company = seed.company()
+    assert client.get(path).status_code == 401
+    assert client.get(path, headers=seed.headers(seed.user("fan"))).status_code == 403
+    assert client.get(path, headers=seed.headers(seed.user("manager", company.id))).status_code == 200
+    assert client.get(path, headers=seed.headers(seed.user("admin"))).status_code == 200
