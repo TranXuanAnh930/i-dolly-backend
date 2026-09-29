@@ -114,7 +114,15 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   nobody is notified when one arrives. Verified by 8 unit tests and the full unit suite
   (475/475), plus `import main` confirming the route registers. Not yet run against a live
   database or sent through Resend (Docker Desktop was down at the time).
-- **FAQ instant answers on the contact page — plumbing built, AI call not yet implemented**:
+- **FAQ instant answers on the contact page — AI call implemented (hand-written), not yet run
+  against the real API**. Model: `claude-haiku-4-5`, the cheapest option, with no `effort`
+  setting (Haiku 4.5 rejects it) and no prompt caching (Haiku 4.5 only caches prompts of 4,096+
+  tokens, and on a low-traffic site cache writes would cost more than they save). With
+  `DEBUG=true` the service prints the question and never calls Claude, matching `send_email()`.
+  A cut-off (`max_tokens`) or refused answer returns "not answerable". Unit tests set `DEBUG`
+  themselves and fake `_client` wherever the call path runs, so none can make a real request
+  whatever `.env` says. Tone decided by the developer: cheerful and cute, with facts stated
+  exactly (see §5, product personality). Original plumbing notes:
   `POST /inquiries/instant-answer` (auth optional, 5 per 10 minutes per user or IP) runs
   `FaqAnswerService.answer`, which answers only from `app/content/faq.md` and returns
   `{"answerable": false}` whenever it can't help: the FAQ doesn't cover it, `ANTHROPIC_API_KEY` is
@@ -1068,7 +1076,9 @@ newly introduced.
   is worth resolving before this gets built, not after.
 - **Product "personality"** — the brief's third goal (tone of copy, idol/fandom-specific
   flourishes, branding on `/docs`, error messages, email templates). `idol_colors`' pastel palette
-  is the one seed of it so far; nothing else is designed. Don't invent details speculatively —
+  is one seed of it; the other is the FAQ assistant's tone ("cheerful, whimsical and cute", with
+  facts stated exactly), chosen by the developer in `faq_answer_service.SYSTEM_PROMPT`. Nothing
+  else is designed. Don't invent details speculatively —
   flag it in the next planning conversation.
 - **`schema.sql`** — cited throughout `database-design.md` as if it exists; it doesn't (§1 above).
   Either generate one from the live migrations/models, or stop citing it and treat the migrations
