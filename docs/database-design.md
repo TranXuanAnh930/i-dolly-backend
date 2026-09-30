@@ -1,11 +1,12 @@
 # Database Design — Idol Concert Ticket Reservation + Album/Singles Marketplace
 
+English | [日本語](database-design_JP.md)
+
 Companion to `../CLAUDE.md` and `architecture.md`/`project_status.md`. `schema.sql` is cited
 throughout as the reference DDL but doesn't exist as a file in the repo — treat every citation as
 pointing at DDL that still needs to be extracted from the live migrations (see
-`project_status.md`). Two editable draw.io exports live at the repo root: `idol-ticket-erd.drawio`
-(the §2 ER diagram, all 28 tables) and `lottery-business-logic.drawio` (the §5 business-logic
-flowchart) — open either in [diagrams.net](https://app.diagrams.net) or the desktop app to edit.
+`project_status.md`). Two editable draw.io exports live in `docs/`: `idol-ticket-erd.drawio` (the §2
+ER diagram, all 31 tables, with a "Shared" cluster for `notifications`/`inquiries`) and `lottery-business-logic.drawio` (the §5 business-logic flowchart) — open either in [diagrams.net](https://app.diagrams.net) or the desktop app to edit.
 
 **Source draft (as given):**
 - Three user kinds: admin, company manager, end user (fan who buys albums and tickets).
@@ -50,7 +51,8 @@ Four clusters, three of them new:
 3. **Events & ticketing** (new) — `venues` (capacity-derived `size` tier), `concerts` (its own
    `capacity`), `concert_performers` (which idols/groups play a concert), `ticket_types` (the
    VIP/Premium/Regular tiers per concert), `lottery_preferences` (a fan's ranked tier choices for
-   a concert), `lottery_campaigns`, `lottery_entries`, `tickets`.
+   a concert), `lottery_campaigns`, `lottery_entries`, `direct_sale_campaigns` (the on-sale
+   window for a direct-sale tier, §3.21), `tickets`.
 4. **Marketplace** (extends the existing `products`/`categories`/`cart`/`orders`/`payment`/
    `shipping_*` tables) — `categories` is now the single source of truth for "what kind of
    product is this" (seeded with Album/Single/EP/Merch — **4 categories, not 5**: "Lightstick"
@@ -62,6 +64,8 @@ Four clusters, three of them new:
    existing cart/checkout/payment/shipping machinery keeps working for albums, singles, EPs,
    and merch exactly as it does today for generic products. **Only fans can use
    any of it** — see §4.1.
+5. **Shared** (added after the original rounds) — `notifications` (§3.19) and `inquiries`
+   (§3.20), plus the pre-existing `refresh_tokens`.
 
 ## 2. ERD
 
@@ -168,6 +172,15 @@ erDiagram
         lottery_entry_status_enum status
     }
 
+    TICKET_TYPES ||--o{ DIRECT_SALE_CAMPAIGNS : "on-sale window for (direct only)"
+    DIRECT_SALE_CAMPAIGNS {
+        uuid id PK
+        uuid ticket_type_id FK
+        timestamptz sale_start_at
+        timestamptz sale_end_at "CHECK > sale_start_at"
+        direct_sale_campaign_status_enum status "open / cancelled"
+    }
+
     LOTTERY_ENTRIES ||--o| TICKETS : "wins →"
     TICKET_TYPES ||--o{ TICKETS : issues
     USERS ||--o{ TICKETS : owns
@@ -213,6 +226,9 @@ erDiagram
         string edition "e.g. Ver. 3 (nullable) — lightsticks only, generic for other merch"
         uuid color_id FK "nullable"
     }
+
+    USERS ||--o{ NOTIFICATIONS : "receives (§3.19)"
+    USERS |o--o{ INQUIRIES : "submits (nullable — guests allowed, §3.20)"
 ```
 
 *(`PRODUCTS`, `PAYMENT`, and `CATEGORIES` are existing tables from the current codebase, shown
@@ -230,7 +246,7 @@ management_companies(id)`. `company_id` is only ever set when `role = 'manager'`
 pairing in the service layer (`user_service`), the same way the codebase already enforces
 `user_id` scoping in service functions rather than DB constraints.
 
-**Migration path** (matches `CLAUDE.md` §5 item 3 — fix the missing `base.py` imports *before*
+**Migration path** (matches `project_status.md` §4 item 3 — fix the missing `base.py` imports *before*
 this): add `role` as a new migration, backfill `role = 'admin' WHERE is_admin = true, else
 'fan'`, then a **separate later migration** drops `is_admin` once no code references it anymore.
 Don't do both in one migration — one concern per migration, per the existing `alembic/versions/`
@@ -374,8 +390,8 @@ many join, supporting joint concerts with several idols/groups.
 Up to **two** rows per tier per concert — one per `sale_method` — not one: `id`, `concert_id`
 (FK), `tier` (`ticket_tier_enum`: vip / premium / regular), `price`, `total_quantity`,
 `sold_quantity` (default 0 — mirrors `sold_quantity` the same way `Product.quantity` already
-tracks stock, so the **same known race condition described in `CLAUDE.md` §5 item 1 applies here
-and must be fixed as part of building this, not after**), `sale_method` (`sale_method_enum`:
+tracks stock, so it needs the same row-locking checkout uses; done, see `project_status.md` §4
+item 1), `sale_method` (`sale_method_enum`:
 lottery / direct), `created_at`. Unique on `(concert_id, tier, sale_method)`.
 
 `sale_method = 'direct'` (called "reservation" in the draft) is a **skip-the-lottery option,
@@ -542,7 +558,7 @@ it real meaning — it was just an optional label a `Product` could carry.
 what an earlier pass here relied on): `name` was already `UNIQUE` from the very first
 `categories` migration (`f2a3135a19da_create_category_table.py`) — the model
 (`app/db/models/marketplace/category.py`) just didn't declare it, which was a real but separate model/DB
-drift (`CLAUDE.md` item 13), **now fixed** — `Category.name` declares `unique=True`, no migration
+drift, **now fixed** — `Category.name` declares `unique=True`, no migration
 needed since the DB constraint was already there. So there was nothing to add for uniqueness in
 this ALTER; `schema.sql` §4a no longer tries to (it originally did, which would have created a
 second, redundant unique index rather than erroring — a trap worth having caught before it
@@ -741,13 +757,57 @@ registered a fan, drove a real password reset end to end, confirmed the resultin
 through `GET /notifications/mine`/`unread-count`/mark-read), unlike most migrations in this repo
 (§3's standing gap).
 
+### 3.20 `inquiries` (new, contact form)
+
+One row per contact-form submission (`POST /inquiries/submit`): `email`, `topic`
+(`inquiry_topic_enum`: `tickets`/`lottery`/`orders`/`payment`/`account`/`other`), `content`
+(text, 5–2000 characters after trimming; 5 because Japanese questions can be very short),
+nullable `user_id`, `created_at`.
+
+- `user_id` is `ON DELETE SET NULL`, not `CASCADE`: a question someone asked is still worth keeping
+  after they delete their account, and guests submit with no account at all.
+- `email` is stored lowercased so the per-address confirmation cap can't be sidestepped by
+  changing letter case. The composite index `(email, created_at)` serves that "how many
+  confirmations did this address get in the last hour" count.
+- `topic` is a fixed enum rather than free text so it can be shown in the confirmation email
+  safely and used for routing later.
+- No `status`/answer columns yet. They belong with whichever staff reply flow (or AI-drafted
+  answer) gets designed, not guessed at ahead of it.
+
+Migration `b8e2d4f6a1c3`, chained onto `cf3e0da38a99`. Applied in CI against Postgres
+(`project_status.md` §1).
+
+### 3.21 `direct_sale_campaigns` (new, added after the original rounds)
+
+The on-sale window for a `sale_method = 'direct'` ticket type — the direct-sale counterpart of
+`lottery_campaigns` (§3.12), minus the draw. Without it a direct tier was purchasable whenever
+stock allowed; now it's purchasable only inside a window the company sets.
+
+Columns: `id`, `ticket_type_id` (FK → `ticket_types`, `ON DELETE CASCADE`, indexed),
+`sale_start_at`, `sale_end_at` (both `timestamptz`), `status`
+(`direct_sale_campaign_status_enum`: `open` / `cancelled`, default `open`), `created_at`.
+`CHECK (sale_end_at > sale_start_at)` (`chk_direct_sale_campaigns_window`), mirrored by a
+Pydantic validator so a bad window is a `422`, not an `IntegrityError`.
+
+- **Only for direct tiers.** `DirectSaleCampaignService.add_campaign` rejects a campaign on a
+  `lottery` ticket type (`400`). Service-layer only; there's no trigger backing it.
+- **Checkout gate.** `ticket_service.checkout_ticket` (`POST /tickets/checkout`) requires at least
+  one campaign on the ticket type with `status = 'open'` and `sale_start_at <= now() <=
+  sale_end_at`, on top of the stock and one-ticket-per-concert checks in §3.10.
+- **No `closed`/`drawn` state.** Once `sale_end_at` passes, the window is simply over; `cancelled`
+  is the only manual override. Nothing prevents several campaigns (even overlapping ones) on one
+  ticket type — any one open, in-window campaign is enough.
+- **Company scoping** goes through `ticket_type → concert.company_id`, like ticket types.
+
+Migration `f8a3c1d9e4b2`, chained onto `c2d4e8f6a1b3`.
+
 ## 4. Role-based access
 
 | Action | admin | manager | fan |
 |---|---|---|---|
 | CRUD own company's idols/groups | ✅ | ✅ (own `company_id` only) | ❌ |
 | CRUD another company's idols/groups | ✅ | ❌ | ❌ |
-| CRUD concerts/ticket types/lottery campaigns (own company) | ✅ | ✅ | ❌ |
+| CRUD concerts/ticket types/lottery + direct-sale campaigns (own company) | ✅ | ✅ | ❌ |
 | CRUD albums/singles/EPs/merch (own company's idols/groups) | ✅ | ✅ | ❌ |
 | Manage users / assign roles | ✅ | ❌ | ❌ |
 | Manage `categories` (name, is_resale_capped) | ✅ | ❌ | ❌ |
@@ -755,12 +815,12 @@ through `GET /notifications/mine`/`unread-count`/mark-read), unlike most migrati
 | Buy albums/singles/EPs/merch (cart → checkout) | ❌ | ❌ | ✅ |
 | Apply to a lottery directly (no purchase required) | ❌ | ❌ | ✅ |
 | Pay for a won ticket slot | ❌ | ❌ | ✅ |
+| Buy a direct-sale ticket (inside an open campaign window) | ❌ | ❌ | ✅ |
 | View/mark-read own notifications | ✅ | ✅ (e.g. lottery draw status) | ✅ |
 
 **`require_manager_or_admin` is now built** (`app/deps/auth.py`, alongside a matching
 `require_admin`) — replaces the inline `if not current_user.is_admin: raise HTTPException(...)`
-duplicated across `products.py`/`category.py`/`order.py`/`user.py` (`CLAUDE.md` item 8, now
-fixed). Both check `current_user.role`, not `is_admin` — role is the source of truth now that
+duplicated across `products.py`/`category.py`/`order.py`/`user.py`. Both check `current_user.role`, not `is_admin` — role is the source of truth now that
 `Users.role`/`Users.company_id` are wired into the ORM model (a new `ManagementCompany` model was
 added alongside them, since `company_id`'s FK needs a mapped class to resolve). Wired in per the
 role table above: product CRUD (add/update/delete/bulk — products are how
@@ -771,18 +831,19 @@ platform-wide actions the role table doesn't extend to managers.
 **`company_id` scoping is now done for `groups`/`idols`/`idol_positions`** — `require_manager_or_
 admin` still only answers "is this role allowed to attempt the action at all"; the actual
 same-company restriction lives in the service layer, the same shape `Order` queries already use
-for `user_id` (`CLAUDE.md` §9's existing convention). Each of `group_service`, `idol_service`, and
+for `user_id` (`architecture.md` §3/§5). Each of `group_service`, `idol_service`, and
 `position_service` (for `idol_positions`) has a `_manager_scope_violation(current_user,
 company_id)` helper: `False` for an admin (always) or a manager whose own `company_id` matches the
 row being touched; `True` otherwise. Every mutating function (`add_*`/`update_*`/`delete_*`, plus
-`assign_idol_position`/`update_idol_position_primary`/`remove_idol_position`) checks it and returns
-a `"forbidden"` sentinel — mapped to a 403 in the router — before doing anything else. Reads
+`assign_idol_position`/`update_idol_position_primary`/`remove_idol_position`) checks it and raises
+`ForbiddenError` (mapped to a 403 in the router, `architecture.md` §2) before doing anything
+else. Reads
 (`get_*`/`/all`/`/{id}`) stay unscoped, matching the role table's "View idol/group/... listings ✅
 ✅ ✅". `idol_positions` is scoped by the **idol's** `company_id` (`link.idol.company_id` /
 `idol.company_id`), not by the position (positions are still the global, non-scoped lookup table
-from §3.6). This closes the gap flagged since `require_manager_or_admin` was first built; still
-open for the *other* new CRUD routers this design adds later (venue, concert, ticket_type,
-campaign, album — §7.2) once they exist.
+from §3.6). The same helper now exists on every service that manages a company-owned resource (concerts,
+ticket types, lottery/direct-sale campaigns, album/merch details, products); venues are
+admin-only and unscoped.
 
 **CRUD endpoints now exist for every table migrated so far** — `management_companies`,
 `idol_colors`, `positions` (+ the `idol_positions` join), `groups`, `idols`:
@@ -869,7 +930,12 @@ Enforced by `fn_enforce_resale_cap` (`schema.sql` §5, renamed from `fn_enforce_
 confirmed against the live `app/db/models/marketplace/order.py` (`orders_items` has
 `order_id`/`product_id`/`quantity`; `orders` has `user_id`). It looks up the product's category's
 `is_resale_capped` flag, and if capped, sums the fan's existing quantity of that `product_id`
-across all their orders and rejects the insert if adding this line would exceed 3.
+across all their orders and rejects the insert if adding this line would exceed 3. Before that sum
+it takes a transaction-scoped advisory lock on (buyer, product) — migration `d4a7c9e2f1b5`, same
+pattern as `fn_enforce_one_ticket_per_concert` — so two concurrent inserts for the same fan and
+product can't both pass by missing each other's uncommitted line. `order_service.checkout` also
+checks the cap, after locking the cart's `products` rows, so the service check reads current
+counts rather than relying on the trigger to catch a race.
 
 Now that purchases and lottery entries are fully decoupled (§3.13), this is the **only** purchase
 quantity limit left in the design — there's no longer a separate "entries earned" cap to also
@@ -1257,8 +1323,8 @@ error.
 `image: UploadFile = File(...)` (required), replacing only the image on an existing idol/product
 without touching any other field — the complement to the inline upload on creation.
 `set_idol_image`/`set_product_image` (`idol_service.py`/`product_service.py`) are the
-corresponding service functions; `set_idol_image` raises `NotFoundError`/`ForbiddenError`
-(`architecture.md` §2), `set_product_image` returns the ORM object or `False`.
+corresponding service functions; both raise `NotFoundError`/`ForbiddenError`
+(`architecture.md` §2).
 
 **Verification**: same static-analysis substitute as §8 — `py_compile` across `app/`, `main.py`,
 and `alembic/` passes clean; the AST-based FK/relationship and import-resolution checks found no

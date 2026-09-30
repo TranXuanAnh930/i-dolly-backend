@@ -32,8 +32,6 @@ def add_new_album_detail(data: AlbumDetailCreate, current_user: Users = Depends(
 @router.get("/all", response_model=List[AlbumDetailRead])
 def list_album_details(db: Session = Depends(get_db)) -> list[AlbumDetail]:
     result = AlbumDetailService.get_album_details(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No album details found")
     return result
 
 # Not used by the frontend.

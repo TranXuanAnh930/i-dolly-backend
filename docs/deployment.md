@@ -1,11 +1,13 @@
 # Deployment — Render (API) + Supabase (Postgres) + Render Key Value (Redis)
 
+English | [日本語](deployment_JP.md)
+
 How to take this repo from local Docker Compose to a live deployment: API on Render, database on
 Supabase, cache/rate-limiter on Render's own Redis-compatible add-on, and image uploads on
-S3-compatible object storage. Read `project_status.md` §3 before starting — every migration in
-this repo has been verified with `py_compile`/AST checks only, never against a real Postgres
-instance, so **this deploy is also the first real test of `alembic upgrade head` end to end.**
-Budget time for that specifically; see §7's rollback note.
+S3-compatible object storage. The full migration chain runs from empty in CI (Postgres 16) on
+every push and has already been applied to the live Supabase database (`project_status.md` §1/§3),
+so a fresh deploy's `alembic upgrade head` is a known quantity — but still watch it on the first
+boot against a new database; see §8's rollback note.
 
 ## 0. Accounts you'll need
 
@@ -19,9 +21,9 @@ Budget time for that specifically; see §7's rollback note.
 - A real Resend account is **not** required to deploy — `app/config/settings.py` requires
   `RESEND_API_KEY`/`FROM_EMAIL` to be *set* (Pydantic will refuse to boot otherwise) but nothing
   forces them to be valid unless you actually exercise the email-sending code paths. A placeholder
-  value is fine for a portfolio deploy; see the table in §6. Payments use a mock gateway only —
-  real payment gateway integration is deferred to a later phase, so there's nothing to configure
-  there at all.
+  value is fine for a portfolio deploy; see the table in §7. The mock payment gateway needs no
+  configuration; the PayPal path needs a PayPal Sandbox app's credentials (the `PAYPAL_*` rows in
+  §7) — without them only the mock gateway works.
 
 ## 1. Code changes this deploy needed (already done)
 
@@ -30,9 +32,9 @@ real deploy — both are already fixed as of this doc:
 
 - **CORS** (`main.py`) — was a hardcoded `["http://localhost:8080"]`. Now reads a `CORS_ORIGINS`
   env var (comma-separated origins), defaulting to the same value so local dev is unaffected. Set
-  this to your real frontend's origin(s) in Render (§6).
+  this to your real frontend's origin(s) in Render (§7).
 - **Email verification link** (`app/services/identity/auth_service.py`) — was hardcoded to a specific old
-  Render domain from before this project was renamed. Now reads `BASE_URL` (§6).
+  Render domain from before this project was renamed. Now reads `BASE_URL` (§7).
 
 Nothing else needs code changes to deploy — `Dockerfile` already runs `alembic upgrade head` then
 `uvicorn main:app --host 0.0.0.0 --port $PORT` on boot, and `$PORT` is exactly the env var Render
@@ -53,10 +55,11 @@ injects into every web service automatically.
      serverless function — so prefer **Session mode** over **Transaction mode** pooling if
      Supabase asks you to choose: transaction-mode pgbouncer doesn't support session-level
      features SQLAlchemy may rely on (e.g. prepared statements), session-mode does.
-3. Copy that connection string — it's your `DATABASE_URL` (§6). It already includes
+3. Copy that connection string — it's your `DATABASE_URL` (§7). It already includes
    `sslmode=require`; don't strip it.
 4. You do **not** need to run any SQL by hand — the Dockerfile's `alembic upgrade head` on first
-   boot creates every table, trigger, and enum type from the 40 migrations in `alembic/versions/`.
+   boot creates every table, trigger, and enum type from the migrations in `alembic/versions/`
+   (64 at the time of writing, one linear chain).
 
 ## 3. Object storage (S3-compatible) — for durable image uploads
 
@@ -68,7 +71,7 @@ ephemeral. Since durability was the chosen option here:
    `S3_PUBLIC_URL_BASE` — see below) — uploaded images need to be fetchable by a browser without
    auth, same as the local-disk path today.
 3. Create an access key scoped to just that bucket (not a full-account key).
-4. Set these env vars in Render (§6): `STORAGE_BACKEND=s3`, `S3_BUCKET_NAME`, `S3_REGION`,
+4. Set these env vars in Render (§7): `STORAGE_BACKEND=s3`, `S3_BUCKET_NAME`, `S3_REGION`,
    `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and — only for R2/Spaces (skip for real AWS S3) —
    `S3_ENDPOINT_URL` pointing at your provider's S3-compatible endpoint. No code changes needed;
    `app/utils/storage.py` already branches on `STORAGE_BACKEND`.
@@ -77,7 +80,7 @@ ephemeral. Since durability was the chosen option here:
 
 1. In the Render dashboard, create a new **Key Value** (Render's current name for its
    Redis-compatible offering) instance in the **same region** as the web service you're about to
-   create in §5 — same-region matters here, not just for latency: it's what makes the free
+   create in §6 — same-region matters here, not just for latency: it's what makes the free
    *internal* connection available.
 2. Use its **Internal Connection** details (a private hostname + port reachable only from other
    Render services in the same region), not the external one. Render's internal network doesn't
@@ -88,21 +91,25 @@ ephemeral. Since durability was the chosen option here:
 3. Set `REDIS_HOST` to the internal hostname, `REDIS_PORT` to its port (usually `6379`), `REDIS_DB`
    to `0`.
 
-## 5. Render — the Celery worker (needed now that a real task exists)
+## 5. Render — the Celery worker
 
-`app/celery_app.py` has a real task now — the manager-triggered lottery draw
-(`app.tasks.lottery.draw_lottery`, `docs/project_status.md` §8) — so this section is no longer
-skippable the way it was when it was a bare skeleton. No Celery Beat/scheduler is used: every
-notification producer (`docs/project_status.md` §2) fires inline, inside the request/task that
-causes it, not on a cron — so only the worker needs deploying, not a second scheduler process.
+The worker runs two task modules — the manager-triggered lottery draw
+(`app.tasks.lottery.draw_lottery`, `docs/project_status.md` §8) and every transactional email send
+(`app.tasks.email.send_email`) — so it's a required part of the deploy. No Celery Beat/scheduler is
+used: every notification producer (`docs/project_status.md` §2) fires inline, inside the
+request/task that causes it, not on a cron — so only the worker needs deploying, not a second
+scheduler process.
 
 1. **New → Background Worker** (not Web Service), same repo, same `Dockerfile`.
 2. **Start Command**: `/start-worker.sh` (overrides the image's default `CMD`, which is the web
    service's `/start.sh`).
 3. Same region as the Key Value instance from §4, for the internal Redis connection.
-4. Env vars: the same `DATABASE_URL`/`REDIS_HOST`/`REDIS_PORT`/`REDIS_DB` as the web service (§6)
-   — `CELERY_BROKER_DB` defaults to `1` and doesn't need to be set unless you want a different
-   index. No migration step here; the web service's boot already runs `alembic upgrade head`
+4. Env vars: the worker loads the same `Settings` class as the web service, so it needs **every
+   required variable** from §7 (database, Redis, all three `JWT_*` secrets, the three
+   `*_EXPIRE_*` values, `RESEND_API_KEY`/`FROM_EMAIL`) or it won't boot — not just the ones it
+   uses. It sends every transactional email, so `RESEND_API_KEY`/`FROM_EMAIL`/`DEBUG` must match
+   the web service's. `CELERY_BROKER_DB` defaults to `1` and doesn't need to be set unless you want
+   a different index. No migration step here; the web service's boot already runs `alembic upgrade head`
    against the same database.
 
 ## 6. Render — the web service
@@ -132,9 +139,14 @@ causes it, not on a cron — so only the worker needs deploying, not a second sc
 | `EMAIL_TOKEN_EXPIRE_MINUTES` | `60` | |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | from §4 | internal hostname, usually `6379`, `0` |
 | `CELERY_BROKER_DB` | `1` (default, can be omitted) | only relevant if the Celery worker (§5) is deployed too |
-| `RESEND_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | only exercised by the email-verification/password-reset flows |
+| `RESEND_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | sends every transactional email, including contact-form confirmations |
+| `ANTHROPIC_API_KEY` | Claude API key, or **omit** | turns on AI answers on the contact page (`POST /inquiries/instant-answer`). Omitted = the endpoint always answers "not answerable" and the frontend just shows the form. |
 | `DEBUG` | **omit, or `false`** | dev-only: prints verification/reset tokens to the console when a placeholder `RESEND_API_KEY` can't actually deliver (`architecture.md`'s Resend note). Leaving it unset defaults to `false`, which is what you want here — these token bodies have no business in Render's shared logs. |
 | `BASE_URL` | `https://<your-render-service>.onrender.com` | used to build the email verification link |
+| `FRONTEND_BASE_URL` | your frontend's real origin | builds PayPal's `return_url`/`cancel_url`; defaults to `http://localhost:8080` |
+| `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | from a PayPal Sandbox (or live) app | omit to run with the mock gateway only |
+| `PAYPAL_MODE` | `sandbox` (or `live`) | |
+| `PAYPAL_WEBHOOK_ID` | the webhook's id from the PayPal dashboard | used to verify `POST /payment/paypal/webhook` signatures |
 | `CORS_ORIGINS` | your frontend's real origin(s), comma-separated | e.g. `https://your-frontend.vercel.app` |
 | `STORAGE_BACKEND` | `s3` | per the chosen option in §3 |
 | `S3_BUCKET_NAME` / `S3_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | from §3 | |
@@ -144,8 +156,9 @@ causes it, not on a cron — so only the worker needs deploying, not a second sc
 ## 8. First deploy — migrations are the real risk here
 
 Watch the Render deploy log for the `Running Alembic migrations...` line the Dockerfile prints.
-This is the very first time these 40 migrations — including the UUID primary-key rewrite and all
-12 trigger functions — will run against a real Postgres. If it fails partway through:
+The chain (including the UUID primary-key rewrite and all 12 triggers) runs clean from empty in CI
+and has been applied to Supabase, but a new database or a new migration can still fail here. If
+it fails partway through:
 
 - Render's log will show which revision failed and the raw Postgres error.
 - Fix forward: correct the migration file, commit, and let Render redeploy — don't hand-edit
@@ -175,17 +188,21 @@ so the secret needs to be re-added for this repo:
 2. `POST /account/register` → `POST /account/login` — confirms the DB connection and JWT flow.
 3. `GET /products/all` — confirms Redis (product-list cache) is reachable.
 4. If you seed data: `render shell` into the service (or a one-off Render job) and run
-   `python scripts/seed.py` — it's idempotent, safe to run once against the fresh Supabase DB.
+   `python scripts/seed.py` (or `python scripts/seed_ja.py` for the Japanese version) — it's
+   idempotent, safe to run once against the fresh Supabase DB.
 
 ## 11. Known limitations carried into this deploy
 
-- No live-DB verification has happened before this deploy (§8) — treat the first deploy as a real
-  test, not a formality.
-- The Celery worker (§5) now backs a real task (the manager-triggered lottery draw) — deploying it
-  is no longer optional the way it was when it was a bare skeleton; skipping it means
-  `PUT /concerts/lottery-draw/{id}` returns "scheduled" but the draw never actually runs.
-- The checkout/ticket-inventory race and non-idempotent webhook handling
-  (`docs/project_status.md` §4 items 1 and 4) are unchanged by deploying — they're app-logic bugs,
-  not deploy-environment issues.
+- The Celery worker (§5) is required: it runs the manager-triggered lottery draw and sends every
+  transactional email. Without it `PUT /concerts/lottery-draw/{id}` returns "scheduled" but the
+  draw never runs, and no email is ever delivered.
+- `app/cache/redis_client.py` has no password/TLS support (§4), so Redis has to be reachable over
+  Render's internal network.
+- IP-based rate limits trust the leftmost `X-Forwarded-For` hop, which a client can spoof behind
+  Render's proxy (`docs/bugs.md` #7, fix plan in `docs/plans/rate-limit-client-ip.md`).
+- A Redis outage turns cached reads and post-commit cache invalidation into 500s
+  (`docs/bugs.md` #11, fix plan in `docs/plans/redis-outage.md`).
+- The PayPal webhook path has never received a real delivery, and the decline path hasn't been
+  exercised against a real declined payment (`docs/project_status.md` §7).
 - Render's free tier cold-starts after inactivity; if that matters for a demo, mention it rather
   than let a slow first load look like a bug.

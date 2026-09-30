@@ -9,6 +9,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.config.settings import settings
 from app.db.session import session as SessionLocal
+from app.exception.handlers import UnhandledErrorMiddleware, register_exception_handlers
 from app.router.events.concert import router as concert_router
 from app.router.events.direct_sale_campaign import router as direct_sale_campaign_router
 from app.router.events.lottery_campaign import router as lottery_campaign_router
@@ -28,6 +29,7 @@ from app.router.marketplace.order import router as order_router
 from app.router.marketplace.payment import router as payment_router
 from app.router.marketplace.products import router as product_router
 from app.router.marketplace.shipping import router as shipping_router
+from app.router.shared.inquiry import router as inquiry_router
 from app.router.shared.notification import router as notification_router
 from app.router.talent.group import router as group_router
 from app.router.talent.idol import router as idol_router
@@ -48,9 +50,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 app = FastAPI(title="i-dolly-backend", lifespan=lifespan)
+register_exception_handlers(app)
 
 origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
 
+# Added before CORSMiddleware so CORS wraps it and unexpected 500s still carry CORS headers.
+app.add_middleware(UnhandledErrorMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -102,3 +107,4 @@ app.include_router(album_detail_router)
 app.include_router(genre_router)
 app.include_router(merch_detail_router)
 app.include_router(notification_router)
+app.include_router(inquiry_router)

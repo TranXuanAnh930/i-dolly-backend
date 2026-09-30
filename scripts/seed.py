@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # "InvalidRequestError: ... failed to locate a name ('Cart')" the moment
 # mapper configuration ran, because Users.cart's string-based relationship()
 # pointed at a class this script never imported.
+from app.cache.cache_service import CacheService
 from app.db.base import (
     AlbumDetail,
     AlbumGenre,
@@ -977,6 +978,22 @@ def seed(db):
 
     db.commit()
 
+    # This script writes straight through SQLAlchemy, not the /add endpoints that
+    # normally call these on a write — so a page cached (even as empty) before a
+    # seed run would otherwise keep serving that stale result for up to
+    # TTL_SECONDS after the data above is already in the database.
+    CacheService.delete_cached_events_page()
+    CacheService.delete_cached_manager_events_page()
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_manager_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_venues()
+    CacheService.delete_cached_management_companies()
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+
     print("Seed data created:")
     print(f"  - 3 management companies, 16 users (password for all: {SEED_PASSWORD})")
     print("    admin@example.com (admin)")
@@ -1006,9 +1023,12 @@ def _slug(name: str) -> str:
 def main():
     db = SessionLocal()
     try:
-        already_seeded = db.query(ManagementCompany).filter(ManagementCompany.name == "Nova Entertainment").first()
+        # seed_ja.py creates the same user emails under a Japanese sentinel name.
+        already_seeded = db.query(ManagementCompany).filter(
+            ManagementCompany.name.in_(["Nova Entertainment", "ノヴァ・エンターテインメント"])
+        ).first()
         if already_seeded:
-            print("Seed data already present (found 'Nova Entertainment') — skipping.")
+            print(f"Seed data already present (found '{already_seeded.name}') — skipping.")
             return
         seed(db)
     except Exception:

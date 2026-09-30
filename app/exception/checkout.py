@@ -1,46 +1,40 @@
-class CartItemError(Exception):
-    pass
+from app.exception.common import CodedError
 
-class PaymentFailedError(CartItemError):
-    pass
 
-class PaymentError(CartItemError):
-    pass
-
-class OrderError(CartItemError):
-    pass
+class CartItemError(CodedError):
+    code = "checkout_error"
 
 class InsufficientStockError(CartItemError):
-    pass
+    code = "insufficient_stock"
 
 class PaymentAmountMismatch(CartItemError):
-    pass
+    code = "amount_mismatch"
 
 class AddressIdError(CartItemError):
-    pass
+    code = "address_not_found"
 
 class UnsupportedGatewayError(CartItemError):
-    pass
+    code = "unsupported_gateway"
 
 class TicketTypeNotFoundError(CartItemError):
-    pass
+    code = "ticket_type_not_found"
 
 class WrongSaleMethodError(CartItemError):
-    pass
+    code = "wrong_sale_method"
 
 class InsufficientTicketStockError(CartItemError):
-    pass
+    code = "sold_out"
 
 class NotOnSaleError(CartItemError):
-    pass
+    code = "not_on_sale"
 
 class LotteryEntryUnresolvedError(CartItemError):
-    pass
+    code = "lottery_entry_unresolved"
 
 class TicketNotFoundError(CartItemError):
     """Ticket missing or not the caller's (one error, so ids of other users' tickets aren't confirmed)."""
-    pass
+    code = "ticket_not_found"
 
 class TicketNotPayableError(CartItemError):
     """The ticket isn't an unpaid lottery win, or its payment deadline has passed."""
-    pass
+    code = "ticket_not_payable"

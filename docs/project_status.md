@@ -1,5 +1,7 @@
 # Project Status
 
+English | [日本語](project_status_JP.md)
+
 A snapshot of what's built, what's verified, and what's still open — read this before assuming
 something exists or is finished. `database-design.md` (same folder) is the schema/business-logic
 design; `architecture.md` is how the code is organized; this file is the "where are we right
@@ -8,8 +10,10 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `a9d3f5b7c1e2`** (`unique_shipping_status_order_id`) — 62 migrations,
-one linear chain, no branches. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
+**Chain head: `b8e2d4f6a1c3`** (`create_inquiries_table`) — 64 migrations,
+one linear chain, no branches. CI runs `alembic upgrade head` from empty against Postgres 16 on
+every push/PR, then the full test suite; the chain through `b8e2d4f6a1c3` passed there on
+`develop` (2026-09-29, CI run 131). Not yet re-applied to Supabase. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
 applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
 empty, `alembic current` reported the head revision, and the `notifications` table/enum matched
 the models. The notification feature was also exercised over real HTTP end to end (password reset
@@ -57,8 +61,10 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 - **Talent**: `groups`, `idols`, `idol_colors`, `positions`/`idol_positions` — full ORM + schema +
   service + router, company-scoped CRUD.
 - **Events & ticketing**: `venues`, `concerts`/`concert_performers`, `ticket_types`,
-  `lottery_preferences`, `lottery_campaigns`, `lottery_entries`, `tickets` — full ORM + schema +
-  service + router. `tickets` creation is admin-only (a manual stopgap — see §4).
+  `lottery_preferences`, `lottery_campaigns`, `lottery_entries`, `direct_sale_campaigns`,
+  `tickets` — full ORM + schema + service + router. Tickets are created three ways: the lottery
+  draw (§8), direct-sale checkout (`POST /tickets/checkout`, §5), and an admin-only manual issue
+  (`POST /tickets/add`, a stopgap kept for support/testing).
 - **Marketplace**: `categories.is_resale_capped`, `album_details`, `genres`/`album_genres`,
   `merch_details` — full ORM + schema + service + router.
 - **Image uploads**: `idols.profile_image_url` / `products.image_url`, a local/S3 storage
@@ -68,7 +74,10 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   5 groups + 3 solos, 6 venues, 6 concerts, 18 ticket types (lottery + direct sale), 5 categories,
   a 20-item marketplace, 2 lottery campaigns with preferences/entries, 1 manually-issued ticket.
   Idol portraits and product covers are procedural placeholder art pushed through the real
-  `get_storage().save()` pipeline — see `tests/fixtures/README.md`.
+  `get_storage().save()` pipeline — see `tests/fixtures/README.md`. `scripts/seed_ja.py` is a
+  Japanese-language alternative with the same structure (reuses `seed.py`'s helpers; lookup keys
+  like colors/positions/genres/categories and fixture filenames stay English). The two are
+  mutually exclusive per database — each skips if either sentinel company exists.
 - **Notifications** (`app/db/models/shared/notification.py`): a `notifications` table
   (`database-design.md` §3.19) covering 12 event types, one nullable FK per referenced entity kind.
   Producers fire inline (no cron/Beat job): `order_service.checkout()`,
@@ -97,8 +106,52 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   `event_reminder` still has no producer. `notifications.status`/`sent_at`
   sit at `pending`/`null` forever regardless — that pair tracks a push-to-inbox step this table
   itself doesn't drive (see Email dispatch below, a separate path).
-- **Email dispatch**: every transactional email — verification link, order placed, ticket
-  confirmed, lottery ticket payment confirmed — goes through
+- **Inquiries (contact form, お問い合わせ)**: `POST /inquiries/submit`, open to guests (a
+  logged-in sender is linked via `user_id`). Every inquiry is saved to an `inquiries` table
+  (`database-design.md` §3.20) and a confirmation is emailed to the address given, through the
+  same Celery `send_email` task as every other email. Two anti-abuse choices, since the email goes
+  to whatever address is typed: the confirmation never includes the user's own text (only the
+  topic label and a reference id), so the form can't be used to send arbitrary content from our
+  address; and one address gets at most 3 confirmations per hour
+  (`InquiryService.CONFIRMATIONS_PER_ADDRESS`), with the route itself limited to 3 submissions per
+  10 minutes per user or IP. Over the per-address cap, the inquiry is still saved and only the
+  email is skipped. Known gaps: two simultaneous submissions to the same address can both pass
+  the cap check (not money-critical, accepted); `+tag` aliases count as separate addresses; and
+  **there's no staff-facing read path yet** — inquiries are only visible in the database, and
+  nobody is notified when one arrives. Verified by 8 unit tests and the full unit suite
+  (475/475), plus `import main` confirming the route registers; the migration and suite have
+  since passed in CI against Postgres (§1). Not yet sent through Resend for real, and there's no
+  integration test for the route.
+- **FAQ instant answers on the contact page — implemented, not yet run against the real API**. Model: `claude-haiku-4-5`, the cheapest option, with no `effort`
+  setting (Haiku 4.5 rejects it) and no prompt caching (Haiku 4.5 only caches prompts of 4,096+
+  tokens, and on a low-traffic site cache writes would cost more than they save). With
+  `DEBUG=true` the service prints the question and never calls Claude, matching `send_email()`.
+  A cut-off (`max_tokens`) or refused answer returns "not answerable". Unit tests set `DEBUG`
+  themselves and fake `_client` wherever the call path runs, so none can make a real request
+  whatever `.env` says. Tone decided by the developer: cheerful and cute, with facts stated
+  exactly (see §5, product personality).
+  `POST /inquiries/instant-answer` (auth optional, 5 per 10 minutes per user or IP) runs
+  `FaqAnswerService.answer`, which answers only from `app/content/faq.md` and returns
+  `{"answerable": false}` whenever it can't help: the FAQ doesn't cover it, `ANTHROPIC_API_KEY` is
+  unset, the model declined, or the call failed. It never errors, since the contact form is always
+  the fallback. The Claude call (`faq_answer_service._ask_claude`) uses `messages.parse` for
+  structured output into `FaqAnswer`, with the FAQ in the system prompt. `anthropic==1.8.0` added to `requirements.txt` (a dry-run install showed no
+  conflicts). The FAQ holds only facts confirmed in code; refund, ticket-transfer, venue-entry,
+  shipping-fee and payment-method policies are listed as TODOs in the file's header comment,
+  because those aren't decided anywhere yet. Verified: 9 unit tests (484/484 unit suite), and an
+  in-process HTTP call returning `200 {"answerable": false}` with no key set.
+  **Japanese support**: a Japanese FAQ (`app/content/faq.ja.md`) mirrors `faq.md` entry by entry,
+  chosen by a new `lang` field (`"en"`/`"ja"`, default `"en"`) on the instant-answer request; the
+  two files must be kept in sync by hand. The minimum message length on both inquiry endpoints
+  dropped from 10 to 5 characters, because a complete Japanese question can be shorter than 10
+  (「返金できますか？」 is 8). Confirmed: full-width spaces are trimmed like normal ones,
+  full-width email characters are rejected (the frontend normalizes with NFKC), and the server
+  counts length in Unicode code points. **Still English-only**: the confirmation email
+  (`EmailTemplate.INQUIRY_RECEIVED`, and every other transactional email) and the `422`/`429`
+  error text; the frontend maps errors to its own Japanese messages instead of showing them.
+  489/489 unit suite after this change.
+- **Email dispatch**: every transactional email — verification link, password reset, order
+  placed, ticket confirmed, lottery ticket payment confirmed, inquiry received — goes through
   `celery_app.send_task("app.tasks.email.send_email", ...)`, picked up by the worker task in
   `app/tasks/email.py`, which calls `app/utils/email_sender.py`'s Resend wrapper. Subject/body
   text for each lives in `app/utils/email_templates.py`'s `EmailTemplate` enum (`.subject`,
@@ -113,7 +166,7 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   so testing the lottery flow against real seed-fan email addresses doesn't spam real inboxes on
   every draw; `LOTTERY_WON`/`LOTTERY_LOST` were removed from `EmailTemplate` since nothing
   references them anymore.
-- **Celery skeleton** (`app/celery_app.py`, `app/tasks/`): broker + result backend on the same
+- **Celery worker** (`app/celery_app.py`, `app/tasks/`): broker + result backend on the same
   Redis instance, a separate DB index from the cache/rate-limiter. Two task modules:
   `app.tasks.lottery.draw_lottery` (manager-triggered, §8) and `app.tasks.email.send_email` (every
   email dispatch above). No Celery Beat / scheduler is used or planned for this phase — every
@@ -123,6 +176,13 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   `database-design.md` §4 lists (fan-only purchasing, the anti-resale cap, concert
   ticket-capacity, the lottery entry cap, the preference-required check, the lottery
   preference/concert match, the album/merch mutual-exclusivity pair).
+- **Machine-readable error codes** (2026-09-29): every error body is `{"detail", "code"}`;
+  exceptions carry a `code` (`CodedError`), `app/exception/handlers.py` adds it to the response,
+  and empty results return `200` (`[]` or an empty page object) instead of `404`. Unexpected
+  exceptions return a JSON 500 (`internal_error`) that keeps its CORS headers
+  (`UnhandledErrorMiddleware`), and hand-validated form models return the same 422 field-error
+  list as FastAPI's own. Catalog: `api-spec.md` §0; mechanics:
+  `architecture.md` §2. Additive, so existing clients reading only `detail` are unaffected.
 
 ## 3. Verification method (and its limit)
 
@@ -177,8 +237,21 @@ recommendation logic, `finalize_paypal_payment`'s ticket/order branches, `verify
 **Deliberately not covered here**: `ticket_service.checkout_ticket`/`checkout_won_ticket` and
 `order_service.checkout` — the `with_for_update()` pessimistic-locking paths behind item 1's
 overselling-race fix. They're race-tested against real Postgres instead (see §5): `checkout`
-in `test_orders_concurrency.py`, `checkout_ticket` in `test_ticket_checkout_concurrency.py`;
-`checkout_won_ticket` has no race test yet.
+in `test_orders_concurrency.py`, `checkout_ticket` in `test_ticket_checkout_concurrency.py`,
+`checkout_won_ticket` in `test_won_ticket_checkout.py`.
+
+**Integration coverage pass 2 (`pytest --cov=app` against real Postgres 16 + Redis, 85.3% →
+94.6% line coverage, 745 → 923 tests, all passing)**: aimed at the RBAC/company-scoping and money paths that the first
+two passes left to mocks or skipped. Added `tests/integration/_seed.py` (direct-DB fixture rows +
+minted JWTs for any role, torn down with bulk `DELETE`s so Postgres' `ON DELETE CASCADE` also
+removes rows the API created), HTTP-level suites for order fulfilment (cancel/ship/admin override,
+company-scoped manager orders page), product management (create-with-detail scoping, image upload,
+bulk add, manager pages, sales history, artist resolution), idol/group writes, shipping-address
+ownership, and ticket/concert router error mapping; a service-level suite for
+`checkout_won_ticket` including three race tests; and unit tests for the Celery tasks,
+`email_sender`, `db_triggers` and both storage backends. Found and fixed a real bug on the way
+(§4 item 47) and closed the manager-page auth gap it surfaced (item 48). Per-module numbers, what each suite proves, and the remaining gaps:
+**`docs/test-coverage.md`**.
 
 ## 4. Known issues / tech debt (fix alongside the surrounding code, not standalone)
 
@@ -193,6 +266,18 @@ newly introduced.
    `create_payment()` (non-committing), and commits once via `commit_or_raise()` — mirroring
    `ticket_service.checkout_ticket()`'s lock-hold-commit-once pattern for `ticket_type`/`sold_quantity`.
    Still open: the draw job (§8) needs the same guard designed in from the start.
+
+   **Resale-cap race fixed** (`docs/bugs.md` #13): the resale-cap check ran *before* that product
+   lock, so two concurrent checkouts by the same fan for the same product both read the pre-race
+   count. Checkout only stayed correct because the trigger re-checked after the lock — and the
+   trigger itself was racy for any two uncommitted inserts (confirmed: two open transactions each
+   inserting 2 units left a fan with 4 of a 3-capped product). Fixed on both layers: the service
+   check now runs under the product lock, and `fn_enforce_resale_cap` takes a
+   `pg_advisory_xact_lock` on (buyer, product) before summing (migration `d4a7c9e2f1b5`).
+   `tests/integration/marketplace/test_resale_cap_concurrency.py` races same-fan checkouts
+   (asserting the service's own check rejects the loser), different-fan checkouts (the lock
+   doesn't over-serialize), and two raw inserts against the trigger alone; each fails with its
+   fix reverted.
 
    **Regression found and fixed**: the lock above was real but silently ineffective for any
    product in a resale-capped category (`categories.is_resale_capped` defaults `true()` at the DB
@@ -466,12 +551,10 @@ newly introduced.
     actually touched — an O(N) scan, fine at this project's key count, not something a
     high-traffic deployment would want unchanged. Idol/group/idol-color mutations cross-invalidate
     into whichever manager pages embed their rows (the idol/group form dropdowns, the color
-    picker), same reasoning as item 28's members/groups cross-invalidation. **Separately noticed,
-    not fixed here**: none of these seven manager/admin GET endpoints actually check
-    `require_manager_or_admin`/`require_admin` — no auth dependency at all, unlike every mutating
-    endpoint on the same resources. Caching makes an unauthenticated read of this data cheaper,
-    not more exposed than it already was; flagging so it doesn't get missed as this list is
-    extended further.
+    picker), same reasoning as item 28's members/groups cross-invalidation. None of these GET
+    endpoints checked auth at the time; the six `manager-*-page` ones now do (item 48).
+    `/management_companies/all` stays public by design (company names only, for pickers,
+    `api-spec.md`).
 30. ~~**`POST /order/checkout` emailed "your order has been placed" even on a declined mock
     payment**~~ — **FIXED**. `OrderService.checkout` correctly gates the in-app
     `order_confirmation` notification on `payment.status == PaymentStatus.success`, but the
@@ -869,7 +952,7 @@ newly introduced.
 
     Verification: all three templates rendered with int/float/`Decimal` amounts; unit suite
     444/444. No real email was sent.
-39. **Rate-limit tuning pass**, prompted by benchmarking `GET /products/store-page` and finding its
+45. **Rate-limit tuning pass**, prompted by benchmarking `GET /products/store-page` and finding its
     `5, 60` budget (per-IP) exhausted almost immediately under any real browsing pattern, not just
     an attacker's. Audited every `rate_limit(limit, window, key_func)` call across `app/router`
     and grouped them by what each is actually defending: money/inventory mutations (checkout, cart,
@@ -891,7 +974,9 @@ newly introduced.
     keyed on `ip_key`, the only shipping endpoint not using `user_key` — everyone behind the same
     IP shared one bucket for arbitrary users' address-by-id lookups, and a user switching networks
     reset their own. Fixed to `user_key` to match every sibling endpoint on this resource; limit
-    left at `5/60` since only the key was wrong, not the number.
+    left at `5/60` since only the key was wrong, not the number. **This broke the route**: unlike its
+    siblings it has no `get_current_user` dependency, so `user_key` finds no user and every request
+    500s — open as `docs/bugs.md` #28.
 
     **Gap found while benchmarking, also fixed here**: `GET /products/{id}/detail`, `GET
     /groups/{id}/detail`, and `GET /idols/{id}/detail` had no `rate_limit` dependency at all,
@@ -913,11 +998,11 @@ newly introduced.
     Manager/admin CRUD (`20/60` uniform across campaigns/album/ticket-type/genre/merch) and
     admin-sensitive actions (`make-admin`/`create-manager`, `3/60`) were reviewed and left as-is —
     authenticated, privileged, not a normal-usage friction point.
-40. **Benchmarking `GET /products/store-page` surfaced a latency-under-concurrency question, not
+46. **Benchmarking `GET /products/store-page` surfaced a latency-under-concurrency question, not
     yet resolved.** Two local runs against the new `30/60` limit: concurrency 1 (15s) gave
     p50/p90/p99/max of 76/88/111/680ms; concurrency 3 (20s) gave 133/220/1735/1853ms — the tail
     grows sharply with concurrency while throughput barely does (~9.7 → ~11.6 req/s, nowhere near
-    3x). Confirmed via `grep` that every one of the 161 route handlers across `app/router` is
+    3x). Confirmed via `grep` that every one of the 161 route handlers (163 today) across `app/router` is
     plain `def`, not `async def` (the sole `async def` in the tree, `payment.py::_raw_body`, is an
     async dependency for the webhook's raw-body read, not a route handler) — matches
     `architecture.md` §2 exactly, no doc drift there.
@@ -971,13 +1056,48 @@ newly introduced.
       after the last one. An earlier concurrency-1 run showed the same thing (34 requests in 15s,
       ~3.5s measured).
 
+47. ~~**Any logged-in user could update or delete any shipping address**~~ — **FIXED**.
+    `ShippingService.update_address`/`delete_address` filtered on `user_id==user_id` — the Python
+    argument compared with itself, always `True` — instead of `ShippingAddress.user_id==user_id`,
+    so the only real filter was the address id. Confirmed over real HTTP: a second fan's `PUT`
+    and `DELETE` on the first fan's address both returned `200`. The mocked-`Session` unit tests
+    couldn't catch it: a `MagicMock` `.filter()` accepts any condition. Separately,
+    `GET /shipping_addresses/fetch_byid/{address_id}` had no auth dependency at all and returned
+    `500` for every caller (its `user_key` rate limiter reads `request.state.user`, which only
+    `get_current_user` sets); its query didn't filter by owner either, so fixing the 500 alone would
+    have exposed every address by id. Now requires auth and filters by owner — anyone else's id is
+    a `404`. `docs/api-spec.md` updated (🔓 → 🔒). Regression tests:
+    `tests/integration/marketplace/test_shipping_addresses.py` — 5 of its 10 tests fail against
+    the old code.
+
+48. ~~**The manager/admin settings-page reads had no auth and no server-side company scoping**~~ —
+    **FIXED** (`docs/bugs.md` #29). `GET /products/manager-products-page`,
+    `/products/manager-product-form-page`, `/idols/manager-idols-page`,
+    `/idols/manager-idol-form-page`, `/groups/manager-groups-page` and
+    `/concerts/manager-events-page` were callable anonymously (confirmed over HTTP: a deactivated
+    idol and an unlisted product came back to a caller with no token), and the two products pages
+    took any `company_id` from the query string. All six now require `require_manager_or_admin`
+    and `rate_limit(30, 60, user_key)` (the manager/admin tier, `architecture.md` §3), matching
+    `GET /order/manager-orders-page`. A manager only receives their own company's rows:
+    - the products pages pin `company_id` to the manager's company (an admin may still pass one,
+      or omit it for every product) — these caches were already keyed by company;
+    - the idol, group and events pages keep one all-company Redis entry, and the router filters
+      it per request through pure `scope_manager_*` helpers on each service, so cache keys and
+      write-side invalidation are unchanged; the product form page's idol/group pickers are
+      filtered the same way.
+    Venues, idol colors and categories are shared across companies and stay unfiltered.
+    Frontend impact (every call must send the token; client-side company filtering can go):
+    `docs/frontend-tasks/manager-pages-and-address-auth.md`. Tests:
+    `test_permissions.py::test_manager_settings_page_role_gate` (401/403/200 for all seven
+    manager pages), plus manager-vs-admin scoping tests in `test_idol_group_management.py`,
+    `test_product_management.py` and `test_ticket_and_concert_endpoints.py`.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
-- **Group/idol CRUD success-path integration coverage** — every group/idol integration test today
-  only reaches the RBAC/wiring boundary (401 unauthenticated, 403 wrong role/company, 404
-  not-found-in-empty-table); none proves an actual authenticated manager/admin successfully
-  creates/updates/deletes their own company's group or idol over real HTTP. `test_permissions.py`'s
-  `Factory` would need a `group()` builder (mirrors its existing `idol()`) to build this cheaply.
+- ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:
+  `tests/integration/talent/test_idol_group_management.py` covers an owning manager's and an
+  admin's create/update/soft-delete/reactivate/image upload over real HTTP, cross-company 403s,
+  and reference validation (group in another company, deactivated group, unknown color).
 - **`/payment/status/order/{id}`'s found-case** — only its 401/404 paths are integration-tested
   (item 34); a real found-case needs a full product/category/shipping-address chain behind an
   actual `/order/checkout` call, not built yet. The equivalent ticket-side endpoint
@@ -991,9 +1111,10 @@ newly introduced.
   `tests/integration/marketplace/test_orders_concurrency.py`,
   `tests/integration/events/test_lottery_concurrency.py`, and `ticket_service.checkout_ticket`
   in `tests/integration/events/test_ticket_checkout_concurrency.py` (last seat sold once, a
-  double submit, two tiers of one concert at once, and the same idempotency key twice). Still
-  open: `checkout_won_ticket` uses the same lock-hold-commit-once pattern but has no race test
-  (e.g. a winner double-submitting payment, or paying while the deadline passes).
+  double submit, two tiers of one concert at once, and the same idempotency key twice), and
+  `ticket_service.checkout_won_ticket` in `tests/integration/events/test_won_ticket_checkout.py`
+  (a winner double-submitting payment pays once, the same idempotency key twice, and concurrent
+  attempts past the deadline release the seat exactly once).
 - **Payment failure handling** — the mock gateway's decline path (`simulate_succ=false`) has
   always worked; PayPal's decline path (`finalize_paypal_payment`'s `else` branches, §7) is
   implemented but not yet exercised against a real declined sandbox payment.
@@ -1002,11 +1123,10 @@ newly introduced.
   path — checks `ticket_types.sale_method == 'direct'`, an open `DirectSaleCampaign` window,
   remaining stock, and the same one-live-ticket-per-concert/unresolved-lottery-standing gates the
   lottery path uses, then locks and pays the same way `checkout_won_ticket` does. `add_ticket`
-  (admin-only manual issue) remains a separate stopgap, used for the lottery-draw path only.
-- **The draw job's actual runtime** — **decided: manager-triggered**, not a Celery Beat scheduled
-  task — see §8 for the full plan. The Celery skeleton (`app/celery_app.py`, broker on Redis)
-  stays unused for this specific job as a result; it may still end up used for winner-notification
-  dispatch (a separate concern from the draw itself, see §8).
+  (admin-only manual issue, `POST /tickets/add`) remains a separate stopgap; the lottery draw
+  inserts its own tickets and doesn't go through it.
+- ~~**The draw job's actual runtime**~~ — **DONE**: manager-triggered, not a Celery Beat
+  schedule. The trigger endpoint enqueues a Celery task that runs the draw (§8).
 - **No sweep job for expired unpaid lottery-won tickets** — designed in `database-design.md`
   §5.2's sequence diagram, not built; the one place this is even lazily discovered today
   (`PaymentService.finalize_paypal_payment`) only covers one narrow path to it. Full writeup,
@@ -1028,7 +1148,9 @@ newly introduced.
   is worth resolving before this gets built, not after.
 - **Product "personality"** — the brief's third goal (tone of copy, idol/fandom-specific
   flourishes, branding on `/docs`, error messages, email templates). `idol_colors`' pastel palette
-  is the one seed of it so far; nothing else is designed. Don't invent details speculatively —
+  is one seed of it; the other is the FAQ assistant's tone ("cheerful, whimsical and cute", with
+  facts stated exactly), chosen by the developer in `faq_answer_service.SYSTEM_PROMPT`. Nothing
+  else is designed. Don't invent details speculatively —
   flag it in the next planning conversation.
 - **`schema.sql`** — cited throughout `database-design.md` as if it exists; it doesn't (§1 above).
   Either generate one from the live migrations/models, or stop citing it and treat the migrations
@@ -1045,16 +1167,19 @@ newly introduced.
 
 ## 6. Suggested next steps, in order
 
-1. A real `alembic upgrade head` + endpoint smoke test against live Postgres/Redis — the standing
-   gap behind every "verified" claim in this project (§3).
+1. ~~A real `alembic upgrade head` + endpoint smoke test against live Postgres/Redis~~ — **DONE**:
+   deployed on Render + Supabase, and CI runs migrations + the full suite against Postgres (§3).
 2. ~~Fix the checkout/ticket-inventory race before building the draw job or direct purchase flow
    on top of it~~ — **DONE**, see §4 item 1.
-3. Build the draw job (§5/§8), with its concurrency guard designed in from the start.
+3. ~~Build the draw job (§5/§8), with its concurrency guard designed in from the start~~ —
+   **DONE**, see §8.
 4. ~~Fill in the missing *primary* fan-only-purchase check at the service layer~~ — **FIXED**.
-   `cart_service.add_to_cart`, `order_service.checkout`, `lottery_entry_service.apply_to_lottery`,
-   and `ticket_service.add_ticket` each check the buyer's `role == "fan"` before doing anything
-   else, raising `FanOnlyPurchaseError` (the existing DB-trigger-backstop exception, reused rather
-   than adding a new one).
+   `cart_service.add_to_cart`, `order_service.checkout` and `ticket_service.checkout_ticket` each
+   check the buyer's `role == "fan"` before doing anything else, raising `FanOnlyPurchaseError`
+   (the existing DB-trigger-backstop exception, reused rather than adding a new one).
+   `lottery_entry_service.apply_to_lottery`/`apply_to_lotteries` make the same check but raise
+   `ForbiddenError`, and `ticket_service.add_ticket` (admin manual issue) checks the *recipient*
+   is a fan and raises `ForbiddenError`.
 
 ## 7. PayPal gateway integration — implemented, partially verified
 
@@ -1130,8 +1255,11 @@ runs.
 
 **The trigger endpoint enqueues a Celery task rather than running the algorithm inline** — the
 draw touches every campaign/entry/preference/ticket_type row for a concert, which doesn't belong
-in a request/response cycle. The router stays synchronous and small: validate RBAC, confirm at
-least one campaign is `open`, dispatch the task, return `202`. The task opens its own DB session
+in a request/response cycle. The router stays synchronous and small: check the concert exists and
+the manager's company scope, send the `lottery_draw_triggered` notification, dispatch the task,
+return `200` with a "scheduled" message. The "is there an open campaign whose entries have closed"
+checks run inside the task, so their failures surface as `lottery_draw_failed`, not as an HTTP
+error. The task opens its own DB session
 via `app.db.session.session()` (not FastAPI's request-scoped `get_db`) and calls straight into
 the draw algorithm. Trigger granularity is per concert, not per campaign — `database-design.md`
 §5.2's rank cascade needs every tier's campaign for one concert drawn together, or a fan's

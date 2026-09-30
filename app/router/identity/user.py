@@ -7,6 +7,7 @@ from app.db.models.identity import Users
 from app.deps.auth import get_current_user, require_admin
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.exception.handlers import ApiHTTPException
 from app.schema.common import MessageResponse
 from app.schema.identity import (
     ChangePasswordRequest,
@@ -28,7 +29,7 @@ def me(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(60,60,use
 def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> MessageResponse:
     result = UserService.change_password_process(db, user, payload.old_password, payload.new_password)
     if not result:
-        raise HTTPException(status_code=400, detail="Incorrect old password")
+        raise ApiHTTPException(status_code=400, detail="Incorrect old password", code="incorrect_password")
     return MessageResponse(msg="Password changed succesfully")
 
 @router.post("/forgot-password", response_model=MessageResponse)
@@ -41,7 +42,7 @@ def forgot_password(payload:ForgotPasswordRequest, _:None=Depends(rate_limit(3,6
 def set_new_password(payload:SetPasswordRequest, _:None=Depends(rate_limit(5,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
     result = UserService.verify_rtoken(db, payload.token, payload.new_password)
     if result is False:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise ApiHTTPException(status_code=401, detail="Invalid or expired token", code="invalid_token")
     if result is None:
         raise HTTPException(status_code=404, detail="user not found")
     return MessageResponse(msg="password changed successfully")

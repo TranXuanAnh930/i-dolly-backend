@@ -26,8 +26,6 @@ def add_in_cart(cart_item:CartItem, user:Users=Depends(get_current_user), _: Non
 @router.get("/see_cart", response_model=CartDetailRead)
 def check_cart(user:Users=Depends(get_current_user), db:Session=Depends(get_db)) -> CartDetailRead:
     cart = CartService.see_cart(db, user.id)
-    if not cart:
-        raise HTTPException(status_code=404, detail="Cart is empty")
     return cart
 
 @router.delete("/delete_cart/{cart_id}", response_model=MessageResponse)

@@ -25,7 +25,7 @@ class CartService:
         if not product:
             raise NotFoundError("Product not found")
         if product.quantity < cart_item.quantity:
-            raise BadRequestError("Insufficient stock")
+            raise BadRequestError("Insufficient stock", code="insufficient_stock")
 
         stmt = db.query(Cart).filter(Cart.user_id==user_id, Cart.product_id==cart_item.product_id).with_for_update().first()
         if stmt:
@@ -42,10 +42,8 @@ class CartService:
         return stmt
 
     @staticmethod
-    def see_cart(db:Session, user_id:uuid.UUID) -> CartDetailRead | None:
+    def see_cart(db:Session, user_id:uuid.UUID) -> CartDetailRead:
         items = db.query(Cart).filter(Cart.user_id==user_id).all()
-        if not items:
-            return None
         total_price = sum(item.total_price for item in items)
         return CartDetailRead(items=items, total_price=total_price)
 

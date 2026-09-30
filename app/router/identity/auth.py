@@ -8,6 +8,7 @@ from app.db.models.identity import Users
 from app.deps.auth import get_current_user
 from app.deps.db import get_db
 from app.exception.common import ServiceError
+from app.exception.handlers import ApiHTTPException
 from app.schema.common import MessageResponse
 from app.schema.identity import UserCreate, UserOut
 from app.services.identity.auth_service import AuthService
@@ -25,7 +26,7 @@ def register(user:UserCreate, _:None=Depends(rate_limit(3,60,ip_key)), db:Sessio
 def login(form_data:OAuth2PasswordRequestForm=Depends(), _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> JSONResponse:
     db_user = AuthService.authenticate_user(db, form_data.username, form_data.password)
     if not db_user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise ApiHTTPException(status_code=401, detail="Invalid credentials", code="invalid_credentials")
     token = AuthService.create_tokens(db, db_user)
     response = JSONResponse(content={"access_token": token["access_token"]})
     # SameSite=None (requires Secure) because the frontend is on a different site; a Lax cookie
@@ -37,10 +38,10 @@ def login(form_data:OAuth2PasswordRequestForm=Depends(), _:None=Depends(rate_lim
 def refresh(request:Request, _:None=Depends(rate_limit(10,60,ip_key)), db:Session=Depends(get_db)) -> JSONResponse:
     token = request.cookies.get("refresh_token")
     if not token:
-        raise HTTPException(status_code=401, detail="Missing refresh token")
+        raise ApiHTTPException(status_code=401, detail="Missing refresh token", code="invalid_refresh_token")
     user = AuthService.verify_refresh_token(db, token)
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+        raise ApiHTTPException(status_code=401, detail="Invalid or expired refresh token", code="invalid_refresh_token")
     new_token = AuthService.create_tokens(db, user)
     response = JSONResponse(content={"msg":"Token refreshed successfully", "access_token":new_token["access_token"]})
     response.set_cookie("refresh_token", new_token["refresh_token"], httponly=True, secure=True, samesite="none")

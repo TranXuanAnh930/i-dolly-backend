@@ -38,8 +38,6 @@ def add_new_campaign(data: LotteryCampaignCreate, current_user: Users = Depends(
 @router.get("/ticket_type/{ticket_type_id}", response_model=List[LotteryCampaignRead])
 def list_campaigns(ticket_type_id: uuid.UUID, db: Session = Depends(get_db)) -> list[LotteryCampaign]:
     result = LotteryCampaignService.get_campaigns(db, ticket_type_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="No lottery campaigns found for this ticket type")
     return result
 
 # Not used by the frontend.

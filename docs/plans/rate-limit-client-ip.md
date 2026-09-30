@@ -1,5 +1,7 @@
 # Fix plan: trustworthy client IPs for rate limiting (bugs.md #7)
 
+English | [日本語](rate-limit-client-ip_JP.md)
+
 **Status:** planned, not started (2026-09-26).
 
 ## Problem

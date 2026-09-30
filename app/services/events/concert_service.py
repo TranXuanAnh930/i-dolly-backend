@@ -195,10 +195,8 @@ class ConcertService:
     # --- page-shaped reads ---
 
     @staticmethod
-    def get_events_page(db: Session) -> EventsPageRead | None:
+    def get_events_page(db: Session) -> EventsPageRead:
         concerts = db.query(Concert).options(joinedload(Concert.venue)).all()
-        if not concerts:
-            return None
         return EventsPageRead(concerts=concerts)
 
     @staticmethod
@@ -334,3 +332,14 @@ class ConcertService:
     @staticmethod
     def get_manager_events_page(db: Session) -> ManagerEventsPageRead:
         return ManagerEventsPageRead(concerts=db.query(Concert).all(), venues=db.query(Venue).all())
+
+    # The cached page holds every company's concerts; managers get only their own company's.
+    # Venues are shared across companies and stay unfiltered.
+    @staticmethod
+    def scope_manager_events_page(page: ManagerEventsPageRead, current_user: Users) -> ManagerEventsPageRead:
+        if current_user.role != UserRole.manager:
+            return page
+        return ManagerEventsPageRead(
+            concerts=[c for c in page.concerts if c.company_id == current_user.company_id],
+            venues=page.venues,
+        )

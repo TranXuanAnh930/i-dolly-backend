@@ -6,6 +6,7 @@ import sqlalchemy
 from alembic import command
 from alembic.config import Config
 from tests.conftest import fake_redis
+from tests.integration._seed import seed  # noqa: F401 (fixture, shared by every integration module)
 
 
 def _recreate_test_database() -> None:

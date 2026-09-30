@@ -21,14 +21,15 @@ documented — including what's unfinished — over one that looks superficially
 
 ## 3. Tech stack
 
-FastAPI + Pydantic v2, PostgreSQL via SQLAlchemy 2.0 + Alembic, Redis (caching + rate limiting),
-JWT auth, a mock payment gateway (real gateway integration is next-phase work), Resend,
-a local/S3 image-storage abstraction, Docker
-Compose for local dev. Full detail, versions, and reasoning: **`docs/architecture.md`** §1.
+FastAPI + Pydantic v2, PostgreSQL via SQLAlchemy 2.0 + Alembic, Redis (caching + rate limiting), a
+Celery worker (lottery draw + email sends), JWT auth, a mock payment gateway plus PayPal (sandbox),
+Resend, the Claude API for FAQ answers on the contact page, a local/S3 image-storage abstraction,
+Docker Compose for local dev. Full detail, versions, and reasoning: **`docs/architecture.md`** §1.
 
 ## 4. Domains
 
-Four clusters — see `docs/database-design.md` §1 for the full breakdown:
+Four clusters plus a small `shared/` area — see `docs/database-design.md` §1 for the full
+breakdown:
 
 - **Identity** — role-based access (`admin` / `manager` / `fan`), company-scoped managers.
 - **Talent** — management companies, groups, idols, idol colors, positions.
@@ -37,6 +38,7 @@ Four clusters — see `docs/database-design.md` §1 for the full breakdown:
 - **Marketplace** — products/categories extended with album/single/EP details, merch details
   (covers lightsticks and other official branded merch — see `database-design.md` §3.17), genres —
   reusing the original cart/order/payment/shipping machinery.
+- **Shared** (cross-domain) — in-app notifications, contact-form inquiries, FAQ instant answers.
 
 ## 5. Database & architecture
 
@@ -51,11 +53,23 @@ Don't re-derive these from the code — read the docs first, they're kept curren
   conventions, and the specific conventions new code must follow (e.g. which module `Base` gets
   imported from).
 - **`docs/project_status.md`** — what's actually built vs. still open, known issues/tech debt,
-  and the verification method used so far (static analysis, not a live DB — see its §3 for why).
-  Read this before assuming a feature exists or is finished.
+  and the verification method (CI runs migrations + the full test suite against Postgres; local
+  changes without a DB fall back to static checks — see its §3). Read this before assuming a
+  feature exists or is finished.
+- **`docs/api-spec.md`** — every route, grouped by frontend page, with auth and request/response
+  shapes. Update it when a route is added or changed.
+- **`docs/bugs.md`** — audit backlog of known bugs/code smells, with fix plans for the bigger ones
+  in `docs/plans/`.
+- **`docs/test-coverage.md`** — measured line coverage per package/file, what each test suite
+  proves, and the known gaps. Read this before adding tests, so you target what's actually
+  uncovered.
 - **`docs/deployment.md`** — how to actually deploy this: Render (API), Supabase (Postgres), an
   S3-compatible bucket (image uploads), and Render's Key Value add-on (Redis). Read this before
   touching env-var handling, CORS, or storage/cache backend selection.
+
+`README.md` and every doc under `docs/` has a Japanese translation next to it (`<name>_JP.md`,
+same convention as the `i-dolly-monolith` repo). The English file is the source of truth: read
+and edit that one, then update its `_JP.md` counterpart in the same change so they don't drift.
 
 ## 6. Coding style
 

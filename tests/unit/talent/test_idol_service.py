@@ -432,7 +432,7 @@ class TestIdolService:
         db.query().options().filter().all.return_value = []
 
         result = IdolService.get_members_page(db)
-        assert result is None
+        assert result.idols == []
 
     def test_get_idol_detail_found(self):
         from app.services.talent.idol_service import IdolService

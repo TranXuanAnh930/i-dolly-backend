@@ -61,7 +61,8 @@ def auth_headers(email="demo@example.com", password="demo123"):
 
 def test_list_companies_empty():
     response = client.get("/management_companies/all")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_get_company_not_found():
     response = client.get(f"/management_companies/{FAKE_ID}")

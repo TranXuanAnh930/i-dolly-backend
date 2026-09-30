@@ -33,8 +33,6 @@ def add_new_ticket_type(data: TicketTypeCreate, current_user: Users = Depends(re
 @router.get("/concert/{concert_id}", response_model=List[TicketTypeRead])
 def list_ticket_types(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[TicketType]:
     result = TicketTypeService.get_ticket_types(db, concert_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="No ticket types found for this concert")
     return result
 
 # Not used by the frontend.

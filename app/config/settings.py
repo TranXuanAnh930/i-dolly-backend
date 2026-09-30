@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     PAYPAL_MODE: str | None = None
     PAYPAL_WEBHOOK_ID: str | None = None
 
+    # Enables AI answers on the contact page (POST /inquiries/instant-answer). Unset = feature off.
+    ANTHROPIC_API_KEY: str | None = None
+
     class Config:
         env_file = ".env"
 

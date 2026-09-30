@@ -1,5 +1,7 @@
 # Architecture
 
+English | [日本語](architecture_JP.md)
+
 How the codebase is organized and the conventions new code should follow. For the data model
 (tables, RBAC, business logic), see `database-design.md`. For what's built vs. still open, see
 `project_status.md`.
@@ -33,6 +35,10 @@ How the codebase is organized and the conventions new code should follow. For th
   `settings.DEBUG=true`, email bodies (including verification/reset tokens) print to the console
   instead of sending, since `.env.example`'s `RESEND_API_KEY` is a placeholder — must stay
   `false` in production.
+- **anthropic** SDK for FAQ instant answers on the contact page
+  (`app/services/shared/faq_answer_service.py`, model `claude-haiku-4-5`, structured output via
+  `messages.parse`). Answers only from `app/content/faq.md` / `faq.ja.md`; off when
+  `ANTHROPIC_API_KEY` is unset, and with `DEBUG=true` it prints instead of calling the API.
 - **boto3** (only imported when `STORAGE_BACKEND=s3`) for S3-compatible image storage — see §3.
 - Docker Compose (`app` + `postgres:16` + `redis`) for local dev; the Dockerfile runs
   `alembic upgrade head` before `uvicorn`. `PYTHONDONTWRITEBYTECODE=1` avoids a stale-bytecode
@@ -43,10 +49,10 @@ How the codebase is organized and the conventions new code should follow. For th
 ## 2. Layered architecture
 
 Every feature follows the same three-layer split, inside one of four domain subpackages
-(`identity/`, `talent/`, `events/`, `marketplace/`) plus a `shared/` subpackage for the one
-genuinely cross-domain feature (notifications). `cart`/`order`/`payment`/`shipping` live under
-`marketplace/`; `events`'s ticket checkout depending on `payment_service` crosses that boundary on
-purpose.
+(`identity/`, `talent/`, `events/`, `marketplace/`) plus a `shared/` subpackage for cross-domain
+features (notifications, contact-form inquiries, FAQ instant answers).
+`cart`/`order`/`payment`/`shipping` live under `marketplace/`; `events`'s ticket checkout depending
+on `payment_service` crosses that boundary on purpose.
 
 1. **`app/router/<domain>/<feature>.py`** — route functions only. Pulls `get_db`,
    `get_current_user`, `rate_limit(...)` as dependencies, calls one service method, translates the
@@ -117,20 +123,47 @@ except ServiceError as e:
     anything different from just returning the list. The same collapse applies to a single-object
     read that's *only* `db.get(...)`/`.first()` immediately returned — `return db.get(X, id)`
     directly, still typed `X | None` since that call itself can genuinely return `None`. It does
-    **not** apply once the query result gets wrapped into a bigger Pydantic object before
-    returning (`EventsPageRead(concerts=...)`, `IdolDetailRead(idol=..., ...)`, `CartDetailRead(...)`)
-    — a Pydantic model instance has no `__bool__`/`__len__`, so it's always truthy, and the
-    `if not entity: return None` guard in front of it is the only way the router can still tell
-    "nothing here" from "found." That guard stays.
+    **not** apply to a detail object built around one looked-up row (`IdolDetailRead(idol=...)`):
+    a Pydantic model instance is always truthy, so its `if not entity: return None` guard is the
+    only way the router can still tell "not found." Page and list objects built from collections
+    (`EventsPageRead`, `CartDetailRead`, ...) have no such guard: empty is a valid result.
 - **Checkout/payment exceptions** (`app/exception/checkout.py`): `CartItemError` and subclasses
   (`InsufficientStockError`, `PaymentAmountMismatch`, `UnsupportedGatewayError`, etc.), raised in
   the service, caught in the router, mapped to a status code. Use this shape for new multi-step
   flows.
-- **DB-trigger errors** (`app/exception/db_triggers.py`): `TriggerViolationError` + 8 named
-  subclasses matching the 12 Postgres triggers in `database-design.md` §4. `commit_or_raise()` /
+- **DB-trigger errors** (`app/exception/db_triggers.py`): `TriggerViolationError` + 10 named
+  subclasses, covering the 12 Postgres triggers (listed in `database-design.md` §7.5) plus the
+  unique-constraint violations callers need to tell apart (duplicate idempotency key, duplicate
+  ticket type). `commit_or_raise()` /
   `flush_or_raise()` replace a bare `db.commit()`/`db.flush()` at any write a trigger can fire on;
   each subclass carries its own `status_code`. A function can raise both a `TriggerViolationError`
   and a `ServiceError` (e.g. `ticket_service.checkout_ticket`) — the router catches both.
+
+### Error codes in the response
+
+Every error body is `{"detail": ..., "code": ...}` (the catalog is in `api-spec.md` §0). `detail`
+is FastAPI's usual value; `code` is a stable snake_case identifier the frontend branches on instead
+of parsing English text.
+
+- All three families above (`ServiceError`, `CartItemError`, `TriggerViolationError`) inherit
+  `CodedError` (`app/exception/common.py`), which gives each class a `code`. A raise site can
+  override it for a more specific case: `BadRequestError("...", code="entries_closed")`. Give a
+  new fan-facing business rule its own code; generic manager-form checks can keep the class code.
+- `app/exception/handlers.py` (registered in `main.py`) builds the body. The code comes from, in
+  order: an `ApiHTTPException` raised in a router (e.g. `code="invalid_credentials"`); the error
+  the `HTTPException` was raised **from**; a default for the status (`not_found`,
+  `not_authenticated`, `rate_limited`, ...). So routers keep the `raise HTTPException(...) from e`
+  pattern above; **dropping `from e` silently downgrades the code** to the status default.
+- Empty results aren't errors: list endpoints return `[]`, page endpoints an object with empty
+  lists. `404` is only for a specific missing resource.
+- A model validated by hand inside a router (e.g. from `Form(...)` fields) re-raises through
+  `request_validation_error(e)`, so its 422 has the same field-error list as FastAPI's own.
+- **Unexpected exceptions**: `UnhandledErrorMiddleware` (same module, added in `main.py` *before*
+  `CORSMiddleware` so CORS wraps it) logs the traceback and returns a JSON 500 with
+  `code: "internal_error"`. Without it, FastAPI builds the 500 outside every middleware, the
+  response has no CORS headers, and the browser reports a network error instead of the 500.
+- 422 request-validation errors keep FastAPI's list-of-field-errors `detail`, with
+  `code: "validation_error"`.
 
 ### Route handlers: `def`, not `async def`
 
@@ -174,8 +207,11 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
   and no way for a crash to leave a counter without an expiry (which would rate-limit that client
   forever). A transaction is enough because neither command depends on the other's result; logic
   that has to branch on a value read mid-way would need a Lua script instead. Past the limit it
-  reads the `TTL` (a separate call, only for the 429 message). On a Redis error it logs and lets
-  the request through (fail-open). Behind Render's reverse proxy, `main.py` wraps the app in
+  reads the `TTL` (a separate call, only for the 429 message). On a Redis error it prints a
+  warning and lets the request through (fail-open). A third key function, `user_or_ip_key`, is
+  for auth-optional routes (`get_current_user_optional`): it keys on the user when a token was
+  sent and falls back to the `ip_key` bucket for guests. `user_key`/`user_or_ip_key` read
+  `request.state.user`, so the auth dependency must come before `rate_limit` in the signature. Behind Render's reverse proxy, `main.py` wraps the app in
   `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware` so `ip_key` sees a client IP rather
   than the proxy's — but with `trusted_hosts="*"` that IP is the leftmost `X-Forwarded-For` hop,
   which the client controls (`docs/bugs.md` #7; fix plan in `docs/plans/rate-limit-client-ip.md`).
@@ -187,8 +223,9 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
   | Auth / brute-force | `ip_key` | 3–10 / 60s | Credential stuffing resistance | `register`, `login`, `forgot_password` |
   | Money / inventory | `user_key` | 3 / 60s | Reserves scarce inventory or money | `checkout_order`, `checkout_new_ticket`, `apply_to_lottery`, `add_to_cart` |
   | Privilege escalation | `user_key` | 3 / 60s | Grants elevated access | `make_admin`, `create_manager` |
-  | Authenticated reads | `user_key` | 5–30 / 60s | Cheap, still worth a ceiling | `notifications/unread-count` (30), `me` (10) |
-  | Public reads | `ip_key` | 5–10 / 60s | Anti-scraping / DB cost control | `products/all`, `products/search` |
+  | Authenticated reads | `user_key` | 10–60 / 60s | Cheap, still worth a ceiling; polled/bootstrap reads get the top of the range | `notifications/unread-count` (60), `me` (60), `payment/status*` (20) |
+  | Public reads | `ip_key` / `user_or_ip_key` | 10–30 / 60s | Anti-scraping / DB cost control | `products/all`, `products/store-page`, `*/detail` (30), `products/search` (10) |
+  | Contact form | `user_or_ip_key` | 3–5 / 600s | A submit can email an arbitrary address; an instant answer costs a paid API call | `inquiries/submit` (3), `inquiries/instant-answer` (5) |
   | Manager/admin CRUD | `user_key` | 20–30 / 60s | Safety net against a retry-loop, not a security control | most `talent`/`events`/`marketplace` admin routers |
 
 - **Image storage (`app/utils/storage.py`)** — an ABC (`StorageBackend`) with
@@ -219,8 +256,8 @@ to Render on `main`.
 
 ## 5. Conventions for new code
 
-- Route prefixes/tags match the casing of the closest existing sibling resource — the original
-  boilerplate mixed `/Cart`/`/Categories` with `/order`/`/payment`.
+- Route prefixes are lowercase, matching every existing router (`/cart`, `/categories`,
+  `/order`, `/payment`, ...).
 - Every mutating/user-scoped query filters by `user_id` or `company_id` at the query level, not
   just via `get_current_user`.
 - Pydantic schemas wrapping an ORM object set `model_config = {"from_attributes": True}`.
@@ -233,13 +270,14 @@ to Render on `main`.
 - New model modules must be added to `app/db/base.py`'s import list, or standalone scripts can hit
   `InvalidRequestError: ... failed to locate a name` when SQLAlchemy resolves a string-based
   `relationship()` reference.
-- New tables feeding the future ETL pipeline should emit a `domain_events` row in the same
-  transaction as the write.
-- No live Postgres/network access in the environments this is typically verified in —
-  verification relies on `py_compile` sweeps and AST-based static checks (every
+- Once the ETL pipeline is built (`project_status.md` §5), writes feeding it should emit a
+  `domain_events` outbox row in the same transaction. That table doesn't exist yet — don't create
+  one ad hoc for a single feature.
+- Verification: CI runs `alembic upgrade head` and the full test suite (unit + integration)
+  against Postgres 16 + Redis on every push/PR. When a change is made without a reachable
+  Postgres, fall back to `py_compile` sweeps and AST-based static checks (every
   `ForeignKey`/`relationship(back_populates=...)` pair resolves and is reciprocal; every intra-app
-  import resolves). Treat `alembic upgrade head` plus hitting each endpoint against a real DB as
-  the standing follow-up.
+  import resolves) and say so — that's a substitute, not a replacement, for CI.
 - **Every function needs a return type, every parameter needs a type** — enforced by ruff's `ANN`
   rules. `tests/*` and `scripts/*` are exempt.
   - The old sentinel-return convention (`Literal["forbidden", "not_found"]`) is superseded by the

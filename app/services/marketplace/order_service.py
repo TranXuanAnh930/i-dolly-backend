@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.cache.invalidation import CacheInvalidation
@@ -57,15 +57,20 @@ class OrderService:
 
         cart_items = db.query(Cart).filter(Cart.user_id==user_id).all()
         if not cart_items:
-            raise CartItemError("No item in cart")
+            raise CartItemError("No item in cart", code="cart_empty")
         total_amount = sum(with_tax(item.total_price) for item in cart_items)
         if payment_data.amount!=total_amount:
             raise PaymentAmountMismatch("Payment amount does not match cart total!")
 
         product_ids = [cart_item.product_id for cart_item in cart_items]
-        capped_products = db.query(Product).filter(Product.id.in_(product_ids), Product.category.has(is_resale_capped=True)).all()
-        capped_product_ids = {product.id for product in capped_products}
+        # Held until commit. Every checkout touching one of these products queues here, so the
+        # resale-cap and stock checks below read counts no concurrent checkout can still change.
+        # populate_existing() makes the checks read the locked rows, not a stale identity-map copy.
+        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
 
+        capped_product_ids = set(
+            db.scalars(select(Product.id).filter(Product.id.in_(product_ids), Product.category.has(is_resale_capped=True)))
+        )
         if capped_product_ids:
         # One grouped query for every resale-capped item in the cart.
             past_qty = dict(
@@ -77,9 +82,6 @@ class OrderService:
                 if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > RESALE_CAP_QUANTITY:
                     raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the {RESALE_CAP_QUANTITY}-unit resale cap")
 
-        # populate_existing() is required: the resale-cap query already loaded these rows unlocked,
-        # and without it the stock check would read those stale copies instead of the locked rows.
-        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
         for product in products:
             item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
             if product.quantity < item.quantity:
@@ -146,7 +148,7 @@ class OrderService:
         if not order:
             raise NotFoundError("Order not found")
         if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
-            raise BadRequestError("Order is already shipped and cannot be cancelled")
+            raise BadRequestError("Order is already shipped and cannot be cancelled", code="order_already_shipped")
         order.status = OrderStatus.cancelled
         order.shippingstatus.status = SchemaShippingStatus.cancelled
         db.commit()
@@ -164,7 +166,7 @@ class OrderService:
         if not order_shippingstatus:
             raise NotFoundError("Order not found")
         if order_shippingstatus.status == SchemaShippingStatus.cancelled:
-            raise BadRequestError("Order is cancelled and its shipping status can no longer be updated")
+            raise BadRequestError("Order is cancelled and its shipping status can no longer be updated", code="order_cancelled")
         order_shippingstatus.status = new_status
         # Set explicitly; server_onupdate isn't backed by a DB trigger.
         order_shippingstatus.updated_at = datetime.now(timezone.utc)
@@ -199,7 +201,7 @@ class OrderService:
             raise ForbiddenError("Managers can only ship orders containing their own company's products")
         if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
             current = order.shippingstatus.status.value if order.shippingstatus else "unknown"
-            raise BadRequestError(f"Order cannot be marked shipped from its current status ({current})")
+            raise BadRequestError(f"Order cannot be marked shipped from its current status ({current})", code="invalid_shipping_transition")
         order.shippingstatus.status = SchemaShippingStatus.shipped
         order.shippingstatus.updated_at = datetime.now(timezone.utc)
         NotificationService.create_notification(db, order.user_id, NotificationType.order_shipped, order_id=order.id)

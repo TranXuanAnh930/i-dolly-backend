@@ -61,7 +61,8 @@ def auth_headers(email="demo@example.com", password="demo123"):
 
 def test_list_merch_details_empty():
     response = client.get("/merch_details/all")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_get_merch_detail_not_found():
     response = client.get(f"/merch_details/{FAKE_ID}")
