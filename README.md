@@ -148,6 +148,10 @@ docker compose exec app python scripts/seed.py
 Populates a full fictional roster — management companies, idol groups, venues, concerts, ticket
 types, and marketplace products. Idempotent — safe to re-run.
 
+For a Japanese-language version of the same data (names, descriptions, concert titles, product
+titles), run `scripts/seed_ja.py` instead. Use one or the other per database — they share user
+emails, and each skips if either version's data is already present.
+
 ### 5. Run tests
 ```bash
 docker compose exec app pytest --cov=app

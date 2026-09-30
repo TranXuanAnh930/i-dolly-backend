@@ -72,7 +72,10 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   5 groups + 3 solos, 6 venues, 6 concerts, 18 ticket types (lottery + direct sale), 5 categories,
   a 20-item marketplace, 2 lottery campaigns with preferences/entries, 1 manually-issued ticket.
   Idol portraits and product covers are procedural placeholder art pushed through the real
-  `get_storage().save()` pipeline — see `tests/fixtures/README.md`.
+  `get_storage().save()` pipeline — see `tests/fixtures/README.md`. `scripts/seed_ja.py` is a
+  Japanese-language alternative with the same structure (reuses `seed.py`'s helpers; lookup keys
+  like colors/positions/genres/categories and fixture filenames stay English). The two are
+  mutually exclusive per database — each skips if either sentinel company exists.
 - **Notifications** (`app/db/models/shared/notification.py`): a `notifications` table
   (`database-design.md` §3.19) covering 12 event types, one nullable FK per referenced entity kind.
   Producers fire inline (no cron/Beat job): `order_service.checkout()`,
