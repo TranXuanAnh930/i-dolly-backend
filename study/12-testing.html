@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Testing Strategy · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 12</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 12</p>
+      <h1><span lang="en">Testing strategy</span><span lang="ja" class="sub">テスト戦略</span></h1>
+      <p class="lede" lang="en">923 tests in two suites, a throwaway Postgres per run, and the guard rails added after tests once wrote into the dev database.</p>
+      <p class="lede" lang="ja">2つのスイートに923個のテスト、実行ごとに作り直す Postgres、そしてテストが開発 DB に書き込んでしまった後に追加した安全装置。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en"><b>Unit</b> (531 tests): services with a mocked <code>Session</code> and fake Redis. Fast, no Postgres.</span><span lang="ja" class="sub"><b>単体</b>（531個）：モックの <code>Session</code> と偽の Redis でサービスをテスト。速く、Postgres 不要。</span></li>
+          <li><span lang="en"><b>Integration</b> (392 tests): real HTTP through <code>TestClient</code>, real Postgres with real triggers, migrated from empty each run.</span><span lang="ja" class="sub"><b>統合</b>（392個）：<code>TestClient</code> で本物の HTTP、本物のトリガー付きの本物の Postgres。毎回空から マイグレーションする。</span></li>
+          <li><span lang="en"><b>Race tests</b> use real threads and a barrier (topic 06). <b>Permission tests</b> hit every role (topic 05).</span><span lang="ja" class="sub"><b>競合テスト</b>は実スレッドと Barrier を使う（トピック06）。<b>権限テスト</b>は全ロールで確認する（トピック05）。</span></li>
+          <li><span lang="en">Together: <b>94.6% line coverage</b>. CI runs lint, migrations and both suites on every push, and deploys only if they pass.</span><span lang="ja" class="sub">合わせて<b>行カバレッジ94.6%</b>。CI はプッシュごとに lint・マイグレーション・両スイートを実行し、通ったときだけデプロイする。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">What each level proves</span><span lang="ja" class="sub">各レベルが証明するもの</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Level</span><span lang="ja">レベル</span></th><th><span lang="en">Proves</span><span lang="ja">証明するもの</span></th><th><span lang="en">Can't prove</span><span lang="ja">証明できないもの</span></th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">Unit (mocks)</span><span lang="ja">単体（モック）</span></td><td><span lang="en">Branches in business logic, error mapping</span><span lang="ja">業務ロジックの分岐、エラーの変換</span></td><td><span lang="en">Real SQL, constraints, locks, triggers</span><span lang="ja">本物の SQL、制約、ロック、トリガー</span></td></tr>
+            <tr><td><span lang="en">Integration (real DB)</span><span lang="ja">統合（本物の DB）</span></td><td><span lang="en">Queries, transactions, triggers, auth wiring</span><span lang="ja">クエリ、トランザクション、トリガー、認証の配線</span></td><td><span lang="en">Real third parties, production load</span><span lang="ja">本物の外部サービス、本番の負荷</span></td></tr>
+            <tr><td><span lang="en">Concurrency</span><span lang="ja">並行性</span></td><td><span lang="en">Locks really serialize racers</span><span lang="ja">ロックが競合を本当に直列化すること</span></td><td><span lang="en">Every possible interleaving</span><span lang="ja">起こりうるすべての実行順序</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">Coverage is a floor, not a goal</span><span lang="ja" class="sub">カバレッジは下限であって目標ではない</span></h3>
+      <p lang="en">Line coverage says a line ran, not that its result was checked. A test with no assertions can reach 100%. Branch coverage is stricter, and mutation testing (change the code, see if a test fails) is stricter still. The best signal that a test is useful: it fails when you break the thing it's about.</p>
+      <p lang="ja">行カバレッジは行が実行されたことを示すだけで、結果が確認されたことは示さない。アサーションのないテストでも100%になりうる。分岐カバレッジはより厳しく、ミューテーションテスト（コードを変えてテストが失敗するか見る）はさらに厳しい。テストが役に立つかの一番の目安：対象を壊したときに失敗すること。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. Redirect to a test database, before anything imports settings</span><span lang="ja" class="sub">1. 設定が import される前にテスト用 DB へ切り替える</span></h3>
+<pre class="code">load_dotenv()
+_original_url = make_url(os.environ["DATABASE_URL"])
+os.environ["_ORIGINAL_DATABASE_URL"] = _original_url.render_as_string(hide_password=False)
+_test_url = _original_url.set(database=<span class="hl">f"{_original_url.database}_test"</span>)
+os.environ["DATABASE_URL"] = _test_url.render_as_string(hide_password=False)
+...
+fake_redis = fakeredis.FakeRedis(decode_responses=False)
+patch("app.cache.redis_client.redis_client", fake_redis).start()</pre>
+      <p class="src-line"><a class="ref" data-p="tests/conftest.py" data-l="32-58"></a></p>
+      <p lang="en">Order matters: settings are read once at first import, so the redirect must run at the very top of the root conftest.</p>
+      <p lang="ja">順番が重要：設定は最初の import で1回だけ読まれるので、切り替えはルートの conftest の一番最初で行う必要がある。</p>
+
+      <h3><span lang="en">2. A fresh, migrated database per run</span><span lang="ja" class="sub">2. 実行ごとに新しくマイグレーション済みの DB</span></h3>
+<pre class="code">assert test_db_name and test_db_name.endswith("_test"), "refusing to recreate ..."
+conn.execute(text(f'DROP DATABASE IF EXISTS "{test_db_name}" WITH (FORCE)'))
+conn.execute(text(f'CREATE DATABASE "{test_db_name}"'))
+command.upgrade(Config("alembic.ini"), <span class="hl">"head"</span>)</pre>
+      <p class="src-line"><a class="ref" data-p="tests/integration/conftest.py" data-l="12-50"></a></p>
+      <p lang="en">Integration tests run against the schema the migrations actually produce, triggers included, not a <code>create_all()</code> approximation.</p>
+      <p lang="ja">統合テストは <code>create_all()</code> による近似ではなく、マイグレーションが実際に作るスキーマ（トリガー込み）に対して実行される。</p>
+
+      <h3><span lang="en">3. The guard added after a real incident</span><span lang="ja" class="sub">3. 実際の事故の後に追加した安全装置</span></h3>
+<pre class="code">def _assert_app_session_targets_test_database() -&gt; None:
+    from app.db.session import engine
+    bound = engine.url.database
+    if not (bound and bound.endswith("_test")):
+        raise RuntimeError(f"app.db.session is bound to {bound!r}, which is not a _test database ...")</pre>
+      <p class="src-line"><a class="ref" data-p="tests/integration/conftest.py" data-l="53-81"></a></p>
+      <p lang="en">If import order ever broke the redirect, the race harness would seed and mutate the real database. It happened once: test products, racer users and their orders appeared in the dev DB. Now the suite refuses to start instead.</p>
+      <p lang="ja">import の順番が崩れて切り替えが効かないと、競合テストのハーネスが本物の DB にデータを作って変更してしまう。実際に一度起きた：テスト用の商品、競合テストのユーザーとその注文が開発 DB に現れた。今はテストスイートが起動を拒否する。</p>
+
+      <h3><span lang="en">4. Autouse fixtures that stop leaks</span><span lang="ja" class="sub">4. 漏れを防ぐ autouse フィクスチャ</span></h3>
+<pre class="code"><span class="c"># unit: never reach a real Celery worker (and through it Resend or a real draw)</span>
+@pytest.fixture(autouse=True)
+def _no_real_celery_dispatch():
+    with patch("app.celery_app.celery_app.send_task") as mock_send_task:
+        yield mock_send_task
+
+<span class="c"># integration: rate-limit counters would otherwise leak between tests and randomly 429</span>
+@pytest.fixture(autouse=True)
+def reset_rate_limits(): ...</pre>
+      <p class="src-line"><a class="ref" data-p="tests/unit/conftest.py" data-l="6-19"></a> · <a class="ref" data-p="tests/integration/conftest.py" data-l="84-93"></a></p>
+
+      <h3><span lang="en">5. A unit test</span><span lang="ja" class="sub">5. 単体テストの例</span></h3>
+      <p lang="en">Unit tests build <code>MagicMock</code> users, products and sessions and call the service directly (<a class="ref" data-p="tests/unit/marketplace/test_cart_service.py" data-l="1-60"></a>). They cover error branches cheaply, but they can't tell you whether a query is correct.</p>
+      <p lang="ja">単体テストは <code>MagicMock</code> でユーザー・商品・セッションを作り、サービスを直接呼ぶ（<a class="ref" data-p="tests/unit/marketplace/test_cart_service.py" data-l="1-60"></a>）。エラーの分岐を安くカバーできるが、クエリが正しいかどうかは分からない。</p>
+
+      <h3><span lang="en">6. A test that found a bug</span><span lang="ja" class="sub">6. バグを見つけたテスト</span></h3>
+      <p lang="en">The shipping-address suite checks ownership on every by-id read and write. It found the <code>user_id == user_id</code> IDOR (topic 05): 5 of its 10 tests fail against the old code (<a class="ref" data-p="tests/integration/marketplace/test_shipping_addresses.py"></a>).</p>
+      <p lang="ja">配送先のテストスイートは、id 指定のすべての読み書きで所有権を確認する。これが <code>user_id == user_id</code> の IDOR（トピック05）を見つけた：10個のテストのうち5個が古いコードで失敗する（<a class="ref" data-p="tests/integration/marketplace/test_shipping_addresses.py"></a>）。</p>
+
+      <h3><span lang="en">7. CI</span><span lang="ja" class="sub">7. CI</span></h3>
+<pre class="code">lint   → ruff check .
+test   → Postgres 16 + Redis services → alembic upgrade head → pytest --cov=app → Codecov
+deploy → needs: [lint, test] → Render (main only)</pre>
+      <p class="src-line"><a class="ref" data-p=".github/workflows/test.yml"></a> · <span lang="en">numbers:</span><span lang="ja">数値：</span> <a class="ref" data-p="docs/test-coverage.md"></a></p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Real Postgres, not SQLite</b>: the rules that matter most here (triggers, <code>FOR UPDATE</code>, enums, generated columns) don't exist in SQLite. Testing on it would prove nothing about them.</span><span lang="ja" class="sub"><b>SQLite ではなく本物の Postgres</b>：ここで最も重要なルール（トリガー、<code>FOR UPDATE</code>、enum、生成列）は SQLite に存在しない。SQLite でテストしても何も証明できない。</span></li>
+        <li><span lang="en"><b>Two suites</b>: unit tests run anywhere in seconds; integration tests are slower but catch what mocks can't. Neither reaches 94.6% alone (unit alone is 66%).</span><span lang="ja" class="sub"><b>2つのスイート</b>：単体テストはどこでも数秒で動く。統合テストは遅いがモックでは捕まえられないものを捕まえる。どちらも単独では94.6%にならない（単体だけなら66%）。</span></li>
+        <li><span lang="en"><b>fakeredis everywhere</b>: no Redis needed to run tests, at the cost of never testing real Redis behavior like timeouts or outages.</span><span lang="ja" class="sub"><b>どこでも fakeredis</b>：テストの実行に Redis が不要。代わりに、タイムアウトや障害のような本物の Redis の挙動はテストされない。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout">
+        <p class="label"><span lang="en">What's not covered</span><span lang="ja">カバーされていないもの</span></p>
+        <p lang="en">Line coverage only, no branch coverage. Mock-heavy unit tests are tied to the exact query chain, so a harmless refactor can break them. No test calls the real PayPal sandbox. No load test yet: <code>benchmark/bench.py</code> is a scaffold with TODOs. And no test simulates Redis being down, which is exactly bug #11.</p>
+        <p lang="ja">行カバレッジだけで、分岐カバレッジはない。モック中心の単体テストはクエリの書き方そのものに依存するので、無害なリファクタリングでも壊れることがある。本物の PayPal サンドボックスを呼ぶテストはない。負荷テストもまだない：<code>benchmark/bench.py</code> は TODO だらけの雛形。Redis の停止を再現するテストもなく、それがまさにバグ #11。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">What unit and integration tests each prove here.</span><span lang="ja" class="sub">ここで単体テストと統合テストがそれぞれ証明するもの。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">How tests are kept off the dev database, and the incident behind the guard.</span><span lang="ja" class="sub">テストを開発 DB から切り離す方法と、安全装置の背景にある事故。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Why integration tests migrate from empty instead of <code>create_all()</code>.</span><span lang="ja" class="sub">統合テストが <code>create_all()</code> ではなく空からマイグレーションする理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">Why SQLite would be the wrong test database here.</span><span lang="ja" class="sub">ここで SQLite がテスト用 DB として不適切な理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">What 94.6% line coverage does and doesn't mean.</span><span lang="ja" class="sub">行カバレッジ94.6%が意味すること、意味しないこと。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">The CI pipeline, step by step.</span><span lang="ja" class="sub">CI パイプラインの各ステップ。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">The gaps: branch coverage, PayPal, load, Redis outage.</span><span lang="ja" class="sub">不足：分岐カバレッジ、PayPal、負荷、Redis の障害。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How do you test your backend?</span><span lang="ja" class="sub">バックエンドをどうテストしていますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Two suites. Unit tests call services with a mocked session to cover business-rule branches quickly. Integration tests go through real HTTP into a real Postgres that's rebuilt from migrations each run, so triggers, constraints and locks are exercised. On top of that there are race tests with real threads and a permission matrix per role. CI runs everything on every push; about 923 tests, 94.6% line coverage.</p>
+            <p lang="ja">2つのスイート。単体テストはモックのセッションでサービスを呼び、業務ルールの分岐を素早くカバーする。統合テストは本物の HTTP から、毎回マイグレーションで作り直す本物の Postgres まで通すので、トリガー・制約・ロックも動く。さらに実スレッドによる競合テストと、ロールごとの権限テストがある。CI はプッシュごとにすべて実行する。約923個のテストで行カバレッジ94.6%。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why not just use SQLite for tests? It's faster.</span><span lang="ja" class="sub">テストに SQLite を使わないのはなぜ？速いのに。</span></span></summary>
+          <div class="ans">
+            <p lang="en">The most important behavior is Postgres-specific: PL/pgSQL triggers, <code>SELECT … FOR UPDATE</code>, enum types, generated columns, <code>gen_random_uuid()</code>. SQLite has none of these, so tests would pass while production breaks. Test against the database you run.</p>
+            <p lang="ja">最も重要な挙動が Postgres 固有だから：PL/pgSQL のトリガー、<code>SELECT … FOR UPDATE</code>、enum 型、生成列、<code>gen_random_uuid()</code>。SQLite にはどれもないので、テストは通るのに本番で壊れる。本番で使う DB に対してテストする。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Tell me about a test-infrastructure bug you fixed.</span><span lang="ja" class="sub">直したテスト基盤のバグについて話してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">The suite redirects <code>DATABASE_URL</code> to a <code>_test</code> database, but the app's engine is created once at first import. At one point the redirect didn't take effect for the engine the race harness writes through, and the concurrency tests seeded products, users and orders into the dev DB. I added a startup assertion that the engine's database name ends in <code>_test</code>; otherwise the suite refuses to run. Plus an autouse fixture that mocks Celery so unit tests can't send real emails.</p>
+            <p lang="ja">スイートは <code>DATABASE_URL</code> を <code>_test</code> の DB に切り替えるが、アプリのエンジンは最初の import 時に1回だけ作られる。ある時、競合テストのハーネスが書き込むエンジンに切り替えが効いておらず、並行性テストが開発 DB に商品・ユーザー・注文を作ってしまった。エンジンの DB 名が <code>_test</code> で終わることを起動時に確認し、そうでなければスイートの実行を拒否するようにした。さらに、単体テストが本物のメールを送らないよう Celery をモックする autouse フィクスチャも入れた。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">You have 94.6% coverage. Is the code well tested?</span><span lang="ja" class="sub">カバレッジは94.6%です。十分にテストされていますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Not necessarily. It's line coverage, so a line counts even if only one side of its <code>if</code> ran, or nothing was asserted. The more convincing evidence is specific: the race tests fail if you remove the lock, the shipping tests fail against the old IDOR code. Next steps: turn on branch coverage and add tests for failure modes like Redis being down.</p>
+            <p lang="ja">必ずしもそうではない。行カバレッジなので、<code>if</code> の片側しか通っていなくても、何も確認していなくても、その行は数えられる。より説得力があるのは具体的な証拠：ロックを外すと競合テストが失敗する、古い IDOR のコードでは配送先のテストが失敗する。次の一歩は、分岐カバレッジを有効にし、Redis の停止のような障害時のテストを追加すること。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How would you make the integration suite faster without losing confidence?</span><span lang="ja" class="sub">信頼性を落とさずに統合テストを速くするには？</span></span></summary>
+          <div class="ans">
+            <p lang="en">(1) Wrap each non-concurrency test in a transaction with a SAVEPOINT and roll back at the end, instead of creating and deleting rows; the race tests keep real commits because they need separate connections. (2) Build the migrated schema once and clone it with <code>CREATE DATABASE … TEMPLATE</code> per worker. (3) Run in parallel with <code>pytest-xdist</code>, one database per worker. (4) Keep a small smoke set on every push and the full suite on merge.</p>
+            <p lang="ja">(1) 並行性テスト以外は、行を作って消す代わりに、各テストを SAVEPOINT 付きのトランザクションで囲んで最後にロールバックする。競合テストは別々の接続が必要なので本物のコミットのまま。(2) マイグレーション済みのスキーマを1回だけ作り、ワーカーごとに <code>CREATE DATABASE … TEMPLATE</code> で複製する。(3) <code>pytest-xdist</code> でワーカーごとに1つの DB を使って並列実行する。(4) プッシュごとには小さなスモークテスト、マージ時に全体を実行する。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Run <code>pytest tests/unit -q</code> with no Postgres running. Then run the full suite with Docker's Postgres up.</span><span lang="ja" class="sub">Postgres を起動せずに <code>pytest tests/unit -q</code> を実行する。次に Docker の Postgres を起動して全体を実行する。</span></li>
+          <li><span lang="en">Run <code>pytest --cov=app --cov-branch</code> and compare with line coverage. Which file drops the most?</span><span lang="ja" class="sub"><code>pytest --cov=app --cov-branch</code> を実行して行カバレッジと比べる。最も下がるファイルはどれか？</span></li>
+          <li><span lang="en">Write a unit test where <code>redis_client.get</code> raises <code>ConnectionError</code> and assert the store page still loads. (It will fail today: that's bug #11.)</span><span lang="ja" class="sub"><code>redis_client.get</code> が <code>ConnectionError</code> を出す単体テストを書き、ストアページが読み込めることを確認する（今は失敗する：それがバグ #11）。</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

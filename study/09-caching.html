@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Redis Caching · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 09</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 09</p>
+      <h1><span lang="en">Caching with Redis</span><span lang="ja" class="sub">Redis によるキャッシュ</span></h1>
+      <p class="lede" lang="en">Read-heavy pages served from Redis, and the two hard problems: keeping the cache fresh, and surviving when Redis is down.</p>
+      <p class="lede" lang="ja">読み取りの多いページを Redis から返す仕組みと、2つの難題：キャッシュを新しく保つことと、Redis が落ちたときに生き残ること。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en"><b>Cache-aside</b>: read Redis; on a miss, build the page from Postgres and store it with a <b>5-minute TTL</b>.</span><span lang="ja" class="sub"><b>キャッシュアサイド</b>：Redis を読み、なければ Postgres からページを作り、<b>5分の TTL</b> 付きで保存する。</span></li>
+          <li><span lang="en">Values are Pydantic models dumped to JSON-safe dicts and packed with <b>msgpack</b> (smaller and faster than JSON).</span><span lang="ja" class="sub">値は Pydantic モデルを JSON 互換の dict にして <b>msgpack</b> で詰める（JSON より小さく速い）。</span></li>
+          <li><span lang="en">Writes <b>delete</b> the affected keys after committing. The TTL is the safety net for anything missed.</span><span lang="ja" class="sub">書き込みはコミット後に影響するキーを<b>削除</b>する。漏れたものは TTL が安全網になる。</span></li>
+          <li><span lang="en">The code is split into a read side (<code>CacheService</code>) and an invalidation side (<code>CacheInvalidation</code>) to avoid circular imports.</span><span lang="ja" class="sub">循環 import を避けるため、読み取り側（<code>CacheService</code>）と削除側（<code>CacheInvalidation</code>）に分けている。</span></li>
+          <li><span lang="en">Weak spot: a Redis outage currently turns into 500s (bug #11).</span><span lang="ja" class="sub">弱点：現状では Redis の障害が 500 エラーになる（バグ #11）。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Caching patterns</span><span lang="ja" class="sub">キャッシュのパターン</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Pattern</span><span lang="ja">パターン</span></th><th><span lang="en">How</span><span lang="ja">仕組み</span></th><th><span lang="en">Note</span><span lang="ja">備考</span></th></tr></thead>
+          <tbody>
+            <tr><td><b><span lang="en">Cache-aside (used here)</span><span lang="ja">キャッシュアサイド（本プロジェクト）</span></b></td><td><span lang="en">App reads cache, fills it on a miss, deletes on write</span><span lang="ja">アプリがキャッシュを読み、なければ埋め、書き込み時に削除</span></td><td><span lang="en">Simple; the cache can be briefly stale</span><span lang="ja">単純。一時的に古くなることがある</span></td></tr>
+            <tr><td><span lang="en">Write-through</span><span lang="ja">ライトスルー</span></td><td><span lang="en">Every write updates DB and cache together</span><span lang="ja">書き込みのたびに DB とキャッシュを両方更新</span></td><td><span lang="en">Fresher; every write pays for the cache</span><span lang="ja">新しさは保てるが、書き込みごとにキャッシュのコスト</span></td></tr>
+            <tr><td><span lang="en">Write-behind</span><span lang="ja">ライトビハインド</span></td><td><span lang="en">Write to cache, flush to DB later</span><span lang="ja">キャッシュに書き、後で DB に反映</span></td><td><span lang="en">Fast; risks losing data</span><span lang="ja">速いがデータ喪失の危険</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">Delete, don't update</span><span lang="ja" class="sub">更新ではなく削除</span></h3>
+      <p lang="en">On a write, deleting the key is safer than writing the new value into it. Two concurrent updates can write their cache values in the wrong order, but two deletes can't conflict. The next read rebuilds from the DB, which is the source of truth.</p>
+      <p lang="ja">書き込み時は、新しい値をキャッシュに書くよりキーを削除する方が安全。同時に2つ更新すると、キャッシュへの書き込み順が逆になることがあるが、削除同士は衝突しない。次の読み取りで、正である DB から作り直す。</p>
+
+      <h3><span lang="en">Three classic cache failures</span><span lang="ja" class="sub">キャッシュの3つの典型的な障害</span></h3>
+      <ul>
+        <li><span lang="en"><b>Stampede</b>: a hot key expires and 1,000 requests all miss and hit the DB at once. Fix: a lock or single-flight so only one rebuilds, or refresh early.</span><span lang="ja" class="sub"><b>スタンピード</b>：人気のキーが切れ、1000件のリクエストが同時に外れて DB に殺到する。対策：ロックやシングルフライトで1つだけ作り直す、または期限前に更新する。</span></li>
+        <li><span lang="en"><b>Stale write-back</b>: request A misses and reads old data; a writer commits and deletes the key; A then stores the old data. The TTL bounds how long it lasts.</span><span lang="ja" class="sub"><b>古い値の書き戻し</b>：リクエスト A が外れて古いデータを読む。書き込み側がコミットしてキーを削除する。その後 A が古いデータを保存する。TTL がその期間の上限になる。</span></li>
+        <li><span lang="en"><b>Penetration</b>: requests for ids that don't exist always miss. Fix: cache the "not found" briefly.</span><span lang="ja" class="sub"><b>キャッシュ貫通</b>：存在しない id へのリクエストは常に外れる。対策：「見つからない」も短時間キャッシュする。</span></li>
+      </ul>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. A cache-aside read</span><span lang="ja" class="sub">1. キャッシュアサイドの読み取り</span></h3>
+<pre class="code">def get_cached_concert_detail(db: Session, id: uuid.UUID) -&gt; ConcertDetailRead | None:
+    cache_key = concert_detail_key(id)
+    cached = <span class="hl">redis_client.get(cache_key)</span>
+    if cached:
+        return ConcertDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
+    result = ConcertService.get_concert_detail_public(db, id)
+    if not result:
+        return None
+    <span class="hl">redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))</span>
+    return result</pre>
+      <p class="src-line"><a class="ref" data-p="app/cache/cache_service.py" data-l="125-136"></a></p>
+      <p lang="en">The cached value goes through the same Pydantic schema on the way out, so a cache hit and a DB read return exactly the same shape.</p>
+      <p lang="ja">キャッシュの値は取り出すときにも同じ Pydantic スキーマを通るので、キャッシュから返しても DB から返しても形はまったく同じ。</p>
+
+      <h3><span lang="en">2. Keys and invalidation</span><span lang="ja" class="sub">2. キーと削除</span></h3>
+<pre class="code">TTL_SECONDS = 60 * 5
+PRODUCTS_LIST_KEY = "products:list"
+EVENTS_PAGE_KEY   = "concerts:events_page"
+def concert_detail_key(id): return f"concerts:{id}:detail"
+
+<span class="c"># Every write that affects a concert detail knows its concert_id, so this deletes one key.</span>
+def delete_cached_concert_detail(id): redis_client.delete(concert_detail_key(id))
+
+def _delete_matching(pattern):
+    <span class="c"># keys() is an O(N) scan; fine at this key count, use SCAN if that grows.</span>
+    keys = <span class="hl">redis_client.keys(pattern)</span>
+    if keys: redis_client.delete(*keys)</pre>
+      <p class="src-line"><a class="ref" data-p="app/cache/invalidation.py" data-l="10-79"></a></p>
+
+      <h3><span lang="en">3. Where invalidation is called</span><span lang="ja" class="sub">3. 削除を呼ぶ場所</span></h3>
+<pre class="code"><span class="c"># in a router, after a manager edit (group.py)</span>
+result = GroupService.update_group(db, id, data, current_user)
+CacheService.delete_cached_groups_page()
+CacheService.delete_cached_members_page()
+
+<span class="c"># in a service, right after the commit (order_service.py checkout)</span>
+commit_or_raise(db)
+if payment.status == PaymentStatus.success:
+    CacheInvalidation.delete_cached_products()
+    CacheInvalidation.delete_cached_product_details()</pre>
+      <p class="src-line"><a class="ref" data-p="app/router/talent/group.py" data-l="71-80"></a> · <a class="ref" data-p="app/services/marketplace/order_service.py" data-l="115-120"></a></p>
+      <p lang="en">Always after the commit. Deleting before the commit opens a window where another request refills the cache with the old data.</p>
+      <p lang="ja">必ずコミットの後。コミット前に削除すると、その間に別のリクエストが古いデータでキャッシュを埋め直す隙間ができる。</p>
+
+      <h3><span lang="en">4. Why two classes</span><span lang="ja" class="sub">4. なぜクラスが2つあるのか</span></h3>
+      <p lang="en"><code>CacheService</code> (reads) calls services to fill the cache. Services (checkout, draw) need to invalidate. If services imported <code>CacheService</code>, the imports would loop. So <code>CacheInvalidation</code> depends only on Redis, services import that, and <code>CacheService</code> inherits from it (<a class="ref" data-p="app/cache/cache_service.py" data-l="58-60"></a>).</p>
+      <p lang="ja"><code>CacheService</code>（読み取り）はキャッシュを埋めるためにサービスを呼ぶ。一方でサービス（購入、抽選）は削除する必要がある。サービスが <code>CacheService</code> を import すると import が循環する。そこで <code>CacheInvalidation</code> は Redis にだけ依存させ、サービスはそれを import し、<code>CacheService</code> はそれを継承する（<a class="ref" data-p="app/cache/cache_service.py" data-l="58-60"></a>）。</p>
+
+      <h3><span lang="en">5. Tests use a fake Redis</span><span lang="ja" class="sub">5. テストでは偽の Redis を使う</span></h3>
+<pre class="code">fake_redis = fakeredis.FakeRedis(decode_responses=False)
+patch("app.cache.redis_client.redis_client", fake_redis).start()</pre>
+      <p class="src-line"><a class="ref" data-p="tests/conftest.py" data-l="43-58"></a></p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Cache whole page payloads</b>: the store and events pages join many tables. Caching the finished payload turns many queries into one Redis GET.</span><span lang="ja" class="sub"><b>ページ全体をキャッシュ</b>：ストアや公演のページは多くのテーブルを JOIN する。完成した結果をキャッシュすれば、多数のクエリが Redis の GET 1回になる。</span></li>
+        <li><span lang="en"><b>Short TTL plus explicit deletes</b>: explicit deletes keep data fresh after known writes; the 5-minute TTL catches anything a developer forgot to invalidate.</span><span lang="ja" class="sub"><b>短い TTL と明示的な削除</b>：既知の書き込み後は明示的な削除で新しさを保ち、削除し忘れたものは5分の TTL で拾う。</span></li>
+        <li><span lang="en"><b>Stock numbers can be stale on screen</b>: that's acceptable, because checkout re-reads stock under a row lock. The cache is for display, never for decisions.</span><span lang="ja" class="sub"><b>画面上の在庫数は古くてもよい</b>：購入時は行ロック付きで在庫を読み直すので許容できる。キャッシュは表示用で、判断には使わない。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #11</p>
+        <p lang="en"><b>A cache outage becomes a site outage.</b> <code>redis_client.get()</code> raises before the DB fallback runs, so pages 500 even though Postgres could answer. Invalidation after a commit raises too, so a successful write returns 500. And the client has no socket timeout, so a dropped connection hangs a thread. Plan: catch <code>RedisError</code> on reads and fall back to the DB, make invalidation best-effort, and set short timeouts (<a class="ref" data-p="docs/plans/redis-outage.md"></a>).</p>
+        <p lang="ja"><b>キャッシュの障害がサイト全体の障害になる。</b><code>redis_client.get()</code> が DB へのフォールバックより先に例外を出すので、Postgres が答えられるのにページが 500 になる。コミット後の削除も例外を出すので、成功した書き込みが 500 を返す。さらにクライアントにソケットのタイムアウトがないため、切れた接続でスレッドが止まる。計画：読み取りで <code>RedisError</code> を捕まえて DB に切り替え、削除は失敗しても続行し、短いタイムアウトを設定する（<a class="ref" data-p="docs/plans/redis-outage.md"></a>）。</p>
+      </div>
+      <div class="callout">
+        <p class="label"><span lang="en">Also worth mentioning</span><span lang="ja">その他言及すべき点</span></p>
+        <p lang="en"><code>KEYS pattern</code> blocks Redis while it scans every key; <code>SCAN</code> or a Redis set per namespace would be safer at scale. There's no stampede protection on hot pages. Cache, rate limiter and Celery broker share one Redis, so one outage hits all three.</p>
+        <p lang="ja"><code>KEYS pattern</code> は全キーを走査する間 Redis をブロックする。大規模なら <code>SCAN</code> か名前空間ごとの Redis のセットが安全。人気ページのスタンピード対策がない。キャッシュ・レート制限・Celery ブローカーが1つの Redis を共有しているので、1回の障害で3つとも影響を受ける。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">Cache-aside, write-through and write-behind.</span><span lang="ja" class="sub">キャッシュアサイド・ライトスルー・ライトビハインド。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why writes delete keys instead of updating them.</span><span lang="ja" class="sub">書き込みでキーを更新せず削除する理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Why invalidation must happen after the commit.</span><span lang="ja" class="sub">削除をコミット後に行う必要がある理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">What the TTL is for when you already invalidate.</span><span lang="ja" class="sub">削除しているのに TTL がある理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">Why the cache is split into two classes.</span><span lang="ja" class="sub">キャッシュを2つのクラスに分けている理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">Stampede, stale write-back and penetration, with fixes.</span><span lang="ja" class="sub">スタンピード、古い値の書き戻し、貫通と、その対策。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">Bug #11 and how to make the cache fail open.</span><span lang="ja" class="sub">バグ #11 と、キャッシュを障害時に素通りさせる方法。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">What do you cache, and why?</span><span lang="ja" class="sub">何をキャッシュしていますか？なぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Public, read-heavy pages that join many tables: the product list and store page, the events page, idol and group pages, and detail pages. They change rarely compared with how often they're read. Personal data like carts and orders is not cached.</p>
+            <p lang="ja">多くのテーブルを JOIN する、公開の読み取りが多いページ：商品一覧とストアページ、公演ページ、アイドルとグループのページ、詳細ページ。読まれる頻度に比べて変更は少ない。カートや注文のような個人のデータはキャッシュしない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How do you keep the cache in sync with the database?</span><span lang="ja" class="sub">キャッシュと DB をどう同期させていますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">After a write commits, the code deletes the keys that write affects, and the next read rebuilds from Postgres. Every key also has a 5-minute TTL, so even a forgotten invalidation heals itself. Anything that must be exact, like stock at checkout, is read from the DB under a lock, never from the cache.</p>
+            <p lang="ja">書き込みがコミットされたら、その書き込みが影響するキーを削除し、次の読み取りで Postgres から作り直す。すべてのキーには5分の TTL もあるので、削除し忘れても自然に直る。購入時の在庫のように正確さが必要なものは、キャッシュではなくロック付きで DB から読む。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Can a reader put stale data back into the cache after you invalidated it?</span><span lang="ja" class="sub">削除した後に、読み取り側が古いデータをキャッシュに戻すことはありますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Yes. Reader A misses and queries the DB. Before A writes to Redis, a writer commits and deletes the key. Then A stores its old result. Cache-aside can't fully prevent this; the TTL limits it to 5 minutes. For stricter needs: a short delayed second delete, a version number in the key, or a lock around rebuilds.</p>
+            <p lang="ja">ある。読み取り A がキャッシュに外れて DB を検索する。A が Redis に書く前に、書き込み側がコミットしてキーを削除する。その後 A が古い結果を保存する。キャッシュアサイドでは完全には防げず、TTL で5分に制限している。より厳密にするなら、少し遅らせた2回目の削除、キーにバージョン番号を入れる、作り直しをロックで囲む、などの方法がある。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why msgpack instead of JSON?</span><span lang="ja" class="sub">JSON ではなく msgpack を使うのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">It's a binary format, so payloads are smaller and faster to encode and decode, which matters for large page payloads read many times a second. The values are still validated through Pydantic on the way out, so the format is an internal detail.</p>
+            <p lang="ja">バイナリ形式なので、データが小さく、エンコードとデコードも速い。1秒に何度も読まれる大きなページには重要。取り出すときは Pydantic で検証するので、形式は内部の詳細にすぎない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">Redis goes down during a ticket sale. What happens, and what should happen?</span><span lang="ja" class="sub">チケット販売中に Redis が落ちました。何が起き、何が起きるべきですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Today: cached reads 500, successful checkouts return 500 after committing because invalidation raises, confirmation emails aren't queued, and a fan might retry with a new idempotency key and pay twice. The rate limiter fails open. What should happen: reads catch <code>RedisError</code> and go to Postgres; invalidation and enqueueing after commit are best-effort and logged; the Redis client has short socket timeouts; and the client reuses its idempotency key on retry. The DB is the source of truth, so the cache should only ever make things faster, never make them fail.</p>
+            <p lang="ja">現状：キャッシュの読み取りは 500 になり、成功した購入もコミット後の削除で例外が出て 500 を返す。確認メールはキューに入らず、ファンが新しい冪等キーで再試行して二重に支払うおそれがある。レート制限は素通りする。あるべき姿：読み取りは <code>RedisError</code> を捕まえて Postgres に行く。コミット後の削除とキュー投入は失敗しても続行してログに残す。Redis クライアントに短いソケットのタイムアウトを設定する。クライアントは再試行で同じ冪等キーを使う。正は DB なので、キャッシュは速くするためだけのもので、失敗の原因になってはいけない。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Load <code>/concerts/{id}/detail</code> twice, then run <code>redis-cli KEYS 'concerts:*'</code> and <code>TTL</code> on the key.</span><span lang="ja" class="sub"><code>/concerts/{id}/detail</code> を2回読み込み、<code>redis-cli KEYS 'concerts:*'</code> を実行して、そのキーの <code>TTL</code> を確認する。</span></li>
+          <li><span lang="en">Stop Redis (<code>docker compose stop redis</code>) and load the store page. What status do you get? Now wrap the read in <code>try/except RedisError</code>.</span><span lang="ja" class="sub">Redis を止めて（<code>docker compose stop redis</code>）ストアページを読み込む。どのステータスが返るか？次に読み取りを <code>try/except RedisError</code> で囲む。</span></li>
+          <li><span lang="en">Replace <code>_delete_matching</code>'s <code>KEYS</code> with <code>scan_iter</code>. Why is that safer?</span><span lang="ja" class="sub"><code>_delete_matching</code> の <code>KEYS</code> を <code>scan_iter</code> に置き換える。なぜその方が安全か？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

@@ -13,12 +13,12 @@
     { n: "06", file: "06-transactions-concurrency.html", en: "Transactions & concurrency", ja: "トランザクションと並行性", ready: true },
     { n: "07", file: "07-lottery-draw.html", en: "Lottery draw algorithm", ja: "抽選アルゴリズム", ready: true },
     { n: "08", file: "08-background-jobs.html", en: "Background jobs & side effects", ja: "バックグラウンドジョブと副作用", ready: true },
-    { n: "09", file: "09-caching.html", en: "Caching with Redis", ja: "Redis によるキャッシュ", ready: false },
-    { n: "10", file: "10-rate-limiting.html", en: "Rate limiting", ja: "レート制限", ready: false },
-    { n: "11", file: "11-payments-idempotency.html", en: "Payments & idempotency", ja: "決済と冪等性", ready: false },
-    { n: "12", file: "12-testing.html", en: "Testing strategy", ja: "テスト戦略", ready: false },
-    { n: "13", file: "13-known-issues.html", en: "Known issues & tradeoffs", ja: "既知の問題とトレードオフ", ready: false },
-    { n: "14", file: "14-scaling.html", en: "Scaling & system design", ja: "スケーリングとシステム設計", ready: false },
+    { n: "09", file: "09-caching.html", en: "Caching with Redis", ja: "Redis によるキャッシュ", ready: true },
+    { n: "10", file: "10-rate-limiting.html", en: "Rate limiting", ja: "レート制限", ready: true },
+    { n: "11", file: "11-payments-idempotency.html", en: "Payments & idempotency", ja: "決済と冪等性", ready: true },
+    { n: "12", file: "12-testing.html", en: "Testing strategy", ja: "テスト戦略", ready: true },
+    { n: "13", file: "13-known-issues.html", en: "Known issues & tradeoffs", ja: "既知の問題とトレードオフ", ready: true },
+    { n: "14", file: "14-scaling.html", en: "Scaling & system design", ja: "スケーリングとシステム設計", ready: true },
   ];
 
   const store = {
