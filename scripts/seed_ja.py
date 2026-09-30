@@ -36,6 +36,7 @@ from seed import (  # noqa: E402
     upload_fixture,
 )
 
+from app.cache.cache_service import CacheService  # noqa: E402
 from app.db.base import (  # noqa: E402
     AlbumDetail,
     AlbumGenre,
@@ -628,6 +629,22 @@ def seed(db):
     ))
 
     db.commit()
+
+    # This script writes straight through SQLAlchemy, not the /add endpoints that
+    # normally call these on a write — so a page cached (even as empty) before a
+    # seed run would otherwise keep serving that stale result for up to
+    # TTL_SECONDS after the data above is already in the database.
+    CacheService.delete_cached_events_page()
+    CacheService.delete_cached_manager_events_page()
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_manager_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_venues()
+    CacheService.delete_cached_management_companies()
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
 
     print("シードデータ(日本語版)を作成しました:")
     print(f"  - 事務所3社、ユーザー16名(全員共通パスワード: {SEED_PASSWORD})")

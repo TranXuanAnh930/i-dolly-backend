@@ -82,6 +82,7 @@ from app.db.base import (
     Users,
     Venue,
 )
+from app.cache.cache_service import CacheService
 from app.db.session import session as SessionLocal
 from app.utils.hashing import hash_password
 from app.utils.storage import get_storage
@@ -976,6 +977,22 @@ def seed(db):
     ))
 
     db.commit()
+
+    # This script writes straight through SQLAlchemy, not the /add endpoints that
+    # normally call these on a write — so a page cached (even as empty) before a
+    # seed run would otherwise keep serving that stale result for up to
+    # TTL_SECONDS after the data above is already in the database.
+    CacheService.delete_cached_events_page()
+    CacheService.delete_cached_manager_events_page()
+    CacheService.delete_cached_members_page()
+    CacheService.delete_cached_groups_page()
+    CacheService.delete_cached_manager_groups_page()
+    CacheService.delete_cached_manager_idols_page()
+    CacheService.delete_cached_manager_idol_form_page()
+    CacheService.delete_cached_venues()
+    CacheService.delete_cached_management_companies()
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
 
     print("Seed data created:")
     print(f"  - 3 management companies, 16 users (password for all: {SEED_PASSWORD})")
