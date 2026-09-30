@@ -262,6 +262,18 @@ newly introduced.
    `ticket_service.checkout_ticket()`'s lock-hold-commit-once pattern for `ticket_type`/`sold_quantity`.
    Still open: the draw job (§8) needs the same guard designed in from the start.
 
+   **Resale-cap race fixed** (`docs/bugs.md` #13): the resale-cap check ran *before* that product
+   lock, so two concurrent checkouts by the same fan for the same product both read the pre-race
+   count. Checkout only stayed correct because the trigger re-checked after the lock — and the
+   trigger itself was racy for any two uncommitted inserts (confirmed: two open transactions each
+   inserting 2 units left a fan with 4 of a 3-capped product). Fixed on both layers: the service
+   check now runs under the product lock, and `fn_enforce_resale_cap` takes a
+   `pg_advisory_xact_lock` on (buyer, product) before summing (migration `d4a7c9e2f1b5`).
+   `tests/integration/marketplace/test_resale_cap_concurrency.py` races same-fan checkouts
+   (asserting the service's own check rejects the loser), different-fan checkouts (the lock
+   doesn't over-serialize), and two raw inserts against the trigger alone; each fails with its
+   fix reverted.
+
    **Regression found and fixed**: the lock above was real but silently ineffective for any
    product in a resale-capped category (`categories.is_resale_capped` defaults `true()` at the DB
    level — category.py:16 — so this was the common case, not an edge case). The resale-cap

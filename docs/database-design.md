@@ -928,7 +928,12 @@ Enforced by `fn_enforce_resale_cap` (`schema.sql` §5, renamed from `fn_enforce_
 confirmed against the live `app/db/models/marketplace/order.py` (`orders_items` has
 `order_id`/`product_id`/`quantity`; `orders` has `user_id`). It looks up the product's category's
 `is_resale_capped` flag, and if capped, sums the fan's existing quantity of that `product_id`
-across all their orders and rejects the insert if adding this line would exceed 3.
+across all their orders and rejects the insert if adding this line would exceed 3. Before that sum
+it takes a transaction-scoped advisory lock on (buyer, product) — migration `d4a7c9e2f1b5`, same
+pattern as `fn_enforce_one_ticket_per_concert` — so two concurrent inserts for the same fan and
+product can't both pass by missing each other's uncommitted line. `order_service.checkout` also
+checks the cap, after locking the cart's `products` rows, so the service check reads current
+counts rather than relying on the trigger to catch a race.
 
 Now that purchases and lottery entries are fully decoupled (§3.13), this is the **only** purchase
 quantity limit left in the design — there's no longer a separate "entries earned" cap to also

@@ -97,6 +97,12 @@ Files that moved by 5 points or more:
   terminal statuses), the `order_shipped` notification, the admin shipping-status override
   (cannot revive a cancelled order), and the manager orders page. A manager only sees their own
   company's line items and totals and can't widen that with `?company_id=`.
+- **`marketplace/test_resale_cap_concurrency.py`**: the resale cap under concurrency, at the
+  service level. Two checkouts by one fan who already owns 2 units are both queued on a held
+  product lock before release; exactly one lands and the loser is rejected by `checkout`'s own
+  check, not the trigger. Three different fans buying the full cap concurrently all succeed.
+  Two raw transactions inserting order lines for the same fan and product (no product lock)
+  prove `fn_enforce_resale_cap`'s advisory lock alone keeps the total at or under the cap.
 - **`marketplace/test_product_management.py`**: create-with-detail (album/merch) scoped to the
   manager's company, deactivated-owner and missing-reference rejection, invalid detail
   combinations, image upload into a temp dir, image replace/update/delete scoping, all-or-nothing
