@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # "InvalidRequestError: ... failed to locate a name ('Cart')" the moment
 # mapper configuration ran, because Users.cart's string-based relationship()
 # pointed at a class this script never imported.
+from app.cache.cache_service import CacheService
 from app.db.base import (
     AlbumDetail,
     AlbumGenre,
@@ -82,7 +83,6 @@ from app.db.base import (
     Users,
     Venue,
 )
-from app.cache.cache_service import CacheService
 from app.db.session import session as SessionLocal
 from app.utils.hashing import hash_password
 from app.utils.storage import get_storage
