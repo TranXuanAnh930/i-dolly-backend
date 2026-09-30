@@ -2,17 +2,17 @@
 (function () {
   const REPO = "https://github.com/TranXuanAnh930/i-dolly-backend";
   // Pinned commit so line numbers in links stay correct as the code moves on.
-  const SHA = "3abc98b8356343038104a82f2f43f939cc666e2f";
+  const SHA = "4165dc059181f33a3877fab582dbd00af16311d4";
 
   const TOPICS = [
-    { n: "01", file: "01-architecture.html", en: "Layered architecture & errors", ja: "レイヤードアーキテクチャとエラー処理", ready: false },
-    { n: "02", file: "02-data-modeling.html", en: "Data modeling & schema design", ja: "データモデリングとスキーマ設計", ready: false },
-    { n: "03", file: "03-migrations.html", en: "Migrations with Alembic", ja: "Alembic によるマイグレーション", ready: false },
-    { n: "04", file: "04-authentication.html", en: "Authentication: JWT & refresh tokens", ja: "認証：JWT とリフレッシュトークン", ready: false },
-    { n: "05", file: "05-authorization.html", en: "Authorization: RBAC & company scoping", ja: "認可：RBAC と会社スコープ", ready: false },
+    { n: "01", file: "01-architecture.html", en: "Layered architecture & errors", ja: "レイヤードアーキテクチャとエラー処理", ready: true },
+    { n: "02", file: "02-data-modeling.html", en: "Data modeling & schema design", ja: "データモデリングとスキーマ設計", ready: true },
+    { n: "03", file: "03-migrations.html", en: "Migrations with Alembic", ja: "Alembic によるマイグレーション", ready: true },
+    { n: "04", file: "04-authentication.html", en: "Authentication: JWT & refresh tokens", ja: "認証：JWT とリフレッシュトークン", ready: true },
+    { n: "05", file: "05-authorization.html", en: "Authorization: RBAC & company scoping", ja: "認可：RBAC と会社スコープ", ready: true },
     { n: "06", file: "06-transactions-concurrency.html", en: "Transactions & concurrency", ja: "トランザクションと並行性", ready: true },
-    { n: "07", file: "07-lottery-draw.html", en: "Lottery draw algorithm", ja: "抽選アルゴリズム", ready: false },
-    { n: "08", file: "08-background-jobs.html", en: "Background jobs & side effects", ja: "バックグラウンドジョブと副作用", ready: false },
+    { n: "07", file: "07-lottery-draw.html", en: "Lottery draw algorithm", ja: "抽選アルゴリズム", ready: true },
+    { n: "08", file: "08-background-jobs.html", en: "Background jobs & side effects", ja: "バックグラウンドジョブと副作用", ready: true },
     { n: "09", file: "09-caching.html", en: "Caching with Redis", ja: "Redis によるキャッシュ", ready: false },
     { n: "10", file: "10-rate-limiting.html", en: "Rate limiting", ja: "レート制限", ready: false },
     { n: "11", file: "11-payments-idempotency.html", en: "Payments & idempotency", ja: "決済と冪等性", ready: false },

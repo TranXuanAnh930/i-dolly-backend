@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Authorization &amp; Scoping · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 05</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 05</p>
+      <h1><span lang="en">Authorization: RBAC &amp; company scoping</span><span lang="ja" class="sub">認可：RBAC と会社スコープ</span></h1>
+      <p class="lede" lang="en">Who may do what: three roles, managers fenced into their own company, and fans who can only see their own data.</p>
+      <p class="lede" lang="ja">誰が何をできるか：3つのロール、自社の範囲に限定されたマネージャー、自分のデータだけを見られるファン。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Three roles: <b>admin</b> (everything), <b>manager</b> (their own company's content), <b>fan</b> (buys and applies).</span><span lang="ja" class="sub">3つのロール：<b>admin</b>（すべて）、<b>manager</b>（自社のコンテンツ）、<b>fan</b>（購入と応募）。</span></li>
+          <li><span lang="en">Two checks, in two places: the <b>router</b> checks the role (<code>require_manager_or_admin</code>); the <b>service</b> checks the company (<code>_manager_scope_violation</code>).</span><span lang="ja" class="sub">確認は2か所：<b>ルーター</b>でロール（<code>require_manager_or_admin</code>）、<b>サービス</b>で会社（<code>_manager_scope_violation</code>）。</span></li>
+          <li><span lang="en">Multi-tenancy is a <b>shared schema + <code>company_id</code></b>, not a schema per company.</span><span lang="ja" class="sub">マルチテナントは会社ごとのスキーマではなく、<b>共有スキーマと <code>company_id</code></b>。</span></li>
+          <li><span lang="en">Fan data is scoped at the <b>query level</b>: every lookup filters by <code>user_id</code>, so another fan's id just returns 404.</span><span lang="ja" class="sub">ファンのデータは<b>クエリのレベル</b>で絞る：すべての検索を <code>user_id</code> で絞るので、他のファンの id は 404 になるだけ。</span></li>
+          <li><span lang="en">Admins and managers <b>can never buy</b>: a service check plus a DB trigger.</span><span lang="ja" class="sub">管理者とマネージャーは<b>購入できない</b>：サービスの確認と DB トリガーの両方で守る。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">RBAC vs. ownership</span><span lang="ja" class="sub">RBAC と所有権</span></h3>
+      <p lang="en"><b>Role-based access control</b> answers "can this kind of user do this kind of action?" It's coarse. <b>Ownership / resource checks</b> answer "can this user touch <i>this specific row</i>?" You need both. Most real authorization bugs are missing ownership checks, not wrong roles.</p>
+      <p lang="ja"><b>ロールベースアクセス制御</b>は「この種類のユーザーはこの種類の操作をできるか？」に答える。大まかな確認。<b>所有権・リソースの確認</b>は「このユーザーは<i>この特定の行</i>を触れるか？」に答える。両方が必要。実際の認可バグの多くはロールの誤りではなく、所有権の確認漏れ。</p>
+
+      <h3><span lang="en">IDOR</span><span lang="ja" class="sub">IDOR（安全でない直接オブジェクト参照）</span></h3>
+      <p lang="en"><b>Insecure Direct Object Reference</b>: the API takes an id from the client and loads that row without checking it belongs to the caller. <code>GET /orders/42</code> returns someone else's order. The fix is to put the owner in the query itself: <code>WHERE id = :id AND user_id = :me</code>.</p>
+      <p lang="ja"><b>IDOR</b>：API がクライアントから id を受け取り、呼び出し元の所有かを確認せずにその行を読み込むこと。<code>GET /orders/42</code> で他人の注文が返ってくる。対策は、クエリ自体に所有者を入れること：<code>WHERE id = :id AND user_id = :me</code>。</p>
+
+      <h3><span lang="en">Three ways to do multi-tenancy</span><span lang="ja" class="sub">マルチテナントの3つの方法</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Model</span><span lang="ja">方式</span></th><th><span lang="en">Isolation</span><span lang="ja">分離度</span></th><th><span lang="en">Cost</span><span lang="ja">コスト</span></th></tr></thead>
+          <tbody>
+            <tr><td><b><span lang="en">Shared schema + tenant column (used here)</span><span lang="ja">共有スキーマ＋テナント列（本プロジェクト）</span></b></td><td><span lang="en">Enforced by code</span><span lang="ja">コードで強制</span></td><td><span lang="en">Cheapest; one missed filter leaks data</span><span lang="ja">最も安い。フィルタ1つの漏れでデータ漏洩</span></td></tr>
+            <tr><td><span lang="en">Shared + Postgres Row-Level Security</span><span lang="ja">共有＋Postgres の行レベルセキュリティ</span></td><td><span lang="en">Enforced by the DB</span><span lang="ja">DB で強制</span></td><td><span lang="en">Needs a per-request DB setting</span><span lang="ja">リクエストごとに DB の設定が必要</span></td></tr>
+            <tr><td><span lang="en">Schema or DB per tenant</span><span lang="ja">テナントごとのスキーマ・DB</span></td><td><span lang="en">Strongest</span><span lang="ja">最も強い</span></td><td><span lang="en">Migrations × N; hard cross-tenant queries</span><span lang="ja">マイグレーション×N、テナント横断の検索が難しい</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. The role matrix</span><span lang="ja" class="sub">1. ロールの権限表</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Action</span><span lang="ja">操作</span></th><th>admin</th><th>manager</th><th>fan</th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">CRUD idols, groups, concerts, products</span><span lang="ja">アイドル・グループ・公演・商品の CRUD</span></td><td>✅</td><td><span lang="en">own company</span><span lang="ja">自社のみ</span></td><td>❌</td></tr>
+            <tr><td><span lang="en">Venues, categories, companies, user roles</span><span lang="ja">会場・カテゴリー・会社・ユーザーのロール</span></td><td>✅</td><td>❌</td><td>❌</td></tr>
+            <tr><td><span lang="en">Cart, checkout, lottery, tickets</span><span lang="ja">カート・購入・抽選・チケット</span></td><td>❌</td><td>❌</td><td>✅</td></tr>
+            <tr><td><span lang="en">Browse public listings</span><span lang="ja">公開一覧の閲覧</span></td><td>✅</td><td>✅</td><td>✅</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="src-line"><span lang="en">Full matrix:</span><span lang="ja">完全な表：</span> <a class="ref" data-p="docs/database-design.md"></a> §4</p>
+
+      <h3><span lang="en">2. Role check in the router</span><span lang="ja" class="sub">2. ルーターでロールを確認</span></h3>
+<pre class="code">def require_manager_or_admin(current_user: Users = Depends(get_current_user)) -&gt; Users:
+    """Require an admin or manager role. <span class="hl">Company scoping is checked in each service.</span>"""
+    if current_user.role not in (UserRole.admin, UserRole.manager):
+        raise HTTPException(status_code=403, detail="Manager or admin access required")
+    return current_user</pre>
+      <p class="src-line"><a class="ref" data-p="app/deps/auth.py" data-l="50-54"></a></p>
+
+      <h3><span lang="en">3. Company check in the service</span><span lang="ja" class="sub">3. サービスで会社を確認</span></h3>
+<pre class="code">def _manager_scope_violation(current_user: Users, company_id: uuid.UUID) -&gt; bool:
+    return current_user.role == UserRole.manager and <span class="hl">current_user.company_id != company_id</span>
+
+db_group = db.get(Group, id)
+if not db_group:
+    raise NotFoundError("Group not found")
+if GroupService._manager_scope_violation(current_user, <span class="hl">db_group.company_id</span>):
+    raise ForbiddenError("Managers can only manage groups for their own company")</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/talent/group_service.py" data-l="21-24"></a> · <a class="ref" data-p="app/services/talent/group_service.py" data-l="49-56"></a></p>
+      <p lang="en">The company comes from the <b>row in the DB</b>, never from the request body, so a manager can't claim someone else's company. The service has the row; the router doesn't, which is why this check lives in the service.</p>
+      <p lang="ja">会社はリクエスト本文ではなく<b>DB の行</b>から取るので、マネージャーが他社を名乗ることはできない。行を持っているのはルーターではなくサービスなので、この確認はサービスに置く。</p>
+
+      <h3><span lang="en">4. Products have no <code>company_id</code></span><span lang="ja" class="sub">4. 商品には <code>company_id</code> がない</span></h3>
+<pre class="code">def _manager_scope_violation(db, current_user, product_id) -&gt; bool:
+    if current_user.role != UserRole.manager:
+        return False
+    company_id = ProductService.<span class="hl">_resolve_product_company_id</span>(db, product_id)  <span class="c"># via album/merch → idol/group</span>
+    if company_id is None:
+        return False  <span class="c"># ownerless product - any manager may manage it</span>
+    return current_user.company_id != company_id</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/marketplace/product_service.py" data-l="36-66"></a></p>
+      <p lang="en">Ownership is derived: product → album or merch details → idol or group → company. Managers also can't change a product's price after creation; only admins can (<a class="ref" data-p="app/services/marketplace/product_service.py" data-l="165-167"></a>).</p>
+      <p lang="ja">所有者は導出する：商品 → アルバムまたはグッズの詳細 → アイドルまたはグループ → 会社。マネージャーは作成後に商品価格を変えられず、変えられるのは管理者だけ（<a class="ref" data-p="app/services/marketplace/product_service.py" data-l="165-167"></a>）。</p>
+
+      <h3><span lang="en">5. Fan data: owner in the query</span><span lang="ja" class="sub">5. ファンのデータ：クエリに所有者を入れる</span></h3>
+<pre class="code">cart = db.query(Cart).filter(Cart.id == cart_id, <span class="hl">Cart.user_id == user_id</span>).first()
+if not cart:
+    return None    <span class="c"># someone else's cart looks exactly like a missing one → 404</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/services/marketplace/cart_service.py" data-l="51-56"></a> · <a class="ref" data-p="app/services/marketplace/shipping_service.py" data-l="26-27"></a></p>
+      <p lang="en">Returning 404 rather than 403 for another user's row means an attacker can't even learn the id exists.</p>
+      <p lang="ja">他人の行に 403 ではなく 404 を返すので、攻撃者はその id が存在するかどうかさえ分からない。</p>
+
+      <h3><span lang="en">6. Cached pages, scoped per request</span><span lang="ja" class="sub">6. キャッシュしたページをリクエストごとに絞る</span></h3>
+<pre class="code">@router.get("/manager-groups-page")
+def get_manager_groups_page_data(current_user = Depends(require_manager_or_admin), ...):
+    return GroupService.<span class="hl">scope_manager_groups_page</span>(CacheService.get_cached_manager_groups_page(db), current_user)
+
+<span class="c"># The cached page holds every company's rows; managers get only their own company's.</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/router/talent/group.py" data-l="53-55"></a> · <a class="ref" data-p="app/services/talent/group_service.py" data-l="145-154"></a></p>
+      <p lang="en">One cache entry serves every manager, and the filter runs after the cache. The alternative, a cache key per company, would be safer against a forgotten filter but multiplies cache entries and invalidations.</p>
+      <p lang="ja">1つのキャッシュを全マネージャーで共有し、キャッシュの後でフィルタをかける。会社ごとにキャッシュキーを分ければフィルタ忘れには強いが、キャッシュ数と削除処理が増える。</p>
+
+      <h3><span lang="en">7. Proving it</span><span lang="ja" class="sub">7. 証明</span></h3>
+      <p lang="en">69 integration tests hit real HTTP routes with real JWTs for each role: unauthenticated → 401, fan → 403, wrong-company manager → 403, own-company manager → 200 (<a class="ref" data-p="tests/integration/test_permissions.py" data-l="227-265"></a>).</p>
+      <p lang="ja">69個の統合テストが、ロールごとに本物の JWT で本物の HTTP ルートを呼ぶ：未認証 → 401、ファン → 403、他社のマネージャー → 403、自社のマネージャー → 200（<a class="ref" data-p="tests/integration/test_permissions.py" data-l="227-265"></a>）。</p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Shared schema</b>: one set of migrations, easy cross-company reporting for admins, and a handful of companies don't justify a schema each. The cost: isolation depends on every service remembering its check.</span><span lang="ja" class="sub"><b>共有スキーマ</b>：マイグレーションは1セットで、管理者の会社横断レポートも簡単。会社が数社なら会社ごとのスキーマは割に合わない。コスト：分離は各サービスが確認を忘れないことに依存する。</span></li>
+        <li><span lang="en"><b>Reads stay public</b>: idol and concert listings are public by design, so only writes and manager pages are scoped.</span><span lang="ja" class="sub"><b>読み取りは公開</b>：アイドルや公演の一覧は意図的に公開なので、スコープを絞るのは書き込みとマネージャー用ページだけ。</span></li>
+        <li><span lang="en"><b>Admins can't buy</b>: staff accounts buying scarce tickets is a fairness problem, so it gets a DB trigger backstop, not just a UI rule.</span><span lang="ja" class="sub"><b>管理者は購入不可</b>：スタッフのアカウントが希少なチケットを買うのは公平性の問題なので、UI のルールだけでなく DB トリガーでも守る。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Real bugs this codebase had</span><span lang="ja">このコードに実際にあったバグ</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #3, #28 <span lang="en">(fixed)</span><span lang="ja">（修正済み）</span></p>
+        <p lang="en"><b>IDORs.</b> Removing a cart item filtered only by the cart id, so any fan could delete another fan's item. <code>GET /shipping_addresses/fetch_byid</code> had no login at all, and its sibling update/delete filtered by <code>user_id == user_id</code> (the argument compared with itself, always true) instead of <code>ShippingAddress.user_id == user_id</code>. Both are fixed by putting the caller's id in the query. That second one is a great story: the code <i>looked</i> scoped.</p>
+        <p lang="ja"><b>IDOR。</b>カートの商品削除はカート id だけで絞っていたので、どのファンでも他人の商品を削除できた。<code>GET /shipping_addresses/fetch_byid</code> はログイン不要で、同じ系統の更新・削除は <code>user_id == user_id</code>（常に真）で絞っていた。どちらも呼び出し元の id をクエリに入れて修正した。2つ目は話のネタとして最適で、コードは一見スコープされて<i>見えた</i>。</p>
+      </div>
+      <div class="callout bad">
+        <p class="label">bugs.md #29 <span lang="en">(fixed)</span><span lang="ja">（修正済み）</span></p>
+        <p lang="en"><b>Manager pages had no auth.</b> Six <code>manager-*-page</code> endpoints took no auth dependency, and two filtered by a <code>company_id</code> sent by the client. Now they require a manager role, are rate-limited, and scope by the caller's company on the server.</p>
+        <p lang="ja"><b>マネージャー用ページに認証がなかった。</b>6つの <code>manager-*-page</code> エンドポイントに認証がなく、2つはクライアントが送る <code>company_id</code> で絞っていた。現在はマネージャーロールを要求し、レート制限をかけ、サーバー側で呼び出し元の会社に絞っている。</p>
+      </div>
+      <div class="callout">
+        <p class="label"><span lang="en">Still open</span><span lang="ja">未解決</span></p>
+        <p lang="en">Ownerless products (plain merch with no idol or group) can be edited or deleted by <b>any</b> manager, and product delete is a hard delete (bug #2). Scoping lives only in code, so a new service that forgets <code>_manager_scope_violation</code> leaks silently. Postgres Row-Level Security would be a DB-level backstop.</p>
+        <p lang="ja">所有者のない商品（アイドルやグループに紐付かない普通のグッズ）は<b>どの</b>マネージャーでも編集・削除でき、商品削除は物理削除（バグ #2）。スコープはコードにしかないので、<code>_manager_scope_violation</code> を忘れた新しいサービスは黙ってデータを漏らす。Postgres の行レベルセキュリティを DB 側の最後の砦にできる。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">RBAC vs. ownership checks, with an example of each here.</span><span lang="ja" class="sub">RBAC と所有権の確認の違いと、それぞれの例。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why the role check is in the router and the company check is in the service.</span><span lang="ja" class="sub">ロールの確認はルーター、会社の確認はサービスにある理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">What IDOR is and how query-level filtering prevents it.</span><span lang="ja" class="sub">IDOR とは何か、クエリでの絞り込みでどう防ぐか。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">Why another user's row returns 404, not 403.</span><span lang="ja" class="sub">他人の行に 403 ではなく 404 を返す理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">The three multi-tenancy models and why this one.</span><span lang="ja" class="sub">マルチテナントの3方式と、この方式を選んだ理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">How product ownership is derived.</span><span lang="ja" class="sub">商品の所有者の導出方法。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">The <code>user_id == user_id</code> bug and bug #29.</span><span lang="ja" class="sub"><code>user_id == user_id</code> のバグとバグ #29。</span></span></label></li>
+        <li><label><input type="checkbox" id="c8"><span><span lang="en">How the permission tests prove each rule.</span><span lang="ja" class="sub">権限テストで各ルールをどう証明しているか。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How do you stop one fan from reading another fan's orders?</span><span lang="ja" class="sub">あるファンが他のファンの注文を見られないようにするには？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The user id comes from the verified token, never from the request, and every query includes it: <code>WHERE id = :order_id AND user_id = :me</code>. If the row isn't theirs, the query finds nothing and the API returns 404, the same as for an id that doesn't exist.</p>
+            <p lang="ja">ユーザー id はリクエストからではなく検証済みのトークンから取り、すべてのクエリに含める：<code>WHERE id = :order_id AND user_id = :me</code>。自分の行でなければ何も見つからず、存在しない id と同じく 404 を返す。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">What's the difference between 401 and 403 in your API?</span><span lang="ja" class="sub">あなたの API での 401 と 403 の違いは？</span></span></summary>
+          <div class="ans">
+            <p lang="en">401: no valid token, so we don't know who you are. 403: we know who you are, but your role or company doesn't allow this, for example a fan calling a manager endpoint or a manager editing another company's idol.</p>
+            <p lang="ja">401：有効なトークンがなく、誰か分からない。403：誰かは分かるが、ロールや会社がそれを許さない。例えばファンがマネージャー用エンドポイントを呼ぶ、マネージャーが他社のアイドルを編集する場合。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why not check the company in a FastAPI dependency?</span><span lang="ja" class="sub">会社の確認を FastAPI の依存関係で行わないのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The company isn't in the request; it's on the row being changed, and sometimes it's several joins away (a product's company comes through its album and idol). The service loads that row anyway, so it's the natural place. The dependency only checks what it can see: the caller's role.</p>
+            <p lang="ja">会社はリクエストの中ではなく、変更対象の行にある。しかも商品の会社はアルバムやアイドルを経由するなど、何段もの JOIN の先にあることもある。サービスはどのみちその行を読み込むので、そこが自然な場所。依存関係は自分に見えるもの、つまり呼び出し元のロールだけを確認する。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Tell me about an authorization bug you found.</span><span lang="ja" class="sub">見つけた認可のバグについて話してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">The shipping-address update and delete filtered by <code>user_id == user_id</code>: the Python argument compared with itself, which is always <code>True</code>, instead of <code>ShippingAddress.user_id == user_id</code>. It looked scoped in review, but any logged-in fan could edit or delete any address by id. The fix compared the column to the caller's id, and the sibling <code>fetch_byid</code> route got a login requirement it was missing. The lesson: test that user A gets 404 on user B's resource, don't just read the filter.</p>
+            <p lang="ja">配送先の更新と削除が <code>ShippingAddress.user_id == user_id</code> ではなく <code>user_id == user_id</code> で絞っていた。Python の引数を自分自身と比べているので常に <code>True</code> になる。レビューではスコープされているように見えたが、ログイン中のファンなら誰でも id を指定して任意の住所を編集・削除できた。修正では列を呼び出し元の id と比較し、同じ系統の <code>fetch_byid</code> ルートにも欠けていたログイン要求を追加した。教訓：フィルタを読むだけでなく、ユーザー A がユーザー B のリソースで 404 になることをテストする。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How would you make tenant isolation safer than "remember to check"?</span><span lang="ja" class="sub">「確認を忘れない」より安全なテナント分離にするには？</span></span></summary>
+          <div class="ans">
+            <p lang="en">(1) Postgres Row-Level Security: set <code>app.company_id</code> per request with <code>SET LOCAL</code>, and a policy <code>USING (company_id = current_setting('app.company_id')::uuid)</code>, so a forgotten filter returns nothing instead of leaking. (2) A repository base class that always adds the tenant filter. (3) A test that loops over every manager route and asserts a wrong-company manager gets 403. RLS is the strongest because it protects scripts and raw SQL too.</p>
+            <p lang="ja">(1) Postgres の行レベルセキュリティ：リクエストごとに <code>SET LOCAL</code> で <code>app.company_id</code> を設定し、<code>USING (company_id = current_setting('app.company_id')::uuid)</code> のポリシーを付ける。フィルタを忘れても漏れずに何も返らない。(2) テナントのフィルタを必ず付けるリポジトリの基底クラス。(3) すべてのマネージャー用ルートを回して、他社のマネージャーが 403 になることを確認するテスト。RLS はスクリプトや生の SQL も守るので最も強い。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">List every service with a <code>_manager_scope_violation</code> helper (<code>grep -rn _manager_scope_violation app/services</code>). Is any company-owned resource missing one?</span><span lang="ja" class="sub"><code>_manager_scope_violation</code> を持つサービスをすべて挙げる（<code>grep -rn _manager_scope_violation app/services</code>）。欠けている会社所有のリソースはあるか？</span></li>
+          <li><span lang="en">Write a test: fan A creates a shipping address, fan B calls <code>fetch_byid</code> with its id. Assert 404.</span><span lang="ja" class="sub">テストを書く：ファン A が配送先を作り、ファン B がその id で <code>fetch_byid</code> を呼ぶ。404 を確認する。</span></li>
+          <li><span lang="en">Sketch an RLS policy for <code>groups</code>. What would the app need to set on each connection?</span><span lang="ja" class="sub"><code>groups</code> 用の RLS ポリシーを考える。アプリは各接続で何を設定する必要があるか？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

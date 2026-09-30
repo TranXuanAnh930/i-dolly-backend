@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Layered Architecture · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 01</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 01</p>
+      <h1><span lang="en">Layered architecture &amp; errors</span><span lang="ja" class="sub">レイヤードアーキテクチャとエラー処理</span></h1>
+      <p class="lede" lang="en">How a request travels through router, service and model, and how a failure deep inside becomes a clean JSON error.</p>
+      <p class="lede" lang="ja">リクエストがルーター・サービス・モデルをどう通るか、そして奥で起きた失敗がどうやってきれいな JSON エラーになるか。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Three layers per feature: <b>router</b> (HTTP only), <b>service</b> (business logic + ORM queries), <b>model/schema</b> (SQLAlchemy tables + Pydantic shapes).</span><span lang="ja" class="sub">機能ごとに3層：<b>ルーター</b>（HTTP だけ）、<b>サービス</b>（業務ロジックと ORM クエリ）、<b>モデル/スキーマ</b>（SQLAlchemy のテーブルと Pydantic の型）。</span></li>
+          <li><span lang="en">Code is grouped by <b>domain</b> (identity, talent, events, marketplace, shared), not by technical type alone.</span><span lang="ja" class="sub">コードは技術的な種類だけでなく<b>ドメイン</b>（identity・talent・events・marketplace・shared）ごとにまとめる。</span></li>
+          <li><span lang="en">Services <b>raise typed exceptions</b> that carry an HTTP status and a stable error <code>code</code>. The router maps them once.</span><span lang="ja" class="sub">サービスは HTTP ステータスと固定のエラー <code>code</code> を持つ<b>型付き例外を投げる</b>。ルーターは1か所で変換する。</span></li>
+          <li><span lang="en">Every error body has the same shape: <code>{"detail", "code"}</code>. Unexpected crashes become a JSON 500 that still has CORS headers.</span><span lang="ja" class="sub">すべてのエラーは同じ形 <code>{"detail", "code"}</code>。予期しない例外も CORS ヘッダー付きの JSON 500 になる。</span></li>
+          <li><span lang="en">Handlers are plain <code>def</code>, because everything below them is synchronous.</span><span lang="ja" class="sub">ハンドラーは普通の <code>def</code>。下の層がすべて同期処理だから。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Why layers at all</span><span lang="ja" class="sub">そもそもなぜ層に分けるのか</span></h3>
+      <p lang="en">Separation of concerns: each layer changes for a different reason. HTTP details (status codes, headers, auth dependencies) change independently of business rules (stock, lottery windows), which change independently of storage (tables, indexes). Keeping them apart means you can test business rules without HTTP, and swap one layer without rewriting the others.</p>
+      <p lang="ja">関心の分離：各層は別々の理由で変更される。HTTP の詳細（ステータス、ヘッダー、認証）、業務ルール（在庫、抽選期間）、保存方法（テーブル、インデックス）はそれぞれ独立して変わる。分けておけば HTTP なしで業務ルールをテストでき、1つの層を入れ替えても他を書き直さずに済む。</p>
+
+      <h3><span lang="en">Dependency injection in FastAPI</span><span lang="ja" class="sub">FastAPI の依存性注入</span></h3>
+      <p lang="en"><code>Depends(...)</code> lets a route declare what it needs (a DB session, the current user, a rate-limit check). FastAPI builds those values per request, and a <code>yield</code> dependency runs cleanup after the response. Tests can override any dependency with <code>app.dependency_overrides</code>.</p>
+      <p lang="ja"><code>Depends(...)</code> でルートが必要なもの（DB セッション、現在のユーザー、レート制限）を宣言する。FastAPI はリクエストごとにそれを作り、<code>yield</code> を使う依存関係はレスポンス後に後片付けをする。テストでは <code>app.dependency_overrides</code> で差し替えられる。</p>
+
+      <h3><span lang="en"><code>def</code> vs. <code>async def</code></span><span lang="ja" class="sub"><code>def</code> と <code>async def</code></span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Handler</span><span lang="ja">ハンドラー</span></th><th><span lang="en">Where FastAPI runs it</span><span lang="ja">実行される場所</span></th><th><span lang="en">Blocking call inside</span><span lang="ja">中でブロッキング処理をすると</span></th></tr></thead>
+          <tbody>
+            <tr><td><code>async def</code></td><td><span lang="en">On the event loop</span><span lang="ja">イベントループ上</span></td><td><span lang="en">Freezes <b>every</b> request in the process</span><span lang="ja">プロセス内の<b>全</b>リクエストが止まる</span></td></tr>
+            <tr><td><code>def</code></td><td><span lang="en">In a threadpool (~40 threads)</span><span lang="ja">スレッドプール（約40）</span></td><td><span lang="en">Blocks only its own thread</span><span lang="ja">自分のスレッドだけが止まる</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p lang="en">SQLAlchemy sessions, bcrypt, <code>httpx.post</code> to PayPal and boto3 are all blocking. So plain <code>def</code> is the correct choice here, not the lazy one.</p>
+      <p lang="ja">SQLAlchemy のセッション、bcrypt、PayPal への <code>httpx.post</code>、boto3 はすべてブロッキング。だからここでは普通の <code>def</code> が「手抜き」ではなく正しい選択。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. The folder layout</span><span lang="ja" class="sub">1. フォルダ構成</span></h3>
+<pre class="code">app/
+  router/&lt;domain&gt;/&lt;feature&gt;.py            <span class="c"># HTTP: Depends, one service call, map errors</span>
+  services/&lt;domain&gt;/&lt;feature&gt;_service.py  <span class="c"># business rules + ORM queries</span>
+  db/models/&lt;domain&gt;/&lt;feature&gt;.py         <span class="c"># SQLAlchemy tables</span>
+  schema/&lt;domain&gt;/&lt;feature&gt;.py            <span class="c"># Pydantic Create / Read / Update</span>
+  exception/  deps/  cache/  tasks/  utils/  <span class="c"># cross-cutting pieces</span></pre>
+      <p lang="en">Domains: <code>identity</code>, <code>talent</code>, <code>events</code>, <code>marketplace</code>, and <code>shared</code> for cross-domain features like notifications. Response schemas are always separate classes from ORM models, so a new DB column never leaks into the API by accident.</p>
+      <p lang="ja">ドメイン：<code>identity</code>・<code>talent</code>・<code>events</code>・<code>marketplace</code>、通知などドメインをまたぐ機能は <code>shared</code>。レスポンス用スキーマは ORM モデルと必ず別クラスなので、DB に列を足しても API に勝手に漏れない。</p>
+
+      <h3><span lang="en">2. One request, three layers</span><span lang="ja" class="sub">2. 1つのリクエストと3つの層</span></h3>
+<pre class="code"><span class="c"># router: HTTP only</span>
+@router.put("/update/{id}", response_model=GroupRead)
+def update_existing_group(id: uuid.UUID, data: GroupUpdate,
+        current_user: Users = <span class="hl">Depends(require_manager_or_admin)</span>, db: Session = <span class="hl">Depends(get_db)</span>) -&gt; Group:
+    try:
+        result = GroupService.update_group(db, id, data, current_user)
+    <span class="hl">except ServiceError as e:</span>
+        raise HTTPException(status_code=e.status_code, detail=str(e)) <span class="hl">from e</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/router/talent/group.py" data-l="71-76"></a></p>
+<pre class="code"><span class="c"># service: rules + queries, no FastAPI imports</span>
+db_group = db.get(Group, id)
+if not db_group:
+    <span class="hl">raise NotFoundError("Group not found")</span>
+if GroupService._manager_scope_violation(current_user, db_group.company_id):
+    <span class="hl">raise ForbiddenError("Managers can only manage groups for their own company")</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/services/talent/group_service.py" data-l="50-61"></a></p>
+      <p lang="en">Services are classes of <code>@staticmethod</code>s used as namespaces (<code>GroupService.update_group(db, …)</code>). They are never instantiated, and the session is passed in on every call.</p>
+      <p lang="ja">サービスは <code>@staticmethod</code> を並べたクラスで、名前空間として使う（<code>GroupService.update_group(db, …)</code>）。インスタンス化はせず、セッションは毎回引数で渡す。</p>
+
+      <h3><span lang="en">3. The exception hierarchy</span><span lang="ja" class="sub">3. 例外の階層</span></h3>
+<pre class="code">CodedError                  <span class="c"># has a stable `code` for clients</span>
+├── ServiceError (400)      <span class="c"># app/exception/common.py</span>
+│   ├── NotFoundError (404)
+│   ├── ForbiddenError (403)
+│   ├── BadRequestError (400)
+│   └── ConflictError (409)
+├── CartItemError ...       <span class="c"># app/exception/checkout.py (multi-step checkout)</span>
+└── TriggerViolationError   <span class="c"># app/exception/db_triggers.py (Postgres rules)</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/exception/common.py" data-l="13-47"></a></p>
+
+      <h3><span lang="en">4. One error shape for the whole API</span><span lang="ja" class="sub">4. API 全体で1つのエラー形式</span></h3>
+<pre class="code">def error_code(exc: StarletteHTTPException) -&gt; str:
+    if isinstance(exc, ApiHTTPException):
+        return exc.code
+    if isinstance(<span class="hl">exc.__cause__</span>, CodedError):   <span class="c"># set by `raise ... from e`</span>
+        return exc.__cause__.code
+    return STATUS_CODES.get(exc.status_code, f"http_{exc.status_code}")</pre>
+      <p class="src-line"><a class="ref" data-p="app/exception/handlers.py" data-l="52-57"></a></p>
+      <p lang="en">This is why <code>from e</code> matters: the handler reads the original service error through <code>__cause__</code> to get its code. Drop <code>from e</code> and the client gets the generic <code>bad_request</code> instead of, say, <code>entries_closed</code>.</p>
+      <p lang="ja"><code>from e</code> が重要な理由：ハンドラーは <code>__cause__</code> から元のサービス例外を読み、その code を取り出す。<code>from e</code> を忘れると、例えば <code>entries_closed</code> ではなく汎用の <code>bad_request</code> が返ってしまう。</p>
+
+      <h3><span lang="en">5. Middleware order and the CORS trap</span><span lang="ja" class="sub">5. ミドルウェアの順番と CORS の罠</span></h3>
+<pre class="code">register_exception_handlers(app)
+<span class="c"># Added before CORSMiddleware so CORS wraps it and unexpected 500s still carry CORS headers.</span>
+app.add_middleware(<span class="hl">UnhandledErrorMiddleware</span>)
+app.add_middleware(CORSMiddleware, ...)</pre>
+      <p class="src-line"><a class="ref" data-p="main.py" data-l="52-65"></a> · <a class="ref" data-p="app/exception/handlers.py" data-l="75-108"></a></p>
+      <p lang="en">Starlette wraps middleware in reverse order of adding, so the one added last is the outermost. FastAPI's default 500 is built outside all middleware, which means no CORS headers, and the browser shows a confusing "network error". Catching the crash inside the CORS layer fixes that.</p>
+      <p lang="ja">Starlette では後から追加したミドルウェアほど外側になる。FastAPI 標準の 500 はすべてのミドルウェアの外で作られるので CORS ヘッダーがなく、ブラウザには分かりにくい「ネットワークエラー」と表示される。CORS 層の内側で例外を捕まえることで解決している。</p>
+
+      <h3><span lang="en">6. Session per request</span><span lang="ja" class="sub">6. リクエストごとのセッション</span></h3>
+<pre class="code">def get_db() -&gt; Generator[Session, None, None]:
+    db = session()
+    try:
+        <span class="hl">yield db</span>
+    finally:
+        db.close()</pre>
+      <p class="src-line"><a class="ref" data-p="app/deps/db.py" data-l="8-13"></a></p>
+
+      <h3><span lang="en">7. Strategy pattern: storage</span><span lang="ja" class="sub">7. Strategy パターン：ストレージ</span></h3>
+      <p lang="en"><code>StorageBackend</code> is an abstract class with <code>LocalStorageBackend</code> and <code>S3StorageBackend</code>. <code>get_storage()</code> picks one from settings, so callers never know which one they got (<a class="ref" data-p="app/utils/storage.py" data-l="32-130"></a>).</p>
+      <p lang="ja"><code>StorageBackend</code> は抽象クラスで、<code>LocalStorageBackend</code> と <code>S3StorageBackend</code> がある。<code>get_storage()</code> が設定から選ぶので、呼び出し側はどちらを使っているか意識しない（<a class="ref" data-p="app/utils/storage.py" data-l="32-130"></a>）。</p>
+
+      <h3><span lang="en">8. A circular-import trap</span><span lang="ja" class="sub">8. 循環 import の罠</span></h3>
+      <p lang="en">Models import <code>Base</code> from <code>app.db.base_class</code>, never from <code>app.db.base</code>. <code>base.py</code> imports every model so Alembic can see them all. A model importing <code>base.py</code> would import itself in a loop (<a class="ref" data-p="app/db/base.py"></a>).</p>
+      <p lang="ja">モデルは <code>Base</code> を <code>app.db.base_class</code> から import し、<code>app.db.base</code> からは決して import しない。<code>base.py</code> は Alembic のために全モデルを import しているので、モデルがそれを import すると循環する（<a class="ref" data-p="app/db/base.py"></a>）。</p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Exceptions over return codes</b>: an earlier version returned strings like <code>"forbidden"</code> and every router translated them. Exceptions can't be ignored by accident, carry a specific message, and stop the flow at the exact failing check.</span><span lang="ja" class="sub"><b>戻り値ではなく例外</b>：以前は <code>"forbidden"</code> のような文字列を返し、各ルーターで変換していた。例外なら見落とせず、具体的なメッセージを持ち、失敗した確認の位置で処理を止められる。</span></li>
+        <li><span lang="en"><b>Stable <code>code</code> field</b>: the frontend branches on <code>code</code>, not on English text, so wording (or a Japanese translation) can change without breaking clients.</span><span lang="ja" class="sub"><b>固定の <code>code</code></b>：フロントエンドは英文ではなく <code>code</code> で分岐するので、文言や日本語訳を変えてもクライアントは壊れない。</span></li>
+        <li><span lang="en"><b>Static-method services</b>: simple and explicit, with no DI container. The cost is that tests must <code>patch</code> full import paths instead of injecting a fake service.</span><span lang="ja" class="sub"><b>static メソッドのサービス</b>：DI コンテナがなく単純で明示的。代わりにテストでは偽のサービスを注入できず、完全な import パスで <code>patch</code> する必要がある。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout">
+        <p class="label"><span lang="en">Boilerplate</span><span lang="ja">定型コード</span></p>
+        <p lang="en">Every router repeats <code>try / except ServiceError / raise HTTPException from e</code>, and checkout routers stack several <code>except</code> blocks in a careful order (<a class="ref" data-p="app/router/events/ticket.py" data-l="40-55"></a>). Since each error already carries its status, one global <code>app.add_exception_handler(CodedError, …)</code> could replace most of it.</p>
+        <p lang="ja">各ルーターで <code>try / except ServiceError / raise HTTPException from e</code> を繰り返しており、チェックアウト系は複数の <code>except</code> を慎重な順番で並べている（<a class="ref" data-p="app/router/events/ticket.py" data-l="40-55"></a>）。例外が自分のステータスを持っているので、グローバルな <code>app.add_exception_handler(CodedError, …)</code> 1つでほぼ置き換えられる。</p>
+      </div>
+      <div class="callout">
+        <p class="label"><span lang="en">Services commit themselves</span><span lang="ja">サービスが自分でコミットする</span></p>
+        <p lang="en">Most service methods call <code>db.commit()</code> internally. That's simple, but two service calls can't share one transaction. The checkout flow works around this by having <code>PaymentService</code> only flush, and letting the outer service commit once. A Unit of Work pattern would make this explicit.</p>
+        <p lang="ja">多くのサービスメソッドは内部で <code>db.commit()</code> を呼ぶ。単純だが、2つのサービス呼び出しで1つのトランザクションを共有できない。チェックアウトでは <code>PaymentService</code> は flush だけにして、外側のサービスが1回だけコミットすることで回避している。Unit of Work パターンを使えば明示的にできる。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">What belongs in a router, a service and a model, and why no ORM queries go in routers.</span><span lang="ja" class="sub">ルーター・サービス・モデルそれぞれの役割と、ルーターに ORM クエリを書かない理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why response schemas are separate from ORM models.</span><span lang="ja" class="sub">レスポンス用スキーマを ORM モデルと分ける理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">How <code>Depends</code> and a <code>yield</code> dependency give one DB session per request.</span><span lang="ja" class="sub"><code>Depends</code> と <code>yield</code> の依存関係でリクエストごとにセッションを作る仕組み。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">Why every handler is <code>def</code> and not <code>async def</code>.</span><span lang="ja" class="sub">すべてのハンドラーが <code>async def</code> ではなく <code>def</code> である理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">The exception hierarchy and how a service error becomes <code>{"detail", "code"}</code>.</span><span lang="ja" class="sub">例外の階層と、サービスの例外が <code>{"detail", "code"}</code> になるまでの流れ。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">Why <code>raise … from e</code> matters here.</span><span lang="ja" class="sub">ここで <code>raise … from e</code> が重要な理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">Why the 500 middleware must sit inside CORS.</span><span lang="ja" class="sub">500 用ミドルウェアを CORS の内側に置く理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c8"><span><span lang="en">The storage Strategy pattern and the <code>base_class</code> import rule.</span><span lang="ja" class="sub">ストレージの Strategy パターンと <code>base_class</code> の import ルール。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Walk me through the structure of your backend.</span><span lang="ja" class="sub">バックエンドの構成を説明してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">Three layers per feature, grouped by domain. Routers handle HTTP: dependencies for the session, the user and rate limits, one service call, and error mapping. Services hold business rules and all ORM queries. Models are SQLAlchemy tables, and Pydantic schemas define request and response shapes. Cross-cutting code (auth dependencies, cache, exceptions, background tasks) lives in its own packages.</p>
+            <p lang="ja">機能ごとに3層で、ドメイン単位にまとめている。ルーターは HTTP を担当し、セッション・ユーザー・レート制限を依存関係で受け取り、サービスを1回呼んでエラーを変換する。サービスは業務ルールとすべての ORM クエリを持つ。モデルは SQLAlchemy のテーブル、Pydantic スキーマがリクエストとレスポンスの形を決める。認証、キャッシュ、例外、バックグラウンドタスクなどの横断的なコードは別パッケージにある。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why not return the ORM model directly from an endpoint?</span><span lang="ja" class="sub">エンドポイントから ORM モデルをそのまま返さないのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The API contract should not change when the table changes. A separate Read schema controls exactly which fields go out, so a new column like a password hash can't leak. It also gives OpenAPI docs and validation for free.</p>
+            <p lang="ja">テーブルが変わっても API の契約は変わるべきではない。Read スキーマを分ければ返すフィールドを正確に決められ、パスワードハッシュのような新しい列が漏れない。OpenAPI ドキュメントと検証も自動で得られる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Your handlers are all <code>def</code>. Isn't <code>async</code> faster?</span><span lang="ja" class="sub">ハンドラーがすべて <code>def</code> ですが、<code>async</code> の方が速くないですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Only if the work underneath is async. Here the DB driver, bcrypt, the PayPal client and boto3 are all blocking. In an <code>async def</code> handler they'd run on the event loop and freeze every other request. As plain <code>def</code>, FastAPI runs them in a threadpool, so they really run concurrently. To go async I'd need an async driver like asyncpg and async SQLAlchemy all the way down.</p>
+            <p lang="ja">下の処理が非同期である場合だけ。ここでは DB ドライバー、bcrypt、PayPal クライアント、boto3 がすべてブロッキング。<code>async def</code> の中で使うとイベントループ上で動き、他の全リクエストが止まる。普通の <code>def</code> なら FastAPI がスレッドプールで実行するので本当に並行に動く。非同期にするなら asyncpg と非同期 SQLAlchemy を全層で使う必要がある。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">How does a <code>ForbiddenError</code> in a service reach the client?</span><span lang="ja" class="sub">サービスの <code>ForbiddenError</code> はどうやってクライアントに届きますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The service raises it with a message. The router catches <code>ServiceError</code> and raises <code>HTTPException(403, …) from e</code>. The global handler builds <code>{"detail": message, "code": "forbidden"}</code>, taking the code from <code>__cause__</code>. A raise site can also override the code, for example <code>code="entries_closed"</code>.</p>
+            <p lang="ja">サービスがメッセージ付きで投げる。ルーターが <code>ServiceError</code> を捕まえ <code>HTTPException(403, …) from e</code> を投げる。グローバルハンドラーが <code>__cause__</code> から code を取り、<code>{"detail": メッセージ, "code": "forbidden"}</code> を作る。投げる側で <code>code="entries_closed"</code> のように code を上書きすることもできる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why do you need a custom middleware for 500 errors?</span><span lang="ja" class="sub">500 エラー用に独自ミドルウェアが必要なのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">FastAPI's built-in 500 response is generated outside the middleware stack, so it has no CORS headers. The browser then blocks it and the frontend sees a generic network error with no body. The custom middleware sits inside CORS, logs the traceback, and returns a JSON 500 with <code>code: "internal_error"</code> that the browser can read.</p>
+            <p lang="ja">FastAPI 標準の 500 はミドルウェアの外側で作られるので CORS ヘッダーがない。ブラウザがそれをブロックし、フロントエンドには本文のない一般的なネットワークエラーとしか見えない。独自ミドルウェアは CORS の内側にあり、トレースバックをログに出して、ブラウザが読める <code>code: "internal_error"</code> 付きの JSON 500 を返す。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">What would you change in this architecture as the team grows?</span><span lang="ja" class="sub">チームが大きくなったら、このアーキテクチャの何を変えますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">(1) One global handler for <code>CodedError</code> to remove per-router try/except. (2) A Unit of Work so services flush and one place commits, which makes cross-service transactions explicit. (3) Injected service instances or repositories, so tests can swap fakes without patching import paths. (4) A <code>domain_events</code> outbox, already planned, so side effects like emails and cache busting happen reliably after commit. I'd keep the domain folders, because they map well to future service boundaries.</p>
+            <p lang="ja">(1) <code>CodedError</code> 用のグローバルハンドラーを1つ作り、ルーターごとの try/except をなくす。(2) Unit of Work を導入し、サービスは flush だけ、コミットは1か所にしてサービス間のトランザクションを明示する。(3) サービスやリポジトリをインスタンスとして注入し、import パスを patch せずに偽物に差し替えられるようにする。(4) すでに計画にある <code>domain_events</code> のアウトボックスで、メール送信やキャッシュ削除などの副作用をコミット後に確実に実行する。ドメインごとのフォルダは、将来のサービス分割の境界にそのまま使えるので残す。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Pick <code>PUT /groups/update/{id}</code>. Trace it from <code>main.py</code> through the router, the service and the model, and list every <code>Depends</code> it runs.</span><span lang="ja" class="sub"><code>PUT /groups/update/{id}</code> を選び、<code>main.py</code> からルーター・サービス・モデルまで追いかけて、実行される <code>Depends</code> をすべて挙げる。</span></li>
+          <li><span lang="en">Remove <code>from e</code> in that router, call it as a manager of another company, and compare the <code>code</code> in the response.</span><span lang="ja" class="sub">そのルーターの <code>from e</code> を消し、別会社のマネージャーとして呼び出して、レスポンスの <code>code</code> を比べる。</span></li>
+          <li><span lang="en">Sketch a global <code>CodedError</code> handler. Which routers could lose their try/except?</span><span lang="ja" class="sub">グローバルな <code>CodedError</code> ハンドラーを書いてみる。どのルーターの try/except が不要になるか？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

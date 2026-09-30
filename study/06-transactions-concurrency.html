@@ -137,8 +137,8 @@ campaign = db.get(LotteryCampaign, campaign_id, <span class="hl">with_for_update
           </tbody>
         </table>
       </div>
-      <p lang="en"><code>commit_or_raise()</code> rolls back and turns the raw Postgres error into a typed exception with its own HTTP status (<a class="ref" data-p="app/exception/db_triggers.py" data-l="86-114"></a>). So a trigger firing becomes a clean 400 or 403 instead of a 500.</p>
-      <p lang="ja"><code>commit_or_raise()</code> はロールバックし、Postgres の生エラーを HTTP ステータスを持つ型付き例外に変換する（<a class="ref" data-p="app/exception/db_triggers.py" data-l="86-114"></a>）。トリガーが発火しても 500 ではなく、きれいな 400 や 403 になる。</p>
+      <p lang="en"><code>commit_or_raise()</code> rolls back and turns the raw Postgres error into a typed exception with its own HTTP status (<a class="ref" data-p="app/exception/db_triggers.py" data-l="99-127"></a>). So a trigger firing becomes a clean 400 or 403 instead of a 500.</p>
+      <p lang="ja"><code>commit_or_raise()</code> はロールバックし、Postgres の生エラーを HTTP ステータスを持つ型付き例外に変換する（<a class="ref" data-p="app/exception/db_triggers.py" data-l="99-127"></a>）。トリガーが発火しても 500 ではなく、きれいな 400 や 403 になる。</p>
       <div class="callout">
         <p class="label"><span lang="en">Interview trap</span><span lang="ja">面接の落とし穴</span></p>
         <p lang="en">A trigger that counts rows is <b>not race-proof on its own</b>. Under READ COMMITTED it can't see another transaction's uncommitted insert, so two parallel inserts can both count 0. The trigger catches bugs and direct SQL writes. The row locks are what stop the race.</p>
