@@ -1,5 +1,7 @@
 # i-dolly-backend
 
+English | [日本語](README_JP.md)
+
 An idol-concert **ticket reservation** backend with an **album/singles marketplace**, built as a
 **portfolio project** to showcase backend engineering: schema design, layered API architecture,
 migration discipline, and RBAC. It started as a generic FastAPI e-commerce website and has been
@@ -147,6 +149,10 @@ docker compose exec app python scripts/seed.py
 ```
 Populates a full fictional roster — management companies, idol groups, venues, concerts, ticket
 types, and marketplace products. Idempotent — safe to re-run.
+
+For a Japanese-language version of the same data (names, descriptions, concert titles, product
+titles), run `scripts/seed_ja.py` instead. Use one or the other per database — they share user
+emails, and each skips if either version's data is already present.
 
 ### 5. Run tests
 ```bash

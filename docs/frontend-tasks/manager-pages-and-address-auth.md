@@ -1,5 +1,7 @@
 # Frontend task: send auth on manager settings pages and address lookup
 
+English | [日本語](manager-pages-and-address-auth_JP.md)
+
 **Backend branch:** `refactor/add-test-coverage` (fixes `docs/bugs.md` #28 and #29).
 **Type:** breaking change. Pages that call these endpoints without a token stop working once
 this backend is deployed. Ship the frontend change first or together with the backend.

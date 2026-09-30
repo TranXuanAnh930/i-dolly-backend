@@ -1006,9 +1006,12 @@ def _slug(name: str) -> str:
 def main():
     db = SessionLocal()
     try:
-        already_seeded = db.query(ManagementCompany).filter(ManagementCompany.name == "Nova Entertainment").first()
+        # seed_ja.py creates the same user emails under a Japanese sentinel name.
+        already_seeded = db.query(ManagementCompany).filter(
+            ManagementCompany.name.in_(["Nova Entertainment", "ノヴァ・エンターテインメント"])
+        ).first()
         if already_seeded:
-            print("Seed data already present (found 'Nova Entertainment') — skipping.")
+            print(f"Seed data already present (found '{already_seeded.name}') — skipping.")
             return
         seed(db)
     except Exception:

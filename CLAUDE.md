@@ -67,6 +67,10 @@ Don't re-derive these from the code — read the docs first, they're kept curren
   S3-compatible bucket (image uploads), and Render's Key Value add-on (Redis). Read this before
   touching env-var handling, CORS, or storage/cache backend selection.
 
+`README.md` and every doc under `docs/` has a Japanese translation next to it (`<name>_JP.md`,
+same convention as the `i-dolly-monolith` repo). The English file is the source of truth: read
+and edit that one, then update its `_JP.md` counterpart in the same change so they don't drift.
+
 ## 6. Coding style
 
 - Follow the existing three-layer split (router / service / model+schema) — see

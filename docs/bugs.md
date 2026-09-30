@@ -1,5 +1,7 @@
 # Bugs / code smells — audit backlog
 
+English | [日本語](bugs_JP.md)
+
 Findings from a static read-through (2026-09-24) of auth, checkout/payment, ticketing, lottery,
 cache and storage code. **Not reproduced against a live app or test run** — each item is traced in
 the code, not observed at runtime. Tick items off (or move them into `project_status.md` §4) as

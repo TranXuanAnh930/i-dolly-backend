@@ -1,5 +1,7 @@
 # Deployment — Render (API) + Supabase (Postgres) + Render Key Value (Redis)
 
+English | [日本語](deployment_JP.md)
+
 How to take this repo from local Docker Compose to a live deployment: API on Render, database on
 Supabase, cache/rate-limiter on Render's own Redis-compatible add-on, and image uploads on
 S3-compatible object storage. The full migration chain runs from empty in CI (Postgres 16) on
@@ -186,7 +188,8 @@ so the secret needs to be re-added for this repo:
 2. `POST /account/register` → `POST /account/login` — confirms the DB connection and JWT flow.
 3. `GET /products/all` — confirms Redis (product-list cache) is reachable.
 4. If you seed data: `render shell` into the service (or a one-off Render job) and run
-   `python scripts/seed.py` — it's idempotent, safe to run once against the fresh Supabase DB.
+   `python scripts/seed.py` (or `python scripts/seed_ja.py` for the Japanese version) — it's
+   idempotent, safe to run once against the fresh Supabase DB.
 
 ## 11. Known limitations carried into this deploy
 

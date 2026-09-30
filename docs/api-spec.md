@@ -1,5 +1,7 @@
 # API Endpoint Spec — Frontend Integration Guide
 
+English | [日本語](api-spec_JP.md)
+
 Companion to `../CLAUDE.md`, `architecture.md`, `database-design.md`, and `project_status.md`
 (same `docs/` folder). Those explain the system; this file is the handoff surface — every route
 the backend exposes today, grouped by the page a frontend would use it from, so a UI can be built

@@ -1,5 +1,7 @@
 # Database Design — Idol Concert Ticket Reservation + Album/Singles Marketplace
 
+English | [日本語](database-design_JP.md)
+
 Companion to `../CLAUDE.md` and `architecture.md`/`project_status.md`. `schema.sql` is cited
 throughout as the reference DDL but doesn't exist as a file in the repo — treat every citation as
 pointing at DDL that still needs to be extracted from the live migrations (see

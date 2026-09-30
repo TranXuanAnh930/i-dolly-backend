@@ -1,5 +1,7 @@
 # Architecture
 
+English | [日本語](architecture_JP.md)
+
 How the codebase is organized and the conventions new code should follow. For the data model
 (tables, RBAC, business logic), see `database-design.md`. For what's built vs. still open, see
 `project_status.md`.

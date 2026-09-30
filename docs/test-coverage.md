@@ -1,5 +1,7 @@
 # Test Coverage Report
 
+English | [日本語](test-coverage_JP.md)
+
 A snapshot of what the test suite covers, measured rather than estimated. It's kept separate from
 `project_status.md` because it's a point-in-time report: re-run the command below and update the
 tables when the numbers move meaningfully, rather than editing individual figures by hand.
