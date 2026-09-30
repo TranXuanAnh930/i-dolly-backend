@@ -1,5 +1,7 @@
 # Project Status
 
+English | [日本語](project_status_JP.md)
+
 A snapshot of what's built, what's verified, and what's still open — read this before assuming
 something exists or is finished. `database-design.md` (same folder) is the schema/business-logic
 design; `architecture.md` is how the code is organized; this file is the "where are we right

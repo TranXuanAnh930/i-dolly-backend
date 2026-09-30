@@ -1,5 +1,7 @@
 # Fix plan: a committed draw must never be reported as failed (bugs.md #25)
 
+English | [日本語](lottery-draw-post-commit_JP.md)
+
 **Status:** planned, not started (2026-09-27). Lottery code: to be hand-written; this doc is the
 design only.
 

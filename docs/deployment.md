@@ -1,5 +1,7 @@
 # Deployment — Render (API) + Supabase (Postgres) + Render Key Value (Redis)
 
+English | [日本語](deployment_JP.md)
+
 How to take this repo from local Docker Compose to a live deployment: API on Render, database on
 Supabase, cache/rate-limiter on Render's own Redis-compatible add-on, and image uploads on
 S3-compatible object storage. The full migration chain runs from empty in CI (Postgres 16) on

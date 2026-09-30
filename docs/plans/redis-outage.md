@@ -1,5 +1,7 @@
 # Fix plan: survive a Redis outage (bugs.md #11)
 
+English | [日本語](redis-outage_JP.md)
+
 **Status:** planned, not started (2026-09-27).
 
 ## Problem

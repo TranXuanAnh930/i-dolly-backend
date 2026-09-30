@@ -1,5 +1,7 @@
 # i-dolly-backend
 
+English | [日本語](README_JP.md)
+
 An idol-concert **ticket reservation** backend with an **album/singles marketplace**, built as a
 **portfolio project** to showcase backend engineering: schema design, layered API architecture,
 migration discipline, and RBAC. It started as a generic FastAPI e-commerce website and has been
