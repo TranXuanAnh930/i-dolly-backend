@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.cache.invalidation import CacheInvalidation
@@ -63,9 +63,14 @@ class OrderService:
             raise PaymentAmountMismatch("Payment amount does not match cart total!")
 
         product_ids = [cart_item.product_id for cart_item in cart_items]
-        capped_products = db.query(Product).filter(Product.id.in_(product_ids), Product.category.has(is_resale_capped=True)).all()
-        capped_product_ids = {product.id for product in capped_products}
+        # Held until commit. Every checkout touching one of these products queues here, so the
+        # resale-cap and stock checks below read counts no concurrent checkout can still change.
+        # populate_existing() makes the checks read the locked rows, not a stale identity-map copy.
+        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
 
+        capped_product_ids = set(
+            db.scalars(select(Product.id).filter(Product.id.in_(product_ids), Product.category.has(is_resale_capped=True)))
+        )
         if capped_product_ids:
         # One grouped query for every resale-capped item in the cart.
             past_qty = dict(
@@ -77,9 +82,6 @@ class OrderService:
                 if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > RESALE_CAP_QUANTITY:
                     raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the {RESALE_CAP_QUANTITY}-unit resale cap")
 
-        # populate_existing() is required: the resale-cap query already loaded these rows unlocked,
-        # and without it the stock check would read those stale copies instead of the locked rows.
-        products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
         for product in products:
             item = next((cart_item for cart_item in cart_items if cart_item.product_id == product.id), None)
             if product.quantity < item.quantity:

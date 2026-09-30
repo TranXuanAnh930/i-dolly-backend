@@ -74,8 +74,13 @@ they're fixed.
 - [ ] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
   live (`ticket_service.py:54`) but direct tickets have no deadline/sweep.
   **DEFERRED**: to be fixed later, with #26 and #27.
-- [ ] **13. Resale cap counts cancelled/declined orders** (`order_service.py:71`, no status
-  filter), and is computed before the lock (concurrent checkouts can both pass). Abandoned PayPal
+- [ ] **13. Resale cap counts cancelled/declined orders** (`order_service.py`, no status
+  filter). ~~Computed before the lock (concurrent checkouts can both pass)~~ — **race FIXED**:
+  `checkout` now runs the cap check after the `FOR UPDATE` on the cart's products, and
+  `fn_enforce_resale_cap` takes a `pg_advisory_xact_lock` on (buyer, product) before its sum
+  (migration `d4a7c9e2f1b5`), so the trigger holds on its own too. Race-tested in
+  `tests/integration/marketplace/test_resale_cap_concurrency.py`. The status-filter half is still
+  open. Abandoned PayPal
   checkouts make this worse: each one leaves a `pending` order that counts toward the cap forever
   (#27), so a fan can hit `ResaleCapExceededError` without owning a unit. Count only `confirmed`
   orders.
