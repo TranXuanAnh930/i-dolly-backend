@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.cache.cache_service import CacheService
-from app.cache.rate_limit import ip_key, rate_limit
+from app.cache.rate_limit import ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.db.models.talent import Group
 from app.deps.auth import require_manager_or_admin
@@ -42,20 +42,17 @@ def add_new_group(group: GroupCreate, current_user: Users = Depends(require_mana
 @router.get("/all", response_model=List[GroupRead])
 def list_groups(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Group]:
     result = GroupService.get_groups(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No groups found")
     return result
 
 @router.get("/groups-page", response_model=GroupsPageRead)
 def get_groups_page_data(db: Session = Depends(get_db)) -> GroupsPageRead:
     result = CacheService.get_cached_groups_page(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No groups found")
     return result
 
+# Managers see only their own company's groups.
 @router.get("/manager-groups-page", response_model=ManagerGroupsPageRead)
-def get_manager_groups_page_data(db: Session = Depends(get_db)) -> ManagerGroupsPageRead:
-    return CacheService.get_cached_manager_groups_page(db)
+def get_manager_groups_page_data(current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> ManagerGroupsPageRead:
+    return GroupService.scope_manager_groups_page(CacheService.get_cached_manager_groups_page(db), current_user)
 
 @router.get("/{id}/detail", response_model=GroupDetailRead)
 def get_group_detail_by_id(id: uuid.UUID, _: None = Depends(rate_limit(30, 60, ip_key)), db: Session = Depends(get_db)) -> GroupDetailRead:

@@ -8,16 +8,19 @@ fires into a TriggerViolationError subclass that carries its own HTTP status cod
 
     # router
     except TriggerViolationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 """
 
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from app.exception.common import CodedError
 
-class TriggerViolationError(Exception):
+
+class TriggerViolationError(CodedError):
     """Base class; only subclasses are raised, carrying the original Postgres message."""
     status_code = 400
+    code = "rule_violation"
 
 
 class FanOnlyPurchaseError(TriggerViolationError):
@@ -25,45 +28,55 @@ class FanOnlyPurchaseError(TriggerViolationError):
 
     Also raised directly by services as the primary check; the trigger is the backstop."""
     status_code = 403
+    code = "fan_only_purchase"
 
 
 class LotteryPreferenceTicketTypeMismatchError(TriggerViolationError):
     """trg_lottery_preferences_ticket_type_concert
     (fn_require_ticket_type_matches_concert)."""
+    code = "ticket_type_concert_mismatch"
 
 
 class ResaleCapExceededError(TriggerViolationError):
     """trg_orders_items_resale_cap (fn_enforce_resale_cap)."""
+    code = "resale_cap_exceeded"
 
 
 class DuplicateConcertTicketError(TriggerViolationError):
     """trg_tickets_one_per_concert (fn_enforce_one_ticket_per_concert)."""
+    code = "duplicate_concert_ticket"
 
 
 class ProductDetailKindConflictError(TriggerViolationError):
     """trg_album_details_exclusive_kind / trg_merch_details_exclusive_kind
     (fn_enforce_single_product_detail_kind)."""
+    code = "product_detail_kind_conflict"
 
 
 class LotteryEntryCapExceededError(TriggerViolationError):
     """trg_lottery_entries_cap (fn_enforce_lottery_entry_cap)."""
+    code = "lottery_entry_cap_exceeded"
 
 
 class LotteryPreferenceRequiredError(TriggerViolationError):
     """trg_lottery_entries_require_preference (fn_require_lottery_preference)."""
+    code = "lottery_preference_required"
 
 
 class ConcertTicketCapacityExceededError(TriggerViolationError):
     """trg_ticket_types_capacity (fn_enforce_concert_ticket_capacity)."""
+    code = "concert_capacity_exceeded"
 
 
 class DuplicateIdempotencyKeyError(TriggerViolationError):
     """uq_payment_idempotency_key: a checkout retried with an already-used idempotency key."""
     status_code = 409
+    code = "duplicate_idempotency_key"
 
 
 class DuplicateTicketTypeError(TriggerViolationError):
     """uq_ticket_types_concert_tier_method: one ticket type per (concert, tier, sale_method)."""
+    code = "duplicate_ticket_type"
 
 
 # (substring of the Postgres error text, exception class). Each substring matches exactly one

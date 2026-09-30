@@ -87,11 +87,9 @@ class GroupService:
     # --- page-shaped reads ---
 
     @staticmethod
-    def get_groups_page(db: Session) -> GroupsPageRead | None:
+    def get_groups_page(db: Session) -> GroupsPageRead:
         # Active groups only.
         groups = db.query(Group).filter(Group.is_active.is_(True)).all()
-        if not groups:
-            return None
         counts = dict(
             db.query(Idol.group_id, func.count(Idol.id))
             .filter(Idol.group_id.isnot(None))
@@ -147,3 +145,10 @@ class GroupService:
     @staticmethod
     def get_manager_groups_page(db: Session) -> ManagerGroupsPageRead:
         return ManagerGroupsPageRead(groups=db.query(Group).all())
+
+    # The cached page holds every company's rows; managers get only their own company's.
+    @staticmethod
+    def scope_manager_groups_page(page: ManagerGroupsPageRead, current_user: Users) -> ManagerGroupsPageRead:
+        if current_user.role != UserRole.manager:
+            return page
+        return ManagerGroupsPageRead(groups=[g for g in page.groups if g.company_id == current_user.company_id])

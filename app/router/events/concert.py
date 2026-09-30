@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.cache.cache_service import CacheService
-from app.cache.rate_limit import ip_key, rate_limit, user_or_ip_key
+from app.cache.rate_limit import ip_key, rate_limit, user_key, user_or_ip_key
 from app.celery_app import celery_app
 from app.db.models.events import Concert, ConcertPerformer
 from app.db.models.identity import Users
@@ -42,20 +42,17 @@ def add_new_concert(concert: ConcertCreate, current_user: Users = Depends(requir
 @router.get("/all", response_model=List[ConcertRead])
 def list_concerts(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Concert]:
     result = ConcertService.get_concerts(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
 @router.get("/events-page", response_model=EventsPageRead)
 def get_events_page_data(db: Session = Depends(get_db)) -> EventsPageRead:
     result = CacheService.get_cached_events_page(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No concerts found")
     return result
 
+# Managers see only their own company's concerts.
 @router.get("/manager-events-page", response_model=ManagerEventsPageRead)
-def get_manager_events_page_data(db: Session = Depends(get_db)) -> ManagerEventsPageRead:
-    return CacheService.get_cached_manager_events_page(db)
+def get_manager_events_page_data(current_user: Users = Depends(require_manager_or_admin), _: None = Depends(rate_limit(30, 60, user_key)), db: Session = Depends(get_db)) -> ManagerEventsPageRead:
+    return ConcertService.scope_manager_events_page(CacheService.get_cached_manager_events_page(db), current_user)
 
 @router.get("/{id}/detail", response_model=ConcertDetailRead)
 def get_concert_detail_by_id(id: uuid.UUID, current_user: Users | None = Depends(get_current_user_optional), _: None = Depends(rate_limit(30, 60, user_or_ip_key)), db: Session = Depends(get_db)) -> ConcertDetailRead:
@@ -117,8 +114,6 @@ def assign_concert_performer(data: ConcertPerformerAssign, current_user: Users =
 @router.get("/performers/concert/{concert_id}", response_model=List[ConcertPerformerRead])
 def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_performers(db, concert_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="This concert has no performers assigned")
     return result
 
 # Every performer link across all concerts, in one request.
@@ -126,8 +121,6 @@ def list_concert_performers(concert_id: uuid.UUID, db: Session = Depends(get_db)
 @router.get("/performers/all", response_model=List[ConcertPerformerRead])
 def list_all_concert_performers(db: Session = Depends(get_db)) -> list[ConcertPerformer]:
     result = ConcertService.get_all_performers(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No concert performers found")
     return result
 
 # Not used by the frontend.

@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import UploadFile
 
 from app.config.settings import settings
+from app.exception.common import CodedError
 
 # Allowed content type -> stored file extension.
 IMAGE_EXTENSIONS = {
@@ -23,8 +24,9 @@ ALLOWED_IMAGE_CONTENT_TYPES = set(IMAGE_EXTENSIONS)
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
-class StorageError(Exception):
+class StorageError(CodedError):
     """An upload failure to report as 400: bad content type, oversized file, or misconfiguration."""
+    code = "invalid_image"
 
 
 class StorageBackend(ABC):

@@ -27,8 +27,6 @@ def add_new_genre(genre: GenreCreate, current_user: Users = Depends(require_mana
 @router.get("/all", response_model=List[GenreRead])
 def list_genres(db: Session = Depends(get_db)) -> list[Genre]:
     result = GenreService.get_genres(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No genres found")
     return result
 
 # Not used by the frontend.
@@ -54,8 +52,6 @@ def assign_genre_to_album(data: AlbumGenreAssign, current_user: Users = Depends(
 @router.get("/album_genres/album/{product_id}", response_model=List[AlbumGenreRead])
 def list_album_genres(product_id: uuid.UUID, db: Session = Depends(get_db)) -> list[AlbumGenre]:
     result = GenreService.get_album_genres(db, product_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="This album has no genres tagged")
     return result
 
 # Every album's genre tags in one request.
@@ -63,8 +59,6 @@ def list_album_genres(product_id: uuid.UUID, db: Session = Depends(get_db)) -> l
 @router.get("/album_genres/all", response_model=List[AlbumGenreRead])
 def list_all_album_genres(db: Session = Depends(get_db)) -> list[AlbumGenre]:
     result = GenreService.get_all_album_genres(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No album genres found")
     return result
 
 # Not used by the frontend.

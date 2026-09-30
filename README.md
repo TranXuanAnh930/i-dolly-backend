@@ -23,6 +23,7 @@ The `docs/` folder is the source of truth for anything not obvious from the code
 | [`docs/project_status.md`](docs/project_status.md) | What's actually built vs. still open, known issues, verification method |
 | [`docs/api-spec.md`](docs/api-spec.md) | Every route the backend exposes, grouped by frontend use case |
 | [`docs/deployment.md`](docs/deployment.md) | How to deploy: Render (API + worker), Supabase (Postgres), S3-compatible storage, Render Key Value (Redis) |
+| [`docs/bugs.md`](docs/bugs.md) | Audit backlog of known bugs and code smells; fix plans in `docs/plans/` |
 
 ---
 
@@ -36,6 +37,7 @@ The `docs/` folder is the source of truth for anything not obvious from the code
 - **Marketplace** — products/categories extended with album/single/EP details, merch details
   (covers lightsticks and other official branded merch), genres — reusing the original
   cart/order/payment/shipping machinery.
+- **Shared** — in-app notifications, the contact form (inquiries), and FAQ instant answers.
 
 ## Tech stack
 
@@ -43,11 +45,14 @@ The `docs/` folder is the source of truth for anything not obvious from the code
 - **PostgreSQL** via **SQLAlchemy 2.0** ORM, **Alembic** for migrations (one linear chain)
 - **Redis** for caching (msgpack-serialized) and rate limiting
 - **Celery** worker (Redis-backed broker/result backend) — runs the manager-triggered lottery
-  draw as a real background job; a Render Background Worker in production
+  draw and every transactional email send as background jobs; a Render Background Worker in
+  production
 - **JWT** auth — short-lived access tokens + rotating refresh tokens, httponly cookies
 - **Mock payment gateway** for local dev, plus a **PayPal** integration (sandbox-verified for
   ticket checkout) — see [Known limitations](#known-limitations) for what's still unverified there
 - **Resend** for transactional email
+- **Claude API** (`anthropic` SDK, Haiku 4.5) for FAQ instant answers on the contact page —
+  optional, off when `ANTHROPIC_API_KEY` is unset
 - Local disk / S3-compatible object storage abstraction for idol/product images
 - **Docker Compose** for local dev; **GitHub Actions** for CI — a `lint` job (`ruff check .`) and
   a separate `test` job (Postgres + Redis services, Alembic migrations, pytest + coverage)
@@ -70,7 +75,15 @@ Full detail and reasoning: [`docs/architecture.md`](docs/architecture.md) §1.
   same concert can't double-draw it
 - **In-app notifications** (order/ticket/lottery confirmations, lottery results, password reset,
   and more) — a polled feed (`GET /notifications/mine`, `/unread-count`), deliberately no
-  WebSocket/SSE layer; email dispatch for these is not yet built
+  WebSocket/SSE layer
+- **Transactional email** through Resend, sent from a Celery task (verification, password reset,
+  order/ticket/lottery-payment confirmations, contact-form receipts); lottery win/loss results are
+  in-app only, by design
+- **Direct-sale ticket checkout** (`POST /tickets/checkout`) alongside the lottery flow, gated by a
+  direct-sale campaign window
+- **Contact form** (`POST /inquiries/submit`, guests allowed) with an AI **FAQ instant answer**
+  (`POST /inquiries/instant-answer`, English and Japanese) that answers only from a curated FAQ
+  file and falls back to the form when it can't help
 - **PayPal checkout**, alongside the mock gateway, for real (sandbox) payment processing
 - Idempotency keys on both checkout endpoints, so a retried/double-clicked request can't create a
   duplicate charge
@@ -78,19 +91,23 @@ Full detail and reasoning: [`docs/architecture.md`](docs/architecture.md) §1.
 - An idempotent seed script (`scripts/seed.py`) with a full fictional roster of idols, groups, venues,
   concerts, and marketplace products
 
-Detailed, current status — including what's *not* built yet, like emailing any of the
-notifications above, the ETL/analytics pipeline, and a full audit trail on the PayPal decline/
-webhook paths: [`docs/project_status.md`](docs/project_status.md) §2 and §5.
+Detailed, current status — including what's *not* built yet, like the ETL/analytics pipeline, a
+staff-facing view of inquiries, and a verified PayPal decline/webhook path:
+[`docs/project_status.md`](docs/project_status.md) §2 and §5.
 
 ## Known limitations
-- Rate-limit coverage now spans all 25 router files by an explicit tier policy
+- Rate-limit coverage now spans all 26 router files by an explicit tier policy
   (`docs/architecture.md` §3) rather than ad hoc per-route judgment — but the policy itself (which
   tier a route belongs to, and its exact limit/window) is a portfolio-scoped judgment call, not a
   formally load-tested one.
 
-Full list, ordered by how much each matters — including everything above that's already been
-fixed (the checkout race, the rate-limiter key collision, webhook idempotency, and more):
-`docs/project_status.md` §4.
+- Known open bugs (spoofable IP rate limits behind the proxy, no Redis-outage handling, PayPal
+  pending-state cleanup, and more) are tracked in `docs/bugs.md`, with fix plans in
+  `docs/plans/`.
+
+Full list, ordered by how much each matters — including what's already been fixed (the checkout
+race, the rate-limiter key collision, webhook idempotency, and more): `docs/project_status.md` §4
+and `docs/bugs.md`.
 
 ---
 

@@ -77,7 +77,7 @@ class TestShippingService:
         mock_addr = MagicMock()
         db.query().filter().first.return_value = mock_addr
 
-        result = ShippingService.get_address_by_id(db, DEFAULT_ID)
+        result = ShippingService.get_address_by_id(db, DEFAULT_ID, DEFAULT_ID)
         assert result == mock_addr
 
     def test_get_address_by_id_not_found(self):
@@ -86,7 +86,7 @@ class TestShippingService:
         db = MagicMock()
         db.query().filter().first.return_value = None
 
-        result = ShippingService.get_address_by_id(db, MISSING_ID)
+        result = ShippingService.get_address_by_id(db, DEFAULT_ID, MISSING_ID)
         assert result is None
 
     def test_update_address_success(self):

@@ -39,8 +39,6 @@ def apply_to_lotteries(data: LotteryEntryApplyBatch, current_user: Users = Depen
 @router.get("/mine", response_model=List[LotteryEntryRead])
 def list_my_entries(current_user: Users = Depends(get_current_user), db: Session = Depends(get_db)) -> list[LotteryEntry]:
     result = LotteryEntryService.get_my_entries(db, current_user)
-    if not result:
-        raise HTTPException(status_code=404, detail="You have no lottery entries")
     return result
 
 @router.get("/campaign/{campaign_id}", response_model=List[LotteryEntryRead])
@@ -49,8 +47,6 @@ def list_campaign_entries(campaign_id: uuid.UUID, current_user: Users = Depends(
         result = LotteryEntryService.get_entries_for_campaign(db, campaign_id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    if not result:
-        raise HTTPException(status_code=404, detail="No entries found for this campaign")
     return result
 
 # Won and lost entries across every campaign of a concert, each with the winner's email and ticket
@@ -61,6 +57,4 @@ def list_concert_draw_results(concert_id: uuid.UUID, current_user: Users = Depen
         result = LotteryEntryService.get_draw_results_for_concert(db, concert_id, current_user)
     except ServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e)) from e
-    if not result:
-        raise HTTPException(status_code=404, detail="No lottery results found for this concert")
     return result

@@ -96,11 +96,13 @@ def test_assign_genre_requires_manager_or_admin():
 
 def test_list_album_genres_for_album_empty():
     response = client.get(f"/genres/album_genres/album/{FAKE_ID}")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_list_all_album_genres_empty():
     response = client.get("/genres/album_genres/all")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_unassign_genre_requires_manager_or_admin():
     headers = auth_headers()

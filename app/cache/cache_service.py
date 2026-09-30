@@ -66,10 +66,6 @@ class CacheService(CacheInvalidation):
         if cached:
             return msgpack.unpackb(cached, raw=False)
         products = ProductService.list_of_products(db)
-
-        if not products:
-            return []
-
         # ProductRead has no from_attributes, so build a dict (resolving the category name) and
         # validate it through the schema.
         payload = [
@@ -88,7 +84,7 @@ class CacheService(CacheInvalidation):
         return payload
 
     @staticmethod
-    def get_cached_store_page(db: Session) -> StorePageRead | None:
+    def get_cached_store_page(db: Session) -> StorePageRead:
         cache_key = STORE_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
@@ -96,8 +92,6 @@ class CacheService(CacheInvalidation):
 
         # Stored as model_dump(mode="json") so msgpack can serialize it.
         result = ProductService.get_store_page(db)
-        if not result:
-            return None
 
         payload = result.model_dump(mode="json")
         redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
@@ -117,15 +111,13 @@ class CacheService(CacheInvalidation):
         return result
 
     @staticmethod
-    def get_cached_events_page(db: Session) -> EventsPageRead | None:
+    def get_cached_events_page(db: Session) -> EventsPageRead:
         cache_key = EVENTS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return EventsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ConcertService.get_events_page(db)
-        if not result:
-            return None
         redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -144,15 +136,13 @@ class CacheService(CacheInvalidation):
         return result
 
     @staticmethod
-    def get_cached_members_page(db: Session) -> MembersPageRead | None:
+    def get_cached_members_page(db: Session) -> MembersPageRead:
         cache_key = MEMBERS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return MembersPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = IdolService.get_members_page(db)
-        if not result:
-            return None
         redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -170,15 +160,13 @@ class CacheService(CacheInvalidation):
         return result
 
     @staticmethod
-    def get_cached_groups_page(db: Session) -> GroupsPageRead | None:
+    def get_cached_groups_page(db: Session) -> GroupsPageRead:
         cache_key = GROUPS_PAGE_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return GroupsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = GroupService.get_groups_page(db)
-        if not result:
-            return None
         redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
@@ -198,29 +186,25 @@ class CacheService(CacheInvalidation):
     # Venues and idol colors: small lookup tables, cached with the same TTL + invalidate-on-write.
 
     @staticmethod
-    def get_cached_venues(db: Session) -> list[dict[str, Any]] | None:
+    def get_cached_venues(db: Session) -> list[dict[str, Any]]:
         cache_key = VENUES_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
 
         venues = VenueService.get_venues(db)
-        if not venues:
-            return None
         payload = [VenueRead.model_validate(v).model_dump(mode="json") for v in venues]
         redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
     @staticmethod
-    def get_cached_idol_colors(db: Session) -> list[dict[str, Any]] | None:
+    def get_cached_idol_colors(db: Session) -> list[dict[str, Any]]:
         cache_key = IDOL_COLORS_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
 
         colors = IdolColorService.get_idol_colors(db)
-        if not colors:
-            return None
         payload = [IdolColorRead.model_validate(c).model_dump(mode="json") for c in colors]
         redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
@@ -298,15 +282,13 @@ class CacheService(CacheInvalidation):
         return result
 
     @staticmethod
-    def get_cached_management_companies(db: Session) -> list[dict[str, Any]] | None:
+    def get_cached_management_companies(db: Session) -> list[dict[str, Any]]:
         cache_key = MANAGEMENT_COMPANIES_KEY
         cached = redis_client.get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
 
         companies = ManagementCompanyService.get_companies(db)
-        if not companies:
-            return None
         payload = [ManagementCompanyRead.model_validate(c).model_dump(mode="json") for c in companies]
         redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload

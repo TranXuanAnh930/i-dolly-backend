@@ -74,19 +74,19 @@ class LotteryPreferenceService:
         campaigns = LotteryPreferenceService._campaigns_for_tiers(db, current_tier_ids | new_tier_ids)
         now = datetime.now(timezone.utc)
         if any(c.status != CampaignStatus.open or now > c.entry_end_at for c in campaigns):
-            raise BadRequestError("Lottery entries for this concert have closed, so your ranking can no longer change")
+            raise BadRequestError("Lottery entries for this concert have closed, so your ranking can no longer change", code="ranking_locked")
 
         campaigns_by_tier = {c.ticket_type_id: c for c in campaigns}
         for tier_id in new_tier_ids:
             campaign = campaigns_by_tier.get(tier_id)
             if campaign is None:
-                raise NotFoundError("No lottery campaign found for this ticket type")
+                raise NotFoundError("No lottery campaign found for this ticket type", code="no_lottery_campaign")
             if now < campaign.entry_start_at:
-                raise BadRequestError("Entries for this lottery campaign haven't opened yet")
+                raise BadRequestError("Entries for this lottery campaign haven't opened yet", code="entries_not_open")
 
         removed_tier_ids = current_tier_ids - new_tier_ids
         if LotteryPreferenceService._entered_tier_ids(db, removed_tier_ids, user_id):
-            raise BadRequestError("You can't remove a tier you've already applied to")
+            raise BadRequestError("You can't remove a tier you've already applied to", code="tier_already_applied")
 
     @staticmethod
     def set_preferences(db: Session, data: LotteryPreferenceSet, current_user: Users) -> list[LotteryPreference]:
@@ -96,13 +96,13 @@ class LotteryPreferenceService:
         seen = set()
         for tt_id in data.ticket_type_ids_in_order:
             if tt_id in seen:
-                raise BadRequestError("Duplicate ticket_type_id in the ranked list")
+                raise BadRequestError("Duplicate ticket_type_id in the ranked list", code="duplicate_ranked_tier")
             seen.add(tt_id)
             tt = db.get(TicketType, tt_id)
             if not tt or tt.concert_id != data.concert_id:
                 raise NotFoundError("Concert or ticket type not found, or a ticket type doesn't belong to this concert")
             if tt.sale_method != SaleMethod.lottery:
-                raise BadRequestError("Can only rank lottery-sale ticket types")
+                raise BadRequestError("Can only rank lottery-sale ticket types", code="wrong_sale_method")
 
         LotteryPreferenceService._check_ranking_change_allowed(db, data.concert_id, current_user.id, seen)
 

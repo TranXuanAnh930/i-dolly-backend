@@ -31,8 +31,6 @@ def add_new_merch_detail(data: MerchDetailCreate, current_user: Users = Depends(
 @router.get("/all", response_model=List[MerchDetailRead])
 def list_merch_details(db: Session = Depends(get_db)) -> list[MerchDetail]:
     result = MerchDetailService.get_merch_details(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No merch details found")
     return result
 
 # Not used by the frontend.

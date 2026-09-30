@@ -321,10 +321,8 @@ class ProductService:
         return cards
 
     @staticmethod
-    def get_store_page(db: Session) -> StorePageRead | None:
+    def get_store_page(db: Session) -> StorePageRead:
         products = db.query(Product).options(joinedload(Product.category)).all()
-        if not products:
-            return None
         groups = db.query(Group).all()
         return StorePageRead(products=ProductService._build_product_cards(db, products), groups=groups)
 
@@ -434,6 +432,17 @@ class ProductService:
             groups=groups,
             colors=colors,
         )
+
+    # Products are already scoped by the company_id the page was built for; this also limits the
+    # idol/group pickers to the manager's own company. Categories and colors are shared.
+    @staticmethod
+    def scope_manager_product_form_page(page: ManagerProductFormPageRead, current_user: Users) -> ManagerProductFormPageRead:
+        if current_user.role != UserRole.manager:
+            return page
+        return page.model_copy(update={
+            "idols": [i for i in page.idols if i.company_id == current_user.company_id],
+            "groups": [g for g in page.groups if g.company_id == current_user.company_id],
+        })
 
     # --- sales history: read-only view of a product's order items.
     @staticmethod

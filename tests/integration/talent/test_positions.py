@@ -101,11 +101,13 @@ def test_assign_idol_position_requires_manager_or_admin():
 
 def test_list_idol_positions_for_idol_empty():
     response = client.get(f"/positions/idol_positions/idol/{FAKE_ID}")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_list_all_idol_positions_empty():
     response = client.get("/positions/idol_positions/all")
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() == []
 
 def test_set_idol_position_primary_requires_manager_or_admin():
     headers = auth_headers()

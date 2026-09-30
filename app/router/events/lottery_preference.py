@@ -30,8 +30,6 @@ def set_my_preferences(data: LotteryPreferenceSet, current_user: Users = Depends
 @router.get("/mine/{concert_id}", response_model=List[LotteryPreferenceRead])
 def list_my_preferences(concert_id: uuid.UUID, current_user: Users = Depends(get_current_user), _: None = Depends(rate_limit(15, 60, user_key)), db: Session = Depends(get_db)) -> list[LotteryPreference]:
     result = LotteryPreferenceService.get_my_preferences(db, concert_id, current_user)
-    if not result:
-        raise HTTPException(status_code=404, detail="You have no preferences set for this concert")
     return result
 
 @router.delete("/mine/{concert_id}", response_model=MessageResponse)

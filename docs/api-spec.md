@@ -10,8 +10,8 @@ transcribed), so method/path/param names below match the code exactly. Response 
 endpoints that declare a `response_model` are Pydantic-enforced and reliable. A few endpoints
 return a plain dict or ORM object with no `response_model` (noted per-endpoint below) — their
 shape is documented from the actual `return` statement in the service/router, but FastAPI isn't
-enforcing it, so treat those as "best current description," not a contract, until `project_status.md`
-§3's live-server verification gap is closed.
+enforcing it, so treat those as "best current description," not a contract. Routes marked
+"Not used by the frontend" carry that comment in the router source too.
 
 ## 0. Conventions
 
@@ -21,8 +21,11 @@ auto-generated from the same route definitions) and `/redoc` — useful for expl
 live once a server is running, this file is for planning UI against before/without one.
 
 **Auth.** JWT bearer tokens. Obtain one via `POST /account/login` (see §1) and send it as
-`Authorization: Bearer <access_token>` on every endpoint marked 🔒 below. There is no cookie-based
-session — the frontend owns storing and attaching the token. A request to a 🔒 endpoint with a
+`Authorization: Bearer <access_token>` on every endpoint marked 🔒 below — the frontend owns storing
+and attaching the access token. The **refresh token** is different: login and `/account/refresh`
+set it as an `httponly; secure; samesite=none` cookie named `refresh_token`, so the frontend never
+sees it and must call `/account/refresh` with credentials included (`fetch(..., {credentials:
+"include"})` / `withCredentials`) to rotate it. A request to a 🔒 endpoint with a
 missing/invalid/expired token gets `401`; a valid token but wrong role gets `403` (see role
 legend). `require_manager_or_admin` only checks *role*, not company ownership — several services
 additionally 403 when a manager acts outside their own company's resources (noted per-endpoint as
@@ -34,15 +37,87 @@ additionally 403 when a manager acts outside their own company's resources (note
 - 🔒 manager+ — `require_manager_or_admin`: role is `manager` or `admin`
 - 🔒 admin — `require_admin`: role is `admin` only
 
-**Error shape.** Most errors are FastAPI's default `HTTPException` body: `{"detail": "<message>"}`.
+**Error shape.** Every error body is `{"detail": ..., "code": "<snake_case>"}`.
+- `detail` is a human-readable English string — except for a `422` from request validation, where
+  it's FastAPI's list of `{loc, msg, type}` field errors. Show it as secondary text at most; don't
+  parse it.
+- `code` is stable: branch on it (and translate it) in the UI. Unlisted codes may be added later —
+  fall back to the status code.
+
+| Code | Status | When |
+|---|---|---|
+| `not_authenticated` | 401 | Missing, invalid or expired access token, or its user no longer exists |
+| `invalid_credentials` | 401 | `POST /account/login`: wrong email or password |
+| `invalid_refresh_token` | 401 | `POST /account/refresh`: cookie missing, expired or revoked |
+| `invalid_token` | 400 / 401 | Email-verification link (400) or password-reset token (401) invalid or expired |
+| `incorrect_password` | 400 | `PUT /profile/change-password`: old password wrong |
+| `email_taken` | 400 | Register / create manager with an existing email |
+| `already_verified` | 409 | `GET /account/verify` on a verified account |
+| `forbidden` | 403 | Wrong role, or a manager acting outside their company |
+| `fan_only_purchase` | 403 | A manager or admin tried to buy, add to cart or enter a lottery |
+| `not_found` | 404 | The requested resource doesn't exist (or isn't the caller's) |
+| `validation_error` | 422 | Request body/query/path failed validation |
+| `rate_limited` | 429 | Too many requests; `detail` says how many seconds to wait |
+| `method_not_allowed` | 405 | Wrong HTTP method |
+| `internal_error` | 500 | Unexpected server error (logged server-side); safe to retry reads |
+| `invalid_image` | 400 | Image upload rejected: unsupported type, over 5 MB, or storage misconfigured |
+| `insufficient_stock` | 400 | Cart add or order checkout: not enough stock |
+| `cart_empty` | 404 | `POST /order/checkout` with an empty cart |
+| `address_not_found` | 404 | Checkout with an unknown shipping address |
+| `amount_mismatch` | 400 | Checkout `amount` doesn't match the current total (prices changed — refetch) |
+| `unsupported_gateway` | 400 | Unknown `gateway` value |
+| `resale_cap_exceeded` | 400 | More than 3 units of one product per fan |
+| `duplicate_idempotency_key` | 409 | Checkout retried with an already-used `idempotency_key` (a double submit) |
+| `ticket_type_not_found` | 404 | `POST /tickets/checkout` with an unknown ticket type |
+| `wrong_sale_method` | 400 | Buying a lottery tier directly, or ranking a direct-sale tier |
+| `not_on_sale` | 400 | No open direct-sale campaign covers now |
+| `sold_out` | 400 | No seats left in the tier |
+| `duplicate_concert_ticket` | 400 | The fan already holds a live ticket for this concert |
+| `lottery_entry_unresolved` | 400 | Direct purchase blocked by a pending or won lottery entry for the concert |
+| `ticket_not_found` | 404 | Paying for a won ticket that doesn't exist or isn't the caller's |
+| `ticket_not_payable` | 400 | The ticket isn't an unpaid lottery win |
+| `payment_deadline_passed` | 400 | The lottery win's payment deadline passed; the ticket is now expired |
+| `ranking_locked` | 400 | Changing lottery rankings after entries closed |
+| `no_lottery_campaign` | 404 | Ranking a tier that has no lottery campaign |
+| `entries_not_open` | 400 | Ranking or applying before the entry window opens |
+| `entries_closed` | 400 | Applying after the entry window closed |
+| `campaign_not_open` | 400 | Applying to a campaign that's already drawn |
+| `campaign_cancelled` | 400 | Applying to a cancelled campaign |
+| `tier_already_applied` | 400 | Removing a ranked tier the fan has already applied to |
+| `duplicate_ranked_tier` | 400 | The same tier twice in one ranking |
+| `lottery_preference_required` | 400 | Applying to a tier the fan hasn't ranked |
+| `lottery_entry_cap_exceeded` | 400 | Already applied to this campaign |
+| `no_open_campaigns` / `entries_not_ended` | 400 | Lottery draw triggered too early, or with nothing to draw (manager) |
+| `order_already_shipped` / `order_cancelled` / `invalid_shipping_transition` | 400 | Order cancel / shipping-status changes not allowed from the current status (manager/admin) |
+| `bad_request` / `conflict` / `rule_violation` | 400 / 409 / 400 | Generic fallbacks, mostly manager/admin form checks — show `detail` |
+| other trigger codes | 400 | `ticket_type_concert_mismatch`, `product_detail_kind_conflict`, `concert_capacity_exceeded`, `duplicate_ticket_type` (manager/admin forms) |
+
+**Empty results are never errors.** Every list endpoint returns `200 []` when there's nothing to
+list, and the page endpoints (`/products/store-page`, `/concerts/events-page`, `/idols/members-page`,
+`/groups/groups-page`) return their object with empty lists. `GET /cart/see_cart` on an empty cart
+returns `{"items": [], "total_price": 0}`. `404` always means a specific resource is missing.
+
+Payment outcomes that aren't errors: a declined mock payment returns **200** with the order's or
+ticket's `status: "cancelled"`; a PayPal checkout returns **200** with `status: "pending"`.
+
 A handful of endpoints return `{"msg": "<message>"}` on success for simple actions (deletes,
 password changes) instead of the resource itself — called out per-endpoint below since it affects
 whether the frontend can optimistically update from the response or must refetch.
 
-**Pagination.** Only `GET /products/pagination` implements real page/limit pagination today
-(`{"page", "limit", "count", "data"}`). Every other `/all` list endpoint returns the full
-collection unpaginated — fine for this dataset's size, but don't build infinite-scroll against
-them expecting a `next` cursor that doesn't exist.
+**Pagination.** A few endpoints take `page`/`limit` query params and return
+`{"page", "limit", "count", "data"}`: `GET /products/pagination`, `GET /products/filter`, and the
+manager-side `GET /order/manager-orders-page`, `GET /products/{id}/sales`,
+`GET /tickets/concert/{id}/sales`. `count` is the size of the returned page, not the total
+(`docs/bugs.md` #23), so there's no reliable "last page" signal yet — stop when a page comes back
+short. Every other list endpoint returns the full collection unpaginated.
+
+**Page endpoints.** Many screens have one `*-page` or `/{id}/detail` endpoint that returns
+everything the page needs in one response (e.g. `GET /products/store-page`,
+`GET /concerts/{id}/detail`). They're Redis-cached (5-minute TTL, invalidated on writes), so
+prefer them over stitching together the per-resource CRUD reads below. The `manager-*-page`
+reads are 🔒 manager+ and **company-scoped on the server**: a manager only ever receives their own
+company's rows (plus ownerless products), and only an admin can pass `company_id` to choose one.
+The frontend doesn't need to filter them by company.
 
 **Image uploads.** `POST /idols/add` and `POST /products/add_product` are `multipart/form-data`,
 not JSON — every other write endpoint on this list is JSON. See §3 (`Idols`) and §5 (`Products`)
@@ -50,10 +125,11 @@ for the exact form fields. Uploaded images are served back from whatever `LOCAL_
 resolves to (default `/uploads/...`) or a real S3/CDN URL, depending on backend deploy config —
 either way, `image_url`/`profile_image_url` in the response is a ready-to-use `<img src>`.
 
-**Rate limits.** A handful of endpoints (mostly public list/search endpoints and anything
-touching auth or payment) are rate-limited per-IP or per-user; a `429` means back off, not a bug.
-Not exhaustively listed below — see `app/cache/rate_limit.py` if a specific limit matters to a
-retry/backoff strategy.
+**Rate limits.** Most endpoints are rate-limited per-IP or per-user by a tier policy
+(`architecture.md` §3): auth and money/inventory writes are tight (3–10/min), polled reads are
+loose (up to 60/min). A `429` means back off, not a bug; its `detail` says how many seconds to wait.
+Not exhaustively listed below — see the `rate_limit(...)` dependency on each route if a specific
+limit matters to a retry/backoff strategy.
 
 ## 1. Suggested frontend page structure
 
@@ -63,11 +139,12 @@ so a UI can be scaffolded before every endpoint is wired in.
 
 **Public (no login):**
 - Home / landing — highlights across idols, groups, upcoming concerts (§3, §4)
-- Idol profile page — §3 `Idols`, plus their positions (§3 `Positions`) and merch (§5)
-- Group profile page — §3 `Groups`, plus member roster (§3 `Positions`)
-- Concert detail page — §4 `Concerts`, its ticket types (§4 `Ticket Types`), performers
-- Merch catalog + product detail — §5 `Products`, `Categories`, `Album Details`, `Merch
-  Details`, `Genres`
+- Members page / idol profile — `GET /idols/members-page`, `GET /idols/{id}/detail` (§3)
+- Groups page / group profile — `GET /groups/groups-page`, `GET /groups/{id}/detail` (§3)
+- Events page / concert detail — `GET /concerts/events-page`, `GET /concerts/{id}/detail` (§4;
+  the detail page also carries the signed-in fan's own ticket/lottery state)
+- Store + product detail — `GET /products/store-page`, `GET /products/{id}/detail` (§5)
+- Contact page — §8 `Inquiries` (instant FAQ answer, then the form)
 - Login / register / email verify / forgot-password / reset-password — §2
 
 **Fan (logged in, any role):**
@@ -77,15 +154,18 @@ so a UI can be scaffolded before every endpoint is wired in.
 - My orders (list + detail + cancel + shipping status) — §6 `Order`
 - My payment status — §6 `Payment`
 - My tickets — §4 `Tickets` (`/mine`)
-- Lottery: apply to a campaign, rank ticket-type preferences, see my entries — §4 `Lottery
-  Campaigns`, `Lottery Preferences`, `Lottery Entries`
+- Lottery: apply to a campaign, rank ticket-type preferences, see my entries, pay for a won
+  ticket — §4 `Lottery Campaigns`, `Lottery Preferences`, `Lottery Entries`, `Tickets`
+- Direct-sale ticket purchase — §4 `Tickets` (`/checkout`), while a direct-sale campaign is open
+- Notifications — §7
 
 **Manager (their own company's idols/groups/concerts/products):**
 - Manager dashboard — entry point into the sections below, scoped to their `company_id`
 - Manage idols / groups / positions / idol colors — §3 (create/edit; delete on colors is
   admin-only)
-- Manage concerts, ticket types, performer assignments — §4 (campaigns/entries listing is
-  manager+; drawing/issuing tickets is not exposed here — see `project_status.md` §5)
+- Manage concerts, ticket types, performer assignments, lottery and direct-sale campaigns — §4;
+  trigger a concert's lottery draw (`PUT /concerts/lottery-draw/{id}`) and view the results
+- Orders to ship — `GET /order/manager-orders-page`, `PATCH /order/{order_id}/ship` (§6)
 - Manage products, album details, merch details, genre assignments — §5 (product image
   upload/replace, update, delete are company-scoped — see the 403 note under `Products`)
 
@@ -93,8 +173,8 @@ so a UI can be scaffolded before every endpoint is wired in.
 - Manage management companies — §2 `Management Companies`
 - Manage categories, genres (delete), venues — §5, §4
 - Promote a user to admin — §2 `Profile` (`/make-admin`)
-- Manually issue / edit / delete tickets — §4 `Tickets` (the only way tickets get created today —
-  no automated draw job yet, see `project_status.md` §5)
+- Manually issue / edit / delete tickets — §4 `Tickets` (a support/testing tool; normal tickets
+  come from the lottery draw or direct-sale checkout)
 - Update an order's shipping status — §6 `Order` (`/update_shipping_status`)
 - Delete any idol color / genre / position / venue / management company — admin-only across the
   board even where manager+ can create/update (see role column per section)
@@ -264,6 +344,11 @@ Assign a position to an idol.
 - Response: `List[IdolPositionRead]`
 - UI: idol profile page — role badges (e.g. "Main Vocalist")
 
+### `GET /positions/idol_positions/all` 🔓
+Not used by the frontend.
+- Response: `List[IdolPositionRead]` (`idol_id`, `position_id`, `is_primary`, `position`)
+- Errors: `404` if no idol has a position yet
+
 ### `PUT /positions/idol_positions/{idol_id}/{position_id}` 🔒 manager+
 Toggle whether this position is the idol's primary one.
 - Request: query/body param `is_primary` (bool) — no request schema, plain param
@@ -288,6 +373,24 @@ Toggle whether this position is the idol's primary one.
 - Response: `GroupRead` — deliberately **not** filtered by `is_active`, so a manager's edit form
   can still load a deactivated group
 - UI: group profile page, manager edit form
+
+### `GET /groups/groups-page` 🔓
+Everything the public groups page needs, cached.
+- Response (`GroupsPageRead`): `groups` — each a `GroupRead` plus `member_count`
+- Errors: `404` if there are no groups
+- UI: public groups listing
+
+### `GET /groups/{id}/detail` 🔓
+- Response (`GroupDetailRead`): `group` (`GroupRead`), `members` (idols with positions, color and
+  group), `events` (concerts with their venue), `products` (`ProductCard`s credited to the group)
+- Errors: `404` if the group doesn't exist
+- UI: group profile page
+
+### `GET /groups/manager-groups-page` 🔒 manager+ (company-scoped)
+- Response (`ManagerGroupsPageRead`): `groups` (`List[GroupRead]`) — a manager's own company's
+  groups; every company's for an admin. Inactive groups are included (`is_active`)
+- Errors: `401` without a token, `403` for a fan
+- UI: manager — groups table
 
 ### `PUT /groups/update/{id}` 🔒 manager+ (company-scoped)
 - Request (`GroupUpdate`): `name`, `debut_date`, `description` — `is_active` is **not** settable
@@ -322,6 +425,33 @@ Reverses the delete above — sets `is_active = true`.
 - Response: `IdolRead` — deliberately **not** filtered by `is_active`, so a manager's edit form
   can still load a deactivated idol
 - UI: idol profile page, manager edit form
+
+### `GET /idols/members-page` 🔓
+- Response (`MembersPageRead`): `idols` (each with `idol_positions`, `color`, `group`), `groups`
+  (`id`, `name` — for a filter control)
+- Errors: `404` if there are no idols
+- UI: public members page
+
+### `GET /idols/{id}/detail` 🔓
+- Response (`IdolDetailRead`): `idol` (with positions, color, group), `group` (`id`, `name`,
+  `description`, or `null` for a solo idol), `siblings` (the other members of the same group)
+- Errors: `404` if the idol doesn't exist
+- UI: idol profile page
+
+### `GET /idols/manager-idols-page` 🔒 manager+ (company-scoped)
+- Response (`ManagerIdolsPageRead`): `idols` (`List[IdolRead]`, inactive included), `groups`
+  (`id`, `name` — the groups those idols belong to, for the table's "Group" column). A manager gets
+  their own company's; an admin gets every company's
+- Errors: `401` without a token, `403` for a fan
+- UI: manager — idols table
+
+### `GET /idols/manager-idol-form-page` 🔒 manager+ (company-scoped)
+- Response (`ManagerIdolFormPageRead`): `idols`, `groups` (`id`, `name`, `company_id`,
+  `is_active` — for the group picker), `colors` (`List[IdolColorRead]`, shared by every company).
+  `idols`/`groups` are the manager's own company's; an admin gets every company's and filters the
+  group picker by the company chosen in the form
+- Errors: `401` without a token, `403` for a fan
+- UI: manager — create/edit idol form
 
 ### `PUT /idols/update/{id}` 🔒 manager+ (company-scoped) — **JSON**, not multipart
 Updates every field except the image — use the dedicated image endpoint below for that.
@@ -387,6 +517,29 @@ Replace an idol's photo only, without touching any other field.
 - UI: concert detail page (pair with `/ticket_types/concert/{id}` and the performers endpoint
   below to build the full page)
 
+### `GET /concerts/events-page` 🔓
+- Response (`EventsPageRead`): `concerts` — each a `ConcertRead` plus its `venue`
+- Errors: `404` if there are no concerts
+- UI: public events page
+
+### `GET /concerts/{id}/detail` 🔓 (auth optional)
+One call for the whole concert page. The shared part is cached; the per-viewer fields are
+computed per request and are `false`/empty for guests.
+- Response (`ConcertDetailRead`): `concert`, `venue`, `ticket_types`, `lineup` (idols: `id`,
+  `name`, `profile_image_url`, `color_hex`), `performing_groups` (`id`, `name`),
+  `lottery_campaigns`, `direct_sale_campaigns`, and per viewer: `has_ticket`, `has_won_lottery`,
+  `entered_campaign_ids`, `my_lottery_preferences`
+- Errors: `404` if the concert doesn't exist
+- Rate limit: 30/min per user, or per IP for guests
+- UI: concert detail page — pick "apply to lottery" vs. "buy now" per tier from the campaign
+  lists, and hide actions the fan can't take from the per-viewer fields
+
+### `GET /concerts/manager-events-page` 🔒 manager+ (company-scoped)
+- Response (`ManagerEventsPageRead`): `concerts` (`List[ConcertRead]` — a manager's own company's,
+  every company's for an admin), `venues` (`List[VenueRead]`, every venue — venues are shared)
+- Errors: `401` without a token, `403` for a fan
+- UI: manager — concerts table and create form
+
 ### `PUT /concerts/update/{id}` 🔒 manager+ (company-scoped)
 - Request (`ConcertUpdate`): same as create, plus `status` (str, optional)
 - UI: manager — edit concert
@@ -405,9 +558,26 @@ Attach an idol or group as a performer at a concert.
 - Response: `List[ConcertPerformerRead]`
 - UI: concert detail page — lineup list
 
+### `GET /concerts/performers/all` 🔓
+Not used by the frontend.
+- Response: `List[ConcertPerformerRead]`
+- Errors: `404` if no concert has performers
+
 ### `DELETE /concerts/performers/{id}` 🔒 manager+
 - Response: `{"msg": "Performer unassigned from concert successfully"}`
 - UI: manager — remove a lineup entry
+
+### `PUT /concerts/lottery-draw/{id}` 🔒 manager+ (company-scoped)
+Run the lottery draw for every tier of one concert. The request only schedules it: the draw runs in
+the Celery worker, and managers at the concert's company get `lottery_draw_triggered` now and
+`lottery_draw_completed` or `lottery_draw_failed` when it finishes (§7). Fans get
+`lottery_result` notifications; winners get a `pending_payment` ticket to pay for via
+`POST /tickets/{ticket_id}/checkout`.
+- Response: `200 {"msg": "Lottery draw task has been scheduled. ..."}` — returned even if the draw
+  later fails (entries not closed yet, nothing left to draw); watch the notifications or
+  `GET /lottery_entries/concert/{concert_id}/results` for the outcome
+- Errors: `403` outside the manager's company, `404` unknown concert
+- UI: manager — "Draw lottery" button on the concert edit page, disabled until entries close
 
 ### `POST /ticket_types/add` 🔒 manager+
 A ticket tier for a concert (e.g. "VIP", "General") — `sale_method` decides whether it's sold via
@@ -456,6 +626,35 @@ lottery or (once built — see `project_status.md` §5) direct purchase.
 ### `DELETE /lottery_campaigns/delete/{id}` 🔒 manager+
 - Response: `{"msg": "Lottery campaign deleted successfully"}`
 
+### `POST /direct_sale_campaigns/add` 🔒 manager+ (company-scoped)
+The on-sale window for a `sale_method="direct"` ticket type (`database-design.md` §3.21). A direct
+tier can only be bought while one of its campaigns is `open` and now is inside the window.
+- Request (`DirectSaleCampaignCreate`): `ticket_type_id` (uuid, must be a direct-sale tier),
+  `sale_start_at`, `sale_end_at` (datetimes, end after start)
+- Response (`DirectSaleCampaignRead`): adds `id`, `status` (`open` | `cancelled`), `created_at`
+- Errors: `400` for a lottery ticket type, `403` outside the manager's company, `404` unknown
+  ticket type, `422` if the window is inverted
+- UI: manager — "put this tier on sale" on the concert edit page
+
+### `GET /direct_sale_campaigns/ticket_type/{ticket_type_id}` 🔓
+Not used by the frontend (the concert detail page already includes the campaigns).
+- Response: `List[DirectSaleCampaignRead]`
+- Errors: `404` if the ticket type has no campaigns
+
+### `GET /direct_sale_campaigns/{id}` 🔓
+Not used by the frontend.
+- Response: `DirectSaleCampaignRead`
+
+### `PUT /direct_sale_campaigns/update/{id}` 🔒 manager+ (company-scoped)
+Not used by the frontend.
+- Request (`DirectSaleCampaignUpdate`): `sale_start_at`, `sale_end_at` (both required), `status`
+  (optional — `cancelled` stops sales early)
+- Response: `DirectSaleCampaignRead`
+
+### `DELETE /direct_sale_campaigns/delete/{id}` 🔒 manager+ (company-scoped)
+Not used by the frontend.
+- Response: `{"msg": "Direct sale campaign deleted successfully"}`
+
 ### `POST /lottery_entries/apply` 🔒 fan
 Enter a lottery campaign. Enforced by both a service-layer check and a DB trigger (cap, and — see
 `project_status.md` §4 item 9 — a required-preference check); trigger violations surface as a
@@ -467,6 +666,14 @@ normal HTTP error, not a 500.
   cap/no-preference cases below
 - UI: "Apply" button on the lottery application page — disable/hide once the fan has already
   entered, already holds a ticket for the concert, or once `entry_end_at` has passed
+
+### `POST /lottery_entries/apply-batch` 🔒 fan
+Apply to several of a concert's tiers in one request — all entries are created or none is, and it
+uses one rate-limit slot (3/min).
+- Request (`LotteryEntryApplyBatch`): `campaign_ids` (list of uuid, 1–10, no duplicates)
+- Response: `List[LotteryEntryRead]`
+- Errors: same as `/apply`, for whichever campaign fails first
+- UI: concert page — "apply to every tier I ranked" button
 
 ### `GET /lottery_entries/mine` 🔒 fan
 - Response: `List[LotteryEntryRead]`
@@ -485,7 +692,8 @@ request per winner needed.
 - Response (`List[LotteryDrawResultRead]`): `lottery_entry_id`, `user_id`, `email`, `ticket_type_id`,
   `tier`, `status` (`won`|`lost` only), `drawn_at`, `ticket_id`, `payment_status`,
   `payment_deadline_at` — the last three are `null` for a `lost` row (no ticket was ever issued)
-- Errors: `404` if the concert has no decided entries yet (including "hasn't been drawn at all")
+- Returns `[]` if the concert has no decided entries yet (including "hasn't been drawn at all")
+- Errors: `404` (unknown concert), `403` (another company's concert)
 - UI: manager — post-draw results table/export for a concert; poll or refresh after
   `lottery_draw_completed`/`lottery_draw_failed` notifications land (see `project_status.md` §8)
 
@@ -509,12 +717,13 @@ Clears the fan's ranking for that concert.
 - UI: "clear my ranking" control
 
 ### `POST /tickets/checkout` 🔒 fan
-Buy a `sale_method="direct"` ticket tier directly — no lottery, no draw. This section is generally
-behind the shipped code (see `project_status.md`) — noted here only for the checks this round
-added; the full request/response contract isn't re-derived from the schema below.
+Buy a `sale_method="direct"` ticket tier directly — no lottery, no draw. Only while the tier has
+an `open` direct-sale campaign whose window contains now (see `Direct Sale Campaigns` above).
 - Request (`TicketCheckoutCreate`): `ticket_type_id` (uuid, must be `sale_method="direct"`),
   `amount`, `gateway`, `simulate_succ`, `idempotency_key` — same shape as `POST /order/checkout`'s
-  payment fields
+  payment fields. `amount` must equal the tier price with tax. With `gateway="paypal"` the ticket
+  and payment are created `pending`; read `pg_approval_url` from
+  `GET /payment/status/ticket/{ticket_id}` — see §6's PayPal flow.
 - Response (`TicketRead`)
 - Errors: `400` covers, among other things, a fan with an unresolved lottery application for this
   concert — any of their `lottery_entries` still `pending` or `won` for a *different* tier under
@@ -525,9 +734,20 @@ added; the full request/response contract isn't re-derived from the schema below
 - UI: direct-purchase ticket page — surface the lottery-conflict error distinctly, since "you're
   still in the running for this concert's lottery" is a different message than "sold out"
 
+### `POST /tickets/{ticket_id}/checkout` 🔒 fan
+Pay for a ticket won in the lottery (status `pending_payment`, created by the draw).
+- Request (`WonTicketCheckoutCreate`): `amount` (int, tier price with tax), `gateway`
+  (`mock` | `paypal`), `simulate_succ` (mock only), `idempotency_key`
+- Response: `TicketRead`
+- Errors: `404` if the ticket isn't the caller's; `400` if it isn't a payable lottery win, the
+  amount doesn't match, the gateway is unsupported, or `payment_deadline_at` has passed (the
+  ticket is then marked `expired` and its seat released); `409` for a reused idempotency key
+- UI: "My tickets" / lottery result page — "Pay now" before the deadline
+
 ### `POST /tickets/add` 🔒 admin
-The only way a ticket gets created today — manual issuance, since the lottery draw job doesn't
-exist yet (`project_status.md` §5).
+Manual issuance — a support/testing tool. Normal tickets come from the lottery draw
+(`PUT /concerts/lottery-draw/{id}`) or direct-sale checkout (`POST /tickets/checkout`). The
+recipient must be a fan with no live ticket for that concert.
 - Request (`TicketCreate`): `ticket_type_id` (uuid), `user_id` (uuid), `lottery_entry_id` (uuid,
   optional — link back to the winning entry)
 - Response (`TicketRead`): adds `id`, `payment_id`, `status`, `issued_code`, `reserved_at`,
@@ -542,6 +762,13 @@ exist yet (`project_status.md` §5).
 - Response: `TicketRead`
 - UI: ticket detail (e.g. to show `issued_code` as a QR/barcode payload)
 
+### `GET /tickets/concert/{concert_id}/sales` 🔒 manager+ (company-scoped)
+Not used by the frontend.
+- Request: query params `page` (default 1), `limit` (default 10, max 50)
+- Response (`TicketSalesPageRead`): paged `data` of `ticket_id`, `tier`, `status`, `price`,
+  `source` (`lottery` | `direct`), `created_at`
+- Errors: `403` outside the manager's company, `404` unknown concert
+
 ### `PUT /tickets/update/{id}` 🔒 admin
 - Request (`TicketUpdate`): `status`, `issued_code`, `payment_id`, `payment_deadline_at` (all
   optional)
@@ -554,23 +781,23 @@ exist yet (`project_status.md` §5).
 
 ## 5. Marketplace — Products, Categories, Album/Merch Details, Genres
 
-### `POST /Categories/add` 🔒 admin
+### `POST /categories/add` 🔒 admin
 - Request (`CategoryBase`): `name` (str, 1–100 chars)
 - Response: `{"msg": "Category added successfully"}` — **not** the created category; refetch
-  `/Categories/all` to get its `id`
+  `/categories/all` to get its `id`
 - UI: admin — category catalog
 
-### `GET /Categories/all` 🔓
+### `GET /categories/all` 🔓
 - Response: `List[CategoryRead]` (`id`, `name`, `is_resale_capped`)
 - UI: category filter/nav on the merch catalog page; category picker on the product form
 
-### `PUT /Categories/update` 🔒 admin
+### `PUT /categories/update` 🔒 admin
 Note: `id` is a query param here, not a path segment.
 - Request: query param `id` (uuid) + body (`CategoryUpdate`): `name`, `is_resale_capped`
   (optional)
 - Response: `{"msg": "Category updated successfully"}`
 
-### `DELETE /Categories/delete/{id}` 🔒 admin
+### `DELETE /categories/delete/{id}` 🔒 admin
 - Response: `{"msg": "Category deleted successfully"}`
 
 ### `GET /products/all` 🔓
@@ -578,18 +805,56 @@ Note: `id` is a query param here, not a path segment.
   `category` — the category *name* as a string, not the id)
 - UI: merch catalog grid
 
-### `GET /products/search/{id}` 🔓
-- Response: not schema-enforced; the raw `Product` ORM row (id/name/price/description/quantity/
-  category_id/image_url) — no `response_model`, so field set isn't guaranteed stable
-- UI: product quick-view
+### `GET /products/store-page` 🔓
+- Response (`StorePageRead`): `products` (`List[ProductCard]`), `groups` (`id`, `name` — for the
+  artist filter). A `ProductCard` is `id`, `name`, `price`, `description`, `quantity`,
+  `image_url`, `category` (name), `album` (album details or `null`), `genres`, `artist` (the
+  credited idol/group or `null`), `resale_cap_quantity` (per-fan lifetime cap, or `null` if the
+  category isn't capped)
+- Errors: `404` if there are no products
+- UI: store page
 
-### `GET /products/pagination`
+### `GET /products/{id}/detail` 🔓
+- Response (`ProductDetailRead`): `product` (`ProductCard`), `recommendations`
+  (`List[ProductCard]`)
+- Errors: `404` if the product doesn't exist
+- UI: product detail page
+
+### `GET /products/manager-products-page` 🔒 manager+ (company-scoped)
+- Request: query param `company_id` (uuid, optional, **admins only** — a manager always gets their
+  own company and the param is ignored; an admin omitting it gets every product)
+- Response (`ManagerProductsPageRead`): `products` (`List[ProductRead]`) — the company's products
+  plus ownerless ones (no album/merch detail)
+- Errors: `401` without a token, `403` for a fan
+- UI: manager — products table
+
+### `GET /products/manager-product-form-page` 🔒 manager+ (company-scoped)
+- Request: query param `company_id` (uuid, optional, **admins only** — as above)
+- Response (`ManagerProductFormPageRead`): `products` (scoped as above), `categories`, `idols`,
+  `groups`, `colors` — everything the create/edit form's pickers need. For a manager, `idols` and
+  `groups` are their own company's; an admin gets every company's. `categories`/`colors` are shared
+- Errors: `401` without a token, `403` for a fan
+- UI: manager — create/edit product form
+
+### `GET /products/{id}/sales` 🔒 manager+ (company-scoped)
+- Request: query params `page` (default 1), `limit` (default 10, max 50)
+- Response (`ProductSalesPageRead`): paged `data` of `order_id`, `order_status`,
+  `order_created_at`, `quantity`, `price`, `line_total`
+- Errors: `403` outside the manager's company, `404` unknown product
+- UI: manager — per-product sales table
+
+### `GET /products/search/{id}` 🔓
+Not used by the frontend (use `GET /products/{id}/detail`).
+- Response (`ProductWithCategoryRead`): `id`, `name`, `price`, `description`, `quantity`,
+  `image_url`, `category` (the full `CategoryRead` object)
+
+### `GET /products/pagination` 🔓
 - Request: query params `page` (int, default 1), `limit` (int, default 10, max 50)
 - Response: `{"page", "limit", "count", "data": [Product...]}` — the only endpoint with real
   pagination; prefer this over `/all` for the main catalog page
 - UI: merch catalog grid, paged
 
-### `GET /products/filter`
+### `GET /products/filter` 🔓
 - Request: query params `category` (str, required), `name` (str, optional), `min_price` (int,
   optional), `max_price` (int, optional), `limit`/`page` (as above)
 - Response: same shape as `/pagination`
@@ -602,6 +867,17 @@ Note: `id` is a query param here, not a path segment.
 - UI: manager — create product. Deliberately unscoped to any company at creation (see
   `project_status.md` §4 item 10) — a bare product has no idol/group tie until an album/merch
   detail is attached to it (below)
+
+### `POST /products/add_with_detail` 🔒 manager+ (company-scoped) — **multipart/form-data**
+Creates a product and its album or merch detail row in one transaction, so a product is never left
+without an owner. This is what the manager product form uses.
+- Request (form fields): the `add_product` fields (`name`, `price`, `description`, `quantity`,
+  `category_id`, `image`) plus `detail_kind` (`album` | `merch`), `idol_id`/`group_id` (album: at
+  least one; merch: exactly one), album-only `release_date`, `track_count`, `format` (default
+  `physical`), merch-only `edition`, `color_id`
+- Response: `{"msg": "Product added successfully"}`
+- Errors: `422` for a bad field combination, `400` for a rejected image, `403` for an idol/group
+  outside the manager's company
 
 ### `PUT /products/update/{id}` 🔒 manager+ — **company-scoped once the product has album/merch
 details attached**
@@ -677,6 +953,11 @@ company ownership.
 - Response: `List[AlbumGenreRead]`
 - UI: album detail page — genre tags
 
+### `GET /genres/album_genres/all` 🔓
+Not used by the frontend.
+- Response: `List[AlbumGenreRead]` (`product_id`, `genre_id`)
+- Errors: `404` if no album has a genre
+
 ### `DELETE /genres/album_genres/{product_id}/{genre_id}` 🔒 manager+
 - Response: `{"msg": "Genre unassigned from album successfully"}`
 - UI: album edit page — remove a genre tag
@@ -713,18 +994,18 @@ rename.)
 
 ## 6. Shopping — Cart, Shipping, Order, Payment
 
-### `POST /Cart/add_cart` 🔒 fan
+### `POST /cart/add_cart` 🔒 fan
 - Request (`CartItem`): `product_id` (uuid), `quantity` (int, ≥1)
 - Response: not schema-enforced; the raw `Cart` row (`id`, `product_id`, `quantity`, `user_id`,
   `price`, `total_price`) — adding an item already in the cart increments its quantity rather
   than creating a duplicate row
 - UI: "Add to cart" button anywhere a product is shown
 
-### `GET /Cart/see_cart` 🔒 fan
+### `GET /cart/see_cart` 🔒 fan
 - Response: not schema-enforced; `{"items": [Cart...], "total_price": float}`
 - UI: cart page / cart drawer
 
-### `DELETE /Cart/delete_cart/{cart_id}` 🔒 fan
+### `DELETE /cart/delete_cart/{cart_id}` 🔒 fan
 `cart_id` is the cart row's id (from `see_cart`'s `items`), not the product id.
 - Response: `{"msg": "Cart item deleted successfully"}`
 - UI: cart page — remove item
@@ -740,8 +1021,8 @@ rename.)
 - Response: `List[ShippingAddress]`
 - UI: checkout — saved-address picker; account settings — address list
 
-### `GET /shipping_addresses/fetch_byid/{address_id}` 🔓
-- Response: `ShippingAddress`
+### `GET /shipping_addresses/fetch_byid/{address_id}` 🔒 fan
+- Response: `ShippingAddress` — only the caller's own addresses; anyone else's id is a `404`
 - UI: address detail/edit form prefill
 
 ### `PUT /shipping_addresses/update/{address_id}` 🔒 fan
@@ -766,9 +1047,10 @@ follow up with `GET /payment/status/order/{order_id}` (below) to fetch the payme
   `"confirmed"`, until the payment is captured), `created_at`, `items`, `shippingstatus`
   (always present — every order gets a `shipping_status` row at `"pending"` in the same checkout
   transaction, not created lazily later), `shippingaddress`
-- Errors: `404` (empty cart / bad address), `402` (mock payment failed), `400` (stock/amount
-  mismatch, unsupported gateway, or a resale-cap trigger violation), `409` (idempotency key already
-  used) — distinguish these in the UI rather than showing one generic "checkout failed"
+- Errors: `404` (`cart_empty` / `address_not_found`), `400` (`insufficient_stock`,
+  `amount_mismatch`, `unsupported_gateway`, `resale_cap_exceeded`), `403` (`fan_only_purchase`),
+  `409` (`duplicate_idempotency_key`). A declined mock payment is **not** an error: `200` with
+  `status: "cancelled"` — distinguish these in the UI rather than showing one generic "checkout failed"
 - UI: checkout page's final "place order" action
 
 ### `GET /order/fetch_placed_order` 🔒 fan
@@ -810,6 +1092,14 @@ same commit as the status flip.
   (order isn't in `pending`/`processing` — already shipped/delivered, or cancelled)
 - UI: manager orders page — a "Ship" button per order row, or on the order detail page
 
+### `GET /order/manager-orders-page` 🔒 manager+ (company-scoped)
+- Request: query params `page` (default 1), `limit` (default 10, max 50), `company_id` (uuid,
+  admins only — a manager always gets their own company)
+- Response (`ManagerOrdersPageRead`): paged `data` of `id`, `buyer_name`, `buyer_email`, `status`,
+  `created_at`, `items` (only this company's lines, plus ownerless products), `company_total`,
+  `shippingstatus`
+- UI: manager — orders to ship
+
 ### `GET /payment/status/order/{order_id}` 🔒 fan
 Read-only lookup of the order's payment. `404` if there's no payment for that order, or the order
 isn't the caller's.
@@ -829,8 +1119,8 @@ Same `PaymentResponse` shape as above, looked up by `ticket_id` instead (`order_
 - UI: "My payments" page, if surfaced separately from orders
 
 ### PayPal checkout flow (redirect + capture)
-Everything below only applies when `gateway="paypal"` was passed to `POST /order/checkout` or
-`POST /tickets/checkout`. The mock gateway resolves synchronously in that one call; PayPal doesn't
+Everything below only applies when `gateway="paypal"` was passed to `POST /order/checkout`,
+`POST /tickets/checkout` or `POST /tickets/{ticket_id}/checkout`. The mock gateway resolves synchronously in that one call; PayPal doesn't
 — the fan has to leave the app to approve the payment on PayPal's site first.
 
 1. **Checkout** — `POST /order/checkout` (or `/tickets/checkout`) with `gateway="paypal"`. The
@@ -840,12 +1130,10 @@ Everything below only applies when `gateway="paypal"` was passed to `POST /order
 3. **Redirect the fan** to `pg_approval_url` (a `paypal.com` page, not this API). This is a full
    page redirect, not an API call — treat it like sending the fan to a third-party checkout, same
    as any other redirect-based payment flow.
-4. **Fan approves and PayPal redirects back** to whatever `return_url` the backend registered when
-   it created the order (currently `{BASE_URL}/payment/paypal/return` — a placeholder JSON
-   endpoint with no frontend to hand off to yet, see `project_status.md`). **Once a frontend
-   exists, this needs to become a frontend route instead**, and the backend's `return_url`/
-   `cancel_url` (`app/utils/paypal_client.py::create_order`) updated to point at it. PayPal appends
-   `token` (the PayPal order id — the same value as `pg_order_id`) and `PayerID` as query params.
+4. **Fan approves and PayPal redirects back** to the frontend route
+   `{FRONTEND_BASE_URL}/payment/paypal/return` (set in
+   `app/utils/paypal_client.py::create_order`). PayPal appends `token` (the PayPal order id — the
+   same value as `pg_order_id`) and `PayerID` as query params.
 5. **Capture** — the frontend route from step 4 calls `POST /payment/paypal/capture/{pg_order_id}`
    (using the `token` query param as `pg_order_id`) 🔒 fan. Response is the updated
    `PaymentResponse` — `status` is now `"success"` or `"failed"`.
@@ -853,12 +1141,12 @@ Everything below only applies when `gateway="paypal"` was passed to `POST /order
      treat that as a normal race, not an error to surface), or the payment doesn't belong to the
      caller.
 6. **Cancellation**: if the fan backs out on PayPal's side instead, PayPal redirects to
-   `cancel_url` (`{BASE_URL}/payment/paypal/cancel`, same placeholder-today caveat as step 4) with
-   `token` — no capture call needed, the order/ticket simply stays `"pending"` (it isn't
+   `{FRONTEND_BASE_URL}/payment/paypal/cancel` with `token` — no capture call needed, the order/ticket simply stays `"pending"` (it isn't
    auto-cancelled; nothing currently sweeps up abandoned PayPal checkouts, see
    `project_status.md`).
 
-**The frontend never calls `/payment/paypal/webhook` directly** — that endpoint exists purely for
+### `POST /payment/paypal/webhook` 🔓 (PayPal signature-verified)
+**The frontend never calls this directly** — the endpoint exists purely for
 PayPal's own server-to-server delivery, as a reconciliation backstop for the same
 `finalize_paypal_payment` capture logic in case step 5 never happens (fan closes the tab after
 approving, etc.). It's mentioned here only so it isn't mistaken for something the frontend needs to
@@ -887,7 +1175,7 @@ surface to the user.
   "lottery_payment_reminder"|"lottery_payment_confirmation"|"event_reminder"|"password_reset"`),
   `order_id`/`ticket_id`/`lottery_entry_id`/`concert_id` (exactly one set, depending on `type`),
   `status`, `sent_at`, `is_read`, `read_at`, `created_at`
-- Errors: `404` if the fan has no notifications at all (not just none matching `unread_only`)
+- Returns `[]` when there are none (or none matching `unread_only`)
 - UI: notification feed/dropdown
 
 ### `POST /notifications/{notification_id}/read` 🔒 fan

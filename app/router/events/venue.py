@@ -29,8 +29,6 @@ def add_new_venue(venue: VenueCreate, current_user: Users = Depends(require_admi
 @router.get("/all", response_model=List[VenueRead])
 def list_venues(_: None = Depends(rate_limit(10, 60, ip_key)), db: Session = Depends(get_db)) -> list[Venue]:
     result = CacheService.get_cached_venues(db)
-    if not result:
-        raise HTTPException(status_code=404, detail="No venues found")
     return result
 
 # Not used by the frontend.
