@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Data Modeling · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 02</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 02</p>
+      <h1><span lang="en">Data modeling &amp; schema design</span><span lang="ja" class="sub">データモデリングとスキーマ設計</span></h1>
+      <p class="lede" lang="en">How 31 tables model idols, concerts, lotteries and a marketplace, and which layer enforces each rule.</p>
+      <p class="lede" lang="ja">31個のテーブルでアイドル・公演・抽選・マーケットをどうモデル化し、各ルールをどの層で強制しているか。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Four domains: <b>identity</b>, <b>talent</b>, <b>events &amp; ticketing</b>, <b>marketplace</b>, plus shared tables like notifications.</span><span lang="ja" class="sub">4つのドメイン：<b>identity</b>・<b>talent</b>・<b>events とチケット</b>・<b>marketplace</b>、加えて通知などの共有テーブル。</span></li>
+          <li><span lang="en">Every primary key is a <b>UUID</b>, so ids can't be guessed or enumerated.</span><span lang="ja" class="sub">主キーはすべて <b>UUID</b>。id を推測したり順番に列挙したりできない。</span></li>
+          <li><span lang="en">Ticket tiers are <b>capacity-based</b> (VIP has N seats), not a seat map. One row per tier per sale method.</span><span lang="ja" class="sub">チケット枠は座席表ではなく<b>定員ベース</b>（VIP は N 席）。枠×販売方法ごとに1行。</span></li>
+          <li><span lang="en">Product kind lives in exactly one place, <code>categories</code>. Kind-specific facts go in <b>1:1 detail tables</b> (<code>album_details</code>, <code>merch_details</code>).</span><span lang="ja" class="sub">商品の種類は <code>categories</code> の1か所だけで管理。種類ごとの情報は <b>1対1の詳細テーブル</b>（<code>album_details</code>・<code>merch_details</code>）に置く。</span></li>
+          <li><span lang="en">Rules are layered: types and NOT NULL → CHECK / UNIQUE → triggers for money and fairness rules → service checks for everything else.</span><span lang="ja" class="sub">ルールは層で守る：型と NOT NULL → CHECK / UNIQUE → お金と公平性に関わるルールはトリガー → それ以外はサービス層。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Normalization in one breath</span><span lang="ja" class="sub">正規化をひとことで</span></h3>
+      <p lang="en">Store each fact once. If two columns say the same thing, they will eventually disagree. 1NF: no repeating groups. 2NF/3NF: every non-key column depends on the key, the whole key, and nothing but the key. You denormalize on purpose, for speed, and then you own keeping the copies in sync.</p>
+      <p lang="ja">1つの事実は1か所にだけ保存する。同じことを表す列が2つあれば、いつか食い違う。第1正規形：繰り返しグループを持たない。第2・第3正規形：キー以外の列はキー全体にだけ依存する。非正規化は速度のために意図的に行い、その場合はコピーを同期させる責任を負う。</p>
+
+      <h3><span lang="en">Three ways to model subtypes</span><span lang="ja" class="sub">サブタイプをモデル化する3つの方法</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Pattern</span><span lang="ja">パターン</span></th><th><span lang="en">Shape</span><span lang="ja">形</span></th><th><span lang="en">Trade-off</span><span lang="ja">トレードオフ</span></th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">Single table</span><span lang="ja">単一テーブル</span></td><td><span lang="en">One wide table, many nullable columns</span><span lang="ja">1つの広いテーブル、NULL 可の列が多い</span></td><td><span lang="en">Simple queries; weak constraints</span><span lang="ja">クエリは簡単、制約が弱い</span></td></tr>
+            <tr><td><b><span lang="en">Class table (used here)</span><span lang="ja">クラステーブル（本プロジェクト）</span></b></td><td><span lang="en">Base table + 1:1 detail table per kind</span><span lang="ja">基本テーブル＋種類ごとの1対1詳細テーブル</span></td><td><span lang="en">Real constraints per kind; needs a join</span><span lang="ja">種類ごとに本物の制約を付けられる、JOIN が必要</span></td></tr>
+            <tr><td>JSONB</td><td><span lang="en">Base table + a JSON column</span><span lang="ja">基本テーブル＋JSON 列</span></td><td><span lang="en">Flexible; little validation, harder to query</span><span lang="ja">柔軟だが検証が弱く、検索しにくい</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">Where to enforce a rule</span><span lang="ja" class="sub">ルールをどこで強制するか</span></h3>
+      <p lang="en">The database protects data from every writer (APIs, scripts, future bugs), but its errors are harder to turn into good messages. The service layer gives good messages but only protects the paths that call it. Strong designs check in the service for UX and let the DB be the final guarantee for rules that must never break.</p>
+      <p lang="ja">データベースはすべての書き込み元（API、スクリプト、将来のバグ）からデータを守るが、そのエラーを分かりやすいメッセージにするのは難しい。サービス層は良いメッセージを返せるが、そこを通る経路しか守れない。良い設計では、UX のためにサービス層で確認し、絶対に破ってはいけないルールは DB を最後の保証にする。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. The map</span><span lang="ja" class="sub">1. 全体図</span></h3>
+<pre class="code"><span class="c">identity</span>     users (role: admin | manager | fan, company_id for managers), refresh_tokens
+<span class="c">talent</span>       management_companies ─┬─ groups ─── idols ── idol_positions ── positions
+                                   └──────────── idols ── idol_colors
+<span class="c">events</span>       venues ── concerts ── ticket_types ─┬─ lottery_campaigns ── lottery_entries
+                          │                  ├─ direct_sale_campaigns
+                          └ concert_performers├─ lottery_preferences (fan's ranked tiers)
+                                             └─ tickets
+<span class="c">marketplace</span>  categories ── products ─┬─ album_details ── album_genres ── genres
+                                   ├─ merch_details
+                                   └─ cart, orders ── orders_items, payment, shipping_*</pre>
+      <p class="src-line"><span lang="en">Full ERD and table notes:</span><span lang="ja">ERD と各テーブルの説明：</span> <a class="ref" data-p="docs/database-design.md"></a></p>
+
+      <h3><span lang="en">2. Capacity-based ticket tiers</span><span lang="ja" class="sub">2. 定員ベースのチケット枠</span></h3>
+<pre class="code">class TicketType(Base):
+    concert_id     = Column(UUID, ForeignKey("concerts.id", ...), nullable=False)
+    tier           = Column(Enum(TicketTier, name="ticket_tier_enum"), nullable=False)
+    price          = Column(<span class="hl">Numeric(10, 2)</span>, nullable=False)
+    total_quantity = Column(Integer, nullable=False)
+    sold_quantity  = Column(Integer, nullable=False, server_default="0")
+    sale_method    = Column(Enum(SaleMethod, name="sale_method_enum"), ...)
+    __table_args__ = (
+        <span class="hl">UniqueConstraint("concert_id", "tier", "sale_method")</span>,
+        <span class="hl">CheckConstraint("sold_quantity &lt;= total_quantity")</span>,
+    )</pre>
+      <p class="src-line"><a class="ref" data-p="app/db/models/events/ticket_type.py" data-l="21-39"></a></p>
+      <p lang="en">A seat map would need venue → section → row → seat tables and per-seat locking. Capacity tiers keep it to one counter row per tier and still support pricing, lottery and checkout. The CHECK is a last line of defense against overselling, and a trigger makes sure all tiers together don't exceed the concert's capacity (a CHECK can't look at sibling rows).</p>
+      <p lang="ja">座席表にすると 会場 → セクション → 列 → 座席 のテーブルと座席ごとのロックが必要になる。定員ベースなら枠ごとにカウンター1行で済み、価格・抽選・購入にも対応できる。CHECK は売り越しに対する最後の防御で、全枠の合計が公演の定員を超えないことはトリガーで保証する（CHECK は兄弟行を参照できない）。</p>
+
+      <h3><span lang="en">3. One fact, one place: categories + detail tables</span><span lang="ja" class="sub">3. 1つの事実は1か所に：カテゴリーと詳細テーブル</span></h3>
+<pre class="code">class Category(Base):
+    name             = Column(String, nullable=False, <span class="hl">unique=True</span>)   <span class="c"># Album | Single | EP | Merch</span>
+    is_resale_capped = Column(Boolean, nullable=False, server_default=func.true())
+
+class AlbumDetail(Base):
+    product_id = Column(UUID, ForeignKey("products.id", ...), <span class="hl">primary_key=True</span>)  <span class="c"># 1:1</span>
+    idol_id, group_id = ...
+    __table_args__ = (<span class="hl">CheckConstraint("idol_id IS NOT NULL OR group_id IS NOT NULL")</span>, ...)</pre>
+      <p class="src-line"><a class="ref" data-p="app/db/models/marketplace/category.py" data-l="10-18"></a> · <a class="ref" data-p="app/db/models/marketplace/album_detail.py" data-l="9-28"></a> · <a class="ref" data-p="app/db/models/marketplace/merch_detail.py" data-l="8-30"></a></p>
+      <p lang="en">Using the product's id as the detail table's primary key is what makes it 1:1. An older <code>release_type</code> column (album/single/EP) was dropped because it said the same thing as the category. A trigger stops a product from having both an album row and a merch row. The resale cap reads the <code>is_resale_capped</code> flag, so exempting a category is a data change, not a code change.</p>
+      <p lang="ja">商品の id を詳細テーブルの主キーにすることで1対1になる。以前の <code>release_type</code> 列（album/single/EP）はカテゴリーと同じ事実を表していたので削除した。トリガーで、1つの商品がアルバム行とグッズ行の両方を持つことを防ぐ。転売上限は <code>is_resale_capped</code> フラグを読むので、あるカテゴリーを対象外にするのはコード変更ではなくデータ変更で済む。</p>
+
+      <h3><span lang="en">4. The constraint ladder</span><span lang="ja" class="sub">4. 制約の段階</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Layer</span><span lang="ja">層</span></th><th><span lang="en">Example in i-dolly</span><span lang="ja">i-dolly での例</span></th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">Type / enum / NOT NULL</span><span lang="ja">型・enum・NOT NULL</span></td><td><code>role</code> <span lang="en">as</span><span lang="ja">を</span> <code>user_role_enum</code>, <code>products.category_id NOT NULL</code></td></tr>
+            <tr><td>CHECK</td><td><code>rank &gt; 0</code>, <code>hex_code ~ '^#[0-9A-Fa-f]{6}$'</code>, <span lang="en">merch has exactly one owner</span><span lang="ja">グッズの所有者はちょうど1つ</span></td></tr>
+            <tr><td>UNIQUE</td><td><span lang="en">one tier per rank per fan per concert</span><span lang="ja">1公演・1ファンにつき順位ごとに1枠</span> (<a class="ref" data-p="app/db/models/events/lottery_preference.py" data-l="22-26"></a>)</td></tr>
+            <tr><td><span lang="en">Trigger</span><span lang="ja">トリガー</span></td><td><span lang="en">fans only, one ticket per concert, resale cap, capacity sum</span><span lang="ja">ファンのみ購入可、1公演1枚、転売上限、定員の合計</span></td></tr>
+            <tr><td><span lang="en">Service</span><span lang="ja">サービス</span></td><td><span lang="en">idol and group belong to the same company; category matches its detail table</span><span lang="ja">アイドルとグループが同じ会社、カテゴリーと詳細テーブルの一致</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p lang="en">The team's rule for triggers: only when the failure costs money or fairness (an admin buying a ticket, a scalper buying 40 albums). Ordinary consistency stays in the service layer.</p>
+      <p lang="ja">トリガーを使う基準：失敗するとお金や公平性が損なわれる場合だけ（管理者がチケットを買う、転売屋がアルバムを40枚買うなど）。普通の整合性チェックはサービス層に置く。</p>
+
+      <h3><span lang="en">5. Small details worth mentioning</span><span lang="ja" class="sub">5. 話す価値のある細かい工夫</span></h3>
+      <ul>
+        <li><span lang="en"><b>Generated column</b>: <code>venues.size</code> (small / medium / large / stadium) is computed by Postgres from <code>total_capacity</code>, so it can never be stale (<a class="ref" data-p="app/db/models/events/venue.py" data-l="20-31"></a>).</span><span lang="ja" class="sub"><b>生成列</b>：<code>venues.size</code>（small / medium / large / stadium）は Postgres が <code>total_capacity</code> から計算するので、古くなることがない（<a class="ref" data-p="app/db/models/events/venue.py" data-l="20-31"></a>）。</span></li>
+        <li><span lang="en"><b>Soft delete</b>: idols and groups have <code>is_active</code>, so a deactivated idol keeps their album and concert history (<a class="ref" data-p="app/db/models/talent/idol.py" data-l="24"></a>).</span><span lang="ja" class="sub"><b>論理削除</b>：アイドルとグループは <code>is_active</code> を持ち、無効化しても過去のアルバムや公演の履歴が残る（<a class="ref" data-p="app/db/models/talent/idol.py" data-l="24"></a>）。</span></li>
+        <li><span lang="en"><b>Tenant key</b>: <code>company_id</code> on company-owned rows, plus on manager users (<a class="ref" data-p="app/db/models/identity/user.py" data-l="20-21"></a>). Topic 05 covers how it's enforced.</span><span lang="ja" class="sub"><b>テナントキー</b>：会社が所有する行と、マネージャーのユーザーに <code>company_id</code> がある（<a class="ref" data-p="app/db/models/identity/user.py" data-l="20-21"></a>）。強制方法はトピック05。</span></li>
+        <li><span lang="en"><b>Python enums wired to DB enums</b>: an invalid status fails as a 422 at the API boundary instead of an <code>IntegrityError</code> deep in a commit.</span><span lang="ja" class="sub"><b>Python の enum と DB の enum を連携</b>：不正なステータスはコミットの奥の <code>IntegrityError</code> ではなく、API の入口で 422 になる。</span></li>
+      </ul>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>UUID keys</b>: sequential ids let anyone walk <code>/orders/1, /orders/2…</code> to scrape or probe. The cost is 16-byte keys and random inserts that spread across the B-tree index. UUIDv7 (time-ordered) would keep the privacy and fix most of the index locality.</span><span lang="ja" class="sub"><b>UUID キー</b>：連番 id だと誰でも <code>/orders/1, /orders/2…</code> と辿ってデータを集めたり探ったりできる。コストは16バイトのキーと、B-tree インデックス全体に散らばるランダムな挿入。UUIDv7（時刻順）ならプライバシーを保ったまま局所性の問題をほぼ解決できる。</span></li>
+        <li><span lang="en"><b>Class-table subtypes</b>: albums need <code>track_count</code> and genres, merch needs an edition and a color. Separate tables let each have real CHECK constraints instead of a wide table full of NULLs.</span><span lang="ja" class="sub"><b>クラステーブルでのサブタイプ</b>：アルバムには <code>track_count</code> とジャンル、グッズにはエディションと色が必要。テーブルを分ければ、NULL だらけの広いテーブルではなく、それぞれに本物の CHECK 制約を付けられる。</span></li>
+        <li><span lang="en"><b>Counters instead of rows for stock</b>: <code>sold_quantity</code> is a denormalized count of tickets. It makes the stock check one locked row instead of a <code>COUNT(*)</code>, at the cost of keeping it in sync inside the same transaction.</span><span lang="ja" class="sub"><b>在庫は行数ではなくカウンター</b>：<code>sold_quantity</code> はチケット数を非正規化したもの。在庫確認が <code>COUNT(*)</code> ではなくロックした1行で済む代わりに、同じトランザクション内で同期させる必要がある。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label"><span lang="en">Money as float</span><span lang="ja">金額が float</span></p>
+        <p lang="en">Ticket prices are <code>Numeric(10, 2)</code>, but <code>products.price</code>, <code>orders.total_price</code> and <code>orders_items.price</code> are <code>Float</code> (<a class="ref" data-p="app/db/models/marketplace/products.py" data-l="16"></a>, <a class="ref" data-p="app/db/models/marketplace/order.py" data-l="18"></a>). Floats can't represent 0.1 exactly, so totals can drift by fractions of a unit. Fix: <code>Numeric</code> columns and <code>Decimal</code> in Python, via a migration. <code>docs/bugs.md</code> lists this as a code smell.</p>
+        <p lang="ja">チケット価格は <code>Numeric(10, 2)</code> だが、<code>products.price</code>・<code>orders.total_price</code>・<code>orders_items.price</code> は <code>Float</code>（<a class="ref" data-p="app/db/models/marketplace/products.py" data-l="16"></a>、<a class="ref" data-p="app/db/models/marketplace/order.py" data-l="18"></a>）。float は 0.1 を正確に表せないため、合計がわずかにずれうる。対策：マイグレーションで <code>Numeric</code> 列にし、Python では <code>Decimal</code> を使う。<code>docs/bugs.md</code> でもコードの問題点として挙げられている。</p>
+      </div>
+      <div class="callout bad">
+        <p class="label">bugs.md #2</p>
+        <p lang="en"><b>Deleting a product deletes order history.</b> <code>orders_items.product_id</code> is <code>ON DELETE CASCADE</code> (<a class="ref" data-p="app/db/models/marketplace/order.py" data-l="34"></a>) and product delete is a hard delete. Fix: <code>ON DELETE RESTRICT</code> plus a soft delete for products, like idols already have.</p>
+        <p lang="ja"><b>商品を削除すると注文履歴も消える。</b><code>orders_items.product_id</code> が <code>ON DELETE CASCADE</code> で（<a class="ref" data-p="app/db/models/marketplace/order.py" data-l="34"></a>）、商品削除は物理削除。対策：<code>ON DELETE RESTRICT</code> にし、アイドルと同様に商品にも論理削除を入れる。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">The four domains and the main tables in each.</span><span lang="ja" class="sub">4つのドメインと、それぞれの主なテーブル。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why UUID primary keys, and their cost.</span><span lang="ja" class="sub">主キーを UUID にした理由とそのコスト。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Why capacity tiers instead of a seat map.</span><span lang="ja" class="sub">座席表ではなく定員ベースにした理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">The class-table subtype pattern and why <code>release_type</code> was dropped.</span><span lang="ja" class="sub">クラステーブルのサブタイプパターンと、<code>release_type</code> を削除した理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">The constraint ladder, with one example per level.</span><span lang="ja" class="sub">制約の段階と、各段階の例。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">When this project uses a trigger and when it doesn't.</span><span lang="ja" class="sub">このプロジェクトでトリガーを使う場合と使わない場合。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">Generated columns and soft deletes, with examples.</span><span lang="ja" class="sub">生成列と論理削除の例。</span></span></label></li>
+        <li><label><input type="checkbox" id="c8"><span><span lang="en">The float-money problem and bug #2, and how to fix them.</span><span lang="ja" class="sub">float の金額問題とバグ #2、その直し方。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why did you use UUIDs instead of auto-increment ids?</span><span lang="ja" class="sub">自動採番ではなく UUID を使ったのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Sequential ids are guessable. Anyone can iterate over <code>/orders/1, 2, 3…</code> to scrape data or probe for another user's cart or ticket. UUIDs make that impractical and also let the app generate ids before inserting. The trade-off is larger keys and random index inserts. UUIDv7 would reduce the index cost.</p>
+            <p lang="ja">連番 id は推測できる。誰でも <code>/orders/1, 2, 3…</code> と順に試してデータを集めたり、他人のカートやチケットを探ったりできる。UUID ならそれが現実的でなくなり、挿入前にアプリ側で id を作ることもできる。代わりにキーが大きく、インデックスへの挿入がランダムになる。UUIDv7 ならインデックスのコストを減らせる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">What's the difference between a CHECK constraint and a trigger?</span><span lang="ja" class="sub">CHECK 制約とトリガーの違いは？</span></span></summary>
+          <div class="ans">
+            <p lang="en">A CHECK can only look at the row being written, like <code>sold_quantity &lt;= total_quantity</code>. A trigger runs a function that can query other rows and tables, like summing all tiers of a concert against its capacity. CHECKs are cheaper and declarative. Use a trigger only when the rule needs other rows.</p>
+            <p lang="ja">CHECK は書き込み中の行しか見られない（例：<code>sold_quantity &lt;= total_quantity</code>）。トリガーは他の行やテーブルを検索できる関数を実行する（例：公演の全枠の合計を定員と比べる）。CHECK の方が軽く宣言的。他の行が必要なルールにだけトリガーを使う。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">How do you model albums and merch in the same product catalog?</span><span lang="ja" class="sub">アルバムとグッズを同じ商品カタログでどうモデル化していますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">A shared <code>products</code> table holds price, stock and image, so cart and checkout work for everything. <code>categories</code> says what kind it is. Kind-specific data goes in 1:1 tables keyed by <code>product_id</code>: <code>album_details</code> (tracks, format, genres) and <code>merch_details</code> (edition, color). A trigger stops one product from being both. It's class-table inheritance.</p>
+            <p lang="ja">共通の <code>products</code> テーブルに価格・在庫・画像を置き、カートと購入はすべての商品で同じように動く。種類は <code>categories</code> が表す。種類ごとの情報は <code>product_id</code> をキーにした1対1のテーブルに置く：<code>album_details</code>（曲数、形式、ジャンル）と <code>merch_details</code>（エディション、色）。トリガーで両方を持つことを防ぐ。いわゆるクラステーブル継承。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why not use a seat map for concert tickets?</span><span lang="ja" class="sub">コンサートのチケットに座席表を使わないのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Scope. Idol lotteries sell by tier, and the seat is often assigned later. A seat map means a venue → section → row → seat hierarchy, one row per seat, and locking individual seats. Capacity tiers need one counter per tier and still support pricing, the lottery and checkout. It was a deliberate decision, recorded in the design doc.</p>
+            <p lang="ja">スコープの問題。アイドルの抽選は枠単位で販売し、座席は後で決まることが多い。座席表にすると 会場 → セクション → 列 → 座席 の階層、座席ごとの行、座席単位のロックが必要になる。定員ベースなら枠ごとにカウンター1つで済み、価格・抽選・購入にも対応できる。設計ドキュメントに記録された意図的な判断。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Where do you enforce business rules: the app or the database?</span><span lang="ja" class="sub">業務ルールはアプリと DB のどちらで強制しますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Both, by severity. Every rule is checked in the service for a clear error. Rules whose failure costs money or fairness (fans only, one ticket per concert, the resale cap) also get a trigger, because they must hold even against a future endpoint or a manual SQL fix. Ordinary consistency stays in the service to keep the schema simple.</p>
+            <p lang="ja">重要度に応じて両方。すべてのルールはサービス層で確認して分かりやすいエラーを返す。失敗するとお金や公平性が損なわれるルール（ファンのみ購入可、1公演1枚、転売上限）は、将来のエンドポイントや手動の SQL 修正に対しても守られるよう、トリガーでも強制する。普通の整合性はスキーマを単純に保つためサービス層に置く。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">What would you change in this schema before going to production?</span><span lang="ja" class="sub">本番に出す前に、このスキーマの何を変えますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">(1) Money to <code>Numeric</code> everywhere. (2) <code>orders_items.product_id</code> to <code>RESTRICT</code> plus a soft delete for products, and a snapshot of name and price on each order line, so history survives catalog edits. (3) UUIDv7 for index locality. (4) Review indexes against real query plans; for example, the draw filters entries by campaign and status, so a composite index on <code>(campaign_id, status)</code> could help. (5) Drop the deprecated <code>is_admin</code> column now that <code>role</code> is the source of truth.</p>
+            <p lang="ja">(1) 金額をすべて <code>Numeric</code> にする。(2) <code>orders_items.product_id</code> を <code>RESTRICT</code> にして商品に論理削除を入れ、各注文明細に名前と価格のスナップショットを保存して、カタログを編集しても履歴が残るようにする。(3) インデックスの局所性のために UUIDv7 にする。(4) 実際のクエリプランでインデックスを見直す。例えば抽選は応募をキャンペーンとステータスで絞るので、<code>(campaign_id, status)</code> の複合インデックスが効くかもしれない。(5) <code>role</code> が正となった今、非推奨の <code>is_admin</code> 列を削除する。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Draw the events cluster from memory (venues → tickets), with the FK arrows. Check it against <code>docs/idol-ticket-erd.drawio</code>.</span><span lang="ja" class="sub">events のテーブル群（venues → tickets）を外部キーの矢印付きで記憶から描き、<code>docs/idol-ticket-erd.drawio</code> と比べる。</span></li>
+          <li><span lang="en">In <code>psql</code>, try to insert a <code>merch_details</code> row with both <code>idol_id</code> and <code>group_id</code> set. Which constraint stops you?</span><span lang="ja" class="sub"><code>psql</code> で <code>idol_id</code> と <code>group_id</code> の両方を入れた <code>merch_details</code> 行を挿入してみる。どの制約に止められるか？</span></li>
+          <li><span lang="en">Write the migration that turns <code>products.price</code> into <code>Numeric(10, 2)</code>. What has to change in Python too?</span><span lang="ja" class="sub"><code>products.price</code> を <code>Numeric(10, 2)</code> に変えるマイグレーションを書く。Python 側では何を変える必要があるか？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

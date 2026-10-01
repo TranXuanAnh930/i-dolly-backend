@@ -159,6 +159,12 @@ docker compose stop
 ```
 データベースのデータは保持されます。
 
+### Make ショートカット
+上記のコマンドは `Makefile` にまとめてあります — 一覧は `make help` で確認できます。よく使うもの：
+`make env`、`make up` / `make up-d`、`make migrate`、`make seed`（または `make seed-ja`）、`make test`
+（`make test a="-k lottery"` で pytest に追加引数を渡せます）、`make cov`、`make lint`、`make check`
+（lint + `py_compile` による一括チェック、DB 不要）、`make migration m="message"`、`make stop`。
+
 ---
 
 ## ライセンス

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rate Limiting · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 10</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 10</p>
+      <h1><span lang="en">Rate limiting</span><span lang="ja" class="sub">レート制限</span></h1>
+      <p class="lede" lang="en">A fixed-window limiter in Redis, applied per route, keyed by user or IP, and the IP-spoofing hole it still has.</p>
+      <p class="lede" lang="ja">Redis の固定ウィンドウ方式のレート制限。ルートごとに、ユーザーか IP をキーにしてかける。まだ残っている IP 偽装の穴も含めて。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">A <b>dependency factory</b>: <code>Depends(rate_limit(10, 60, ip_key))</code> means 10 requests per 60 seconds.</span><span lang="ja" class="sub"><b>依存関係のファクトリー</b>：<code>Depends(rate_limit(10, 60, ip_key))</code> は60秒あたり10リクエスト。</span></li>
+          <li><span lang="en"><b>Fixed window</b> counter in Redis: <code>SET key 0 EX window NX</code> then <code>INCR</code>, in one <code>MULTI</code> transaction.</span><span lang="ja" class="sub">Redis の<b>固定ウィンドウ</b>カウンター：<code>SET key 0 EX window NX</code> と <code>INCR</code> を1つの <code>MULTI</code> トランザクションで。</span></li>
+          <li><span lang="en">Keys include the <b>route template</b>, so each endpoint has its own budget, and all ids on one route share it.</span><span lang="ja" class="sub">キーに<b>ルートのテンプレート</b>を含めるので、エンドポイントごとに枠が分かれ、同じルートの全 id は枠を共有する。</span></li>
+          <li><span lang="en">Limits are tiered by risk: login 10/min per IP, checkout 3/min per user, public reads 10–30/min.</span><span lang="ja" class="sub">制限はリスクに応じて段階的：ログインは IP ごとに毎分10、購入はユーザーごとに毎分3、公開の読み取りは毎分10〜30。</span></li>
+          <li><span lang="en">If Redis fails, the limiter <b>fails open</b> (lets requests through).</span><span lang="ja" class="sub">Redis が落ちると、レート制限は<b>素通り</b>する（リクエストを通す）。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Four algorithms</span><span lang="ja" class="sub">4つのアルゴリズム</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Algorithm</span><span lang="ja">アルゴリズム</span></th><th><span lang="en">How</span><span lang="ja">仕組み</span></th><th><span lang="en">Trade-off</span><span lang="ja">トレードオフ</span></th></tr></thead>
+          <tbody>
+            <tr><td><b><span lang="en">Fixed window (used here)</span><span lang="ja">固定ウィンドウ（本プロジェクト）</span></b></td><td><span lang="en">Count per time bucket</span><span lang="ja">時間の区切りごとに数える</span></td><td><span lang="en">1 key, cheap; allows up to 2× at a boundary</span><span lang="ja">キー1つで安い。境界で最大2倍を許す</span></td></tr>
+            <tr><td><span lang="en">Sliding log</span><span lang="ja">スライディングログ</span></td><td><span lang="en">Store every timestamp (sorted set)</span><span lang="ja">全タイムスタンプを保存（ソート済みセット）</span></td><td><span lang="en">Exact; memory grows with traffic</span><span lang="ja">正確だが、メモリがトラフィックに比例</span></td></tr>
+            <tr><td><span lang="en">Sliding window counter</span><span lang="ja">スライディングウィンドウカウンター</span></td><td><span lang="en">Weighted mix of this and last window</span><span lang="ja">今と前のウィンドウを重み付けで合成</span></td><td><span lang="en">Close to exact, still cheap</span><span lang="ja">ほぼ正確で安い</span></td></tr>
+            <tr><td><span lang="en">Token bucket</span><span lang="ja">トークンバケット</span></td><td><span lang="en">Tokens refill at a rate; each request spends one</span><span lang="ja">一定速度でトークンが補充され、リクエストごとに1つ消費</span></td><td><span lang="en">Allows controlled bursts; needs a Lua script</span><span lang="ja">制御されたバーストを許す。Lua スクリプトが必要</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">Why atomicity matters</span><span lang="ja" class="sub">なぜアトミック性が重要か</span></h3>
+      <p lang="en">The naive version is <code>INCR</code> then <code>EXPIRE</code>. If the process dies between them, the key has no expiry and that client is blocked forever. Doing both in one <code>MULTI</code> removes the gap. A transaction is enough because neither command needs the other's result; logic that branches on a value read mid-way needs a Lua script.</p>
+      <p lang="ja">素朴な実装は <code>INCR</code> の後に <code>EXPIRE</code>。その間でプロセスが落ちるとキーに期限がなく、そのクライアントは永遠にブロックされる。両方を1つの <code>MULTI</code> で行えば隙間がなくなる。どちらのコマンドも相手の結果を必要としないのでトランザクションで十分。途中で読んだ値によって分岐するロジックなら Lua スクリプトが必要。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. The limiter</span><span lang="ja" class="sub">1. レート制限の本体</span></h3>
+<pre class="code">def rate_limit(limit: int, window: int, key_func) -&gt; Callable[[Request], None]:
+    def limiter(request: Request) -&gt; None:
+        try:
+            key = key_func(request)
+            pipe = redis_client.pipeline(<span class="hl">transaction=True</span>)
+            pipe.set(key, 0, <span class="hl">ex=window, nx=True</span>)   <span class="c"># create with TTL only if missing</span>
+            pipe.incr(key)
+            _, count = pipe.execute()
+            if int(count) &gt; limit:
+                raise HTTPException(status_code=429, detail=f"Too many requests. Please try again after {ttl} seconds.")
+        <span class="hl">except redis.RedisError:</span>
+            print("Rate limiter Internal Error")    <span class="c"># fail open</span>
+    return limiter</pre>
+      <p class="src-line"><a class="ref" data-p="app/cache/rate_limit.py" data-l="31-50"></a></p>
+
+      <h3><span lang="en">2. The keys</span><span lang="ja" class="sub">2. キー</span></h3>
+<pre class="code">def _route_key(request):
+    <span class="c"># Use the route template (e.g. "/order/single_placed_order/{order_id}"), so every id shares one budget.</span>
+    route = request.scope.get("route")
+    return route.path if route is not None else request.url.path
+
+def ip_key(request):   return f"rate:ip:{_route_key(request)}:{<span class="hl">request.client.host</span>}"
+def user_key(request): return f"rate:user:{_route_key(request)}:{<span class="hl">request.state.user.id</span>}"
+def user_or_ip_key(request): ...  <span class="c"># user if logged in, else IP</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/cache/rate_limit.py" data-l="9-29"></a></p>
+      <p lang="en">Using the template, not the real path, matters: otherwise <code>/orders/1</code>, <code>/orders/2</code>… would each get a fresh budget, and a scraper walking ids would never be limited.</p>
+      <p lang="ja">実際のパスではなくテンプレートを使うことが重要。そうしないと <code>/orders/1</code>、<code>/orders/2</code>… がそれぞれ新しい枠を持ち、id を順に辿るスクレイパーが制限されない。</p>
+
+      <h3><span lang="en">3. The tiers</span><span lang="ja" class="sub">3. 制限の段階</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Tier</span><span lang="ja">段階</span></th><th><span lang="en">Key</span><span lang="ja">キー</span></th><th><span lang="en">Limit</span><span lang="ja">制限</span></th><th><span lang="en">Why</span><span lang="ja">理由</span></th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">Login, register, reset</span><span lang="ja">ログイン・登録・リセット</span></td><td>ip</td><td>3–10 / 60s</td><td><span lang="en">Credential stuffing</span><span lang="ja">パスワードリスト攻撃</span></td></tr>
+            <tr><td><span lang="en">Checkout, lottery apply, add to cart</span><span lang="ja">購入・抽選応募・カート追加</span></td><td>user</td><td>3 / 60s</td><td><span lang="en">Money and scarce stock</span><span lang="ja">お金と希少な在庫</span></td></tr>
+            <tr><td><span lang="en">Make admin, create manager</span><span lang="ja">管理者化・マネージャー作成</span></td><td>user</td><td>3 / 60s</td><td><span lang="en">Privilege changes</span><span lang="ja">権限の変更</span></td></tr>
+            <tr><td><span lang="en">Public reads</span><span lang="ja">公開の読み取り</span></td><td>ip / user_or_ip</td><td>10–30 / 60s</td><td><span lang="en">Scraping, DB cost</span><span lang="ja">スクレイピング、DB コスト</span></td></tr>
+            <tr><td><span lang="en">Contact form, AI answer</span><span lang="ja">問い合わせ・AI 回答</span></td><td>user_or_ip</td><td>3–5 / 600s</td><td><span lang="en">Sends email; paid API call</span><span lang="ja">メール送信、有料 API 呼び出し</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="src-line"><span lang="en">Full policy:</span><span lang="ja">全体の方針：</span> <a class="ref" data-p="docs/architecture.md"></a> §3</p>
+
+      <h3><span lang="en">4. The tests</span><span lang="ja" class="sub">4. テスト</span></h3>
+      <p lang="en">Unit tests check exactly <code>limit</code> requests pass, that the counter always has a TTL, and that concurrent requests never exceed the limit (<a class="ref" data-p="tests/unit/test_rate_limit.py" data-l="45-80"></a>).</p>
+      <p lang="ja">単体テストで、ちょうど <code>limit</code> 件が通ること、カウンターに必ず TTL があること、同時リクエストでも制限を超えないことを確認している（<a class="ref" data-p="tests/unit/test_rate_limit.py" data-l="45-80"></a>）。</p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Redis, not in-process memory</b>: counts must be shared across every web instance and survive restarts.</span><span lang="ja" class="sub"><b>プロセス内メモリではなく Redis</b>：カウントはすべての Web インスタンスで共有し、再起動後も残る必要がある。</span></li>
+        <li><span lang="en"><b>Fixed window</b>: one key and two commands per request. The 2× burst at a window edge is acceptable for these limits.</span><span lang="ja" class="sub"><b>固定ウィンドウ</b>：リクエストごとにキー1つ、コマンド2つ。ウィンドウ境界での2倍のバーストは、この程度の制限なら許容できる。</span></li>
+        <li><span lang="en"><b>Fail open</b>: a Redis outage shouldn't take down login and checkout. The cost: during an outage there's no brute-force protection.</span><span lang="ja" class="sub"><b>障害時は素通り</b>：Redis の障害でログインや購入まで止めるべきではない。コスト：障害中は総当たり攻撃への防御がない。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #7</p>
+        <p lang="en"><b>IP limits can be bypassed.</b> Behind Render's proxy, <code>ProxyHeadersMiddleware(trusted_hosts="*")</code> takes the <b>leftmost</b> <code>X-Forwarded-For</code> entry, which the client writes. Sending a different fake IP each time bypasses login limits: 30 wrong-password logins with a rotating header got zero 429s. Fix plan: read the header from the right, skipping exactly N trusted proxy hops, and add a per-account failed-login limit (<a class="ref" data-p="docs/plans/rate-limit-client-ip.md"></a>).</p>
+        <p lang="ja"><b>IP の制限を回避できる。</b>Render のプロキシの後ろでは、<code>ProxyHeadersMiddleware(trusted_hosts="*")</code> が <code>X-Forwarded-For</code> の<b>一番左</b>を使うが、そこはクライアントが書ける。毎回違う偽の IP を送ればログインの制限を回避できる：ヘッダーを変えながら30回パスワードを間違えても 429 は0回だった。修正計画：ヘッダーを右から読み、信頼するプロキシの段数 N だけ飛ばす。さらにアカウントごとのログイン失敗回数の制限を追加する（<a class="ref" data-p="docs/plans/rate-limit-client-ip.md"></a>）。</p>
+      </div>
+      <div class="callout">
+        <p class="label">bugs.md #22, #28</p>
+        <p lang="en"><code>user_key</code> reads <code>request.state.user</code>, which only exists if the auth dependency ran first. #28 was exactly this: a route used <code>user_key</code> without <code>get_current_user</code>, the key function raised <code>AttributeError</code>, and the limiter only catches <code>RedisError</code>, so every call returned 500. The ordering dependency is still implicit.</p>
+        <p lang="ja"><code>user_key</code> は <code>request.state.user</code> を読むが、これは認証の依存関係が先に動いたときにしか存在しない。#28 がまさにこれ：あるルートが <code>get_current_user</code> なしで <code>user_key</code> を使い、キー関数が <code>AttributeError</code> を出したが、レート制限は <code>RedisError</code> しか捕まえないので、毎回 500 になった。この順序の依存関係は今も暗黙のまま。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">Fixed window, sliding window and token bucket.</span><span lang="ja" class="sub">固定ウィンドウ、スライディングウィンドウ、トークンバケット。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why <code>SET NX EX</code> + <code>INCR</code> in <code>MULTI</code> is safe and <code>INCR</code> + <code>EXPIRE</code> isn't.</span><span lang="ja" class="sub"><code>MULTI</code> 内の <code>SET NX EX</code> + <code>INCR</code> が安全で、<code>INCR</code> + <code>EXPIRE</code> が安全でない理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Why keys use the route template.</span><span lang="ja" class="sub">キーにルートのテンプレートを使う理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">When to key by IP, by user, or both.</span><span lang="ja" class="sub">IP・ユーザー・その両方のどれをキーにするか。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">Fail-open vs. fail-closed, and why this limiter fails open.</span><span lang="ja" class="sub">障害時に素通りさせるか止めるか、このレート制限が素通りさせる理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">How <code>X-Forwarded-For</code> spoofing works and the fix (#7).</span><span lang="ja" class="sub"><code>X-Forwarded-For</code> の偽装の仕組みとその修正（#7）。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">Bug #28 and what it says about hidden dependencies.</span><span lang="ja" class="sub">バグ #28 と、それが示す隠れた依存関係。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How does your rate limiter work?</span><span lang="ja" class="sub">レート制限はどう動きますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">It's a FastAPI dependency. For each request it builds a key from the route and the user or IP, and in one Redis transaction creates the counter with a TTL if it's missing and increments it. If the count is over the limit it returns 429 with the seconds left. When the window's TTL expires, the counter disappears and the budget resets.</p>
+            <p lang="ja">FastAPI の依存関係。リクエストごとにルートとユーザーまたは IP からキーを作り、1つの Redis トランザクションで、なければ TTL 付きでカウンターを作ってから1増やす。制限を超えたら残り秒数付きで 429 を返す。ウィンドウの TTL が切れるとカウンターが消え、枠がリセットされる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why limit login by IP but checkout by user?</span><span lang="ja" class="sub">ログインは IP で、購入はユーザーで制限するのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">At login there's no user yet; the attacker is trying to become one, so IP is the only identity available. Checkout needs a logged-in user, and keying by user stops one account from hammering it from many IPs, while not punishing everyone behind a shared IP like a campus network.</p>
+            <p lang="ja">ログイン時にはまだユーザーがおらず、攻撃者はユーザーになろうとしているので、使える識別子は IP だけ。購入はログインが必要なので、ユーザーをキーにすれば1つのアカウントが多数の IP から連打するのを防げ、大学のネットワークのように IP を共有する人たちをまとめて罰することもない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">What's wrong with a fixed window, and when would you switch?</span><span lang="ja" class="sub">固定ウィンドウの問題点は？いつ切り替えますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">A client can send the full limit at the end of one window and again at the start of the next, so twice the limit in a moment. For login at 10/min that's fine. For a strict API quota, or protecting a fragile downstream, I'd use a sliding window counter or a token bucket in a Lua script so the check and update stay atomic.</p>
+            <p lang="ja">クライアントは1つのウィンドウの終わりと次のウィンドウの始めにそれぞれ上限まで送れるので、一瞬で上限の2倍になる。毎分10回のログインなら問題ない。厳密な API の割り当てや、壊れやすい下流の保護なら、確認と更新をアトミックに保つため、Lua スクリプトでスライディングウィンドウカウンターかトークンバケットを使う。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Should a rate limiter fail open or closed?</span><span lang="ja" class="sub">レート制限は障害時に素通りさせるべきか、止めるべきか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">It depends on what it protects. Here it fails open: a Redis outage shouldn't lock every fan out of login and checkout, and the DB still enforces stock and money rules. For something where abuse is very costly, like an SMS endpoint that costs money per message, I'd fail closed or fall back to a small in-process limit.</p>
+            <p lang="ja">何を守るかによる。ここでは素通りさせる：Redis の障害で全ファンがログインや購入をできなくなるべきではなく、在庫やお金のルールは DB が引き続き守る。1通ごとに費用がかかる SMS 送信のように悪用のコストが高いものなら、止めるか、プロセス内の小さな制限に切り替える。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How do you find the real client IP behind a proxy?</span><span lang="ja" class="sub">プロキシの後ろで本当のクライアント IP をどう調べますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Each proxy appends the address it received the request from to <code>X-Forwarded-For</code>, so the rightmost entries are written by your own infrastructure and the leftmost by the client. Know how many trusted hops N you have, and take the N-th entry from the right. Never trust the leftmost. And since a real attacker can use many IPs, add limits keyed by the target account too, like 5 failed logins per email per 15 minutes.</p>
+            <p lang="ja">各プロキシは、自分がリクエストを受け取った相手のアドレスを <code>X-Forwarded-For</code> の末尾に追加する。そのため右側の値は自分のインフラが書き、左側の値はクライアントが書く。信頼できるプロキシの段数 N を把握し、右から N 番目の値を使う。一番左は決して信用しない。さらに本物の攻撃者は多数の IP を使えるので、対象アカウントをキーにした制限も追加する。例えばメールアドレスごとに15分で5回までのログイン失敗。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Call <code>POST /account/login</code> 11 times in a minute and look at the 11th response. Then add a different <code>X-Forwarded-For</code> header each time. What changes?</span><span lang="ja" class="sub"><code>POST /account/login</code> を1分に11回呼び、11回目のレスポンスを見る。次に毎回違う <code>X-Forwarded-For</code> ヘッダーを付ける。何が変わるか？</span></li>
+          <li><span lang="en">Rewrite the limiter as a token bucket in a Lua script (<code>redis_client.register_script</code>).</span><span lang="ja" class="sub">レート制限を Lua スクリプト（<code>redis_client.register_script</code>）のトークンバケットとして書き直す。</span></li>
+          <li><span lang="en">Make <code>user_key</code> fail loudly at startup, not at request time, when a route uses it without an auth dependency. How?</span><span lang="ja" class="sub">認証の依存関係なしで <code>user_key</code> を使うルートがあったら、リクエスト時ではなく起動時にはっきりエラーにするには？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

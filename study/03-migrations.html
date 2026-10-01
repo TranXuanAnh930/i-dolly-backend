@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alembic Migrations · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 03</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 03</p>
+      <h1><span lang="en">Migrations with Alembic</span><span lang="ja" class="sub">Alembic によるマイグレーション</span></h1>
+      <p class="lede" lang="en">How 64 migrations change a live schema safely: ordering, backfills, enums, and what can't be undone.</p>
+      <p class="lede" lang="ja">64個のマイグレーションで稼働中のスキーマを安全に変える方法：順番、バックフィル、enum、元に戻せない変更。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Every schema change is an Alembic migration in <b>one linear chain</b>. Never <code>create_all()</code>.</span><span lang="ja" class="sub">スキーマ変更はすべて<b>一直線の</b> Alembic マイグレーション。<code>create_all()</code> は使わない。</span></li>
+          <li><span lang="en"><b>One concern per migration</b>, ordered by foreign-key dependency.</span><span lang="ja" class="sub"><b>1マイグレーションに1つの関心事</b>、外部キーの依存順に並べる。</span></li>
+          <li><span lang="en">Tightening a column is <b>backfill first, then constrain</b>, so existing rows never violate the new rule.</span><span lang="ja" class="sub">列を厳しくするときは<b>先にバックフィル、次に制約</b>。既存の行が新しいルールに違反しないようにする。</span></li>
+          <li><span lang="en">Enum types are created with an <b>idempotent <code>DO $$ … EXCEPTION WHEN duplicate_object</code></b> block, so a half-applied deploy can't crash-loop.</span><span lang="ja" class="sub">enum 型は<b>冪等な <code>DO $$ … EXCEPTION WHEN duplicate_object</code></b> ブロックで作る。途中で失敗したデプロイでも再起動ループにならない。</span></li>
+          <li><span lang="en">CI runs <code>alembic upgrade head</code> on an empty Postgres 16 on every push, before the tests.</span><span lang="ja" class="sub">CI はプッシュのたびに、テストの前に空の Postgres 16 で <code>alembic upgrade head</code> を実行する。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">What a migration tool gives you</span><span lang="ja" class="sub">マイグレーションツールが提供するもの</span></h3>
+      <p lang="en">A versioned, ordered list of schema changes stored in git. The database records which version it's on (Alembic's <code>alembic_version</code> table), so every environment can be brought to the same state with one command, and every change is reviewed like code.</p>
+      <p lang="ja">git に保存された、バージョン付きで順番のあるスキーマ変更の一覧。DB は自分が今どのバージョンかを記録する（Alembic の <code>alembic_version</code> テーブル）。そのため1つのコマンドですべての環境を同じ状態にでき、変更はコードと同じようにレビューされる。</p>
+
+      <h3><span lang="en">Expand → migrate → contract</span><span lang="ja" class="sub">拡張 → 移行 → 縮小</span></h3>
+      <p lang="en">The safe pattern for changing live data: (1) <b>expand</b>: add the new column as nullable; (2) <b>migrate</b>: backfill old rows and deploy code that writes both; (3) <b>contract</b>: add NOT NULL or drop the old column once nothing reads it. Each step is backward compatible with the code running at the time.</p>
+      <p lang="ja">稼働中のデータを変える安全なパターン：(1) <b>拡張</b>：新しい列を NULL 可で追加、(2) <b>移行</b>：古い行をバックフィルし、両方に書くコードをデプロイ、(3) <b>縮小</b>：誰も古い列を読まなくなってから NOT NULL を付ける、または古い列を削除する。各ステップはその時点で動いているコードと後方互換がある。</p>
+
+      <h3><span lang="en">Postgres DDL is transactional</span><span lang="ja" class="sub">Postgres の DDL はトランザクション対応</span></h3>
+      <p lang="en">Unlike MySQL, Postgres can roll back <code>CREATE TABLE</code> or <code>ALTER TABLE</code> if a later step fails, so a migration either fully applies or not at all. Exceptions: <code>CREATE INDEX CONCURRENTLY</code> and some enum operations can't run inside a transaction.</p>
+      <p lang="ja">MySQL と違い、Postgres は後のステップが失敗したら <code>CREATE TABLE</code> や <code>ALTER TABLE</code> もロールバックできる。そのためマイグレーションは全部適用されるか、まったく適用されないかのどちらか。例外：<code>CREATE INDEX CONCURRENTLY</code> や一部の enum 操作はトランザクション内で実行できない。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. Alembic sees every model</span><span lang="ja" class="sub">1. Alembic がすべてのモデルを認識する</span></h3>
+<pre class="code">from app.config.settings import settings
+from app.db.base import Base          <span class="c"># aggregator that imports every model</span>
+config.set_main_option("sqlalchemy.url", <span class="hl">settings.DATABASE_URL</span>)
+target_metadata = Base.metadata</pre>
+      <p class="src-line"><a class="ref" data-p="alembic/env.py" data-l="1-22"></a> · <a class="ref" data-p="app/db/base.py"></a></p>
+      <p lang="en">The DB URL comes from app settings, not <code>alembic.ini</code>, so there is one source of truth for credentials.</p>
+      <p lang="ja">DB の URL は <code>alembic.ini</code> ではなくアプリの設定から読むので、接続情報の出どころは1つだけ。</p>
+
+      <h3><span lang="en">2. Idempotent enum creation</span><span lang="ja" class="sub">2. 冪等な enum の作成</span></h3>
+<pre class="code">op.execute(sa.text("""
+    DO $$ BEGIN
+        CREATE TYPE campaign_status_enum AS ENUM ('open', 'drawn', 'completed', 'cancelled');
+    <span class="hl">EXCEPTION
+        WHEN duplicate_object THEN NULL;</span>
+    END $$;
+"""))</pre>
+      <p class="src-line"><a class="ref" data-p="alembic/versions/5306320d754d_create_lottery_campaigns_table.py" data-l="24-43"></a></p>
+      <p lang="en">This replaced <code>Enum.create(bind, checkfirst=True)</code> after a real incident: a dev DB ended up with the type present but the migration not recorded. <code>checkfirst</code> is check-then-create in two steps; the DO block is one atomic statement that tolerates the type already existing.</p>
+      <p lang="ja">これは実際の事故の後に <code>Enum.create(bind, checkfirst=True)</code> から置き換えたもの。開発 DB で、型は存在するのにマイグレーションは適用済みと記録されていない状態になった。<code>checkfirst</code> は「確認してから作成」の2段階だが、DO ブロックは型がすでにあっても問題ない1つのアトミックな文。</p>
+
+      <h3><span lang="en">3. Backfill, then tighten</span><span lang="ja" class="sub">3. バックフィルしてから厳しくする</span></h3>
+<pre class="code"><span class="hl">UPDATE payment SET idempotency_key = gen_random_uuid() WHERE idempotency_key IS NULL</span>
+op.alter_column('payment', 'idempotency_key', <span class="hl">nullable=False</span>)</pre>
+      <p class="src-line"><a class="ref" data-p="alembic/versions/876977f26275_make_payment_idempotency_key_not_null.py" data-l="21-26"></a> · <span lang="en">same shape:</span><span lang="ja">同じ形：</span> <a class="ref" data-p="alembic/versions/71b1b0443c96_make_products_category_id_not_null.py" data-l="33-61"></a></p>
+      <p lang="en">The column was added as nullable in an earlier migration (<code>90347b38372a</code>), then filled, then made NOT NULL. That's expand → migrate → contract across three migrations.</p>
+      <p lang="ja">この列は前のマイグレーション（<code>90347b38372a</code>）で NULL 可として追加され、値を埋めてから NOT NULL にした。3つのマイグレーションにまたがる 拡張 → 移行 → 縮小。</p>
+
+      <h3><span lang="en">4. A rename that moves data</span><span lang="ja" class="sub">4. データの移動を伴うリネーム</span></h3>
+<pre class="code"><span class="c"># 1. Backfill BEFORE touching the category row or the table</span>
+UPDATE products SET category_id = (Merch) WHERE category_id = (Lightstick)
+<span class="c"># 2. Now safe to delete the category row</span>
+DELETE FROM categories WHERE name = 'Lightstick'
+<span class="c"># 3. Rename the table. Postgres does NOT rename constraints/indexes with it.</span>
+op.rename_table("lightstick_details", "merch_details")
+ALTER TABLE merch_details <span class="hl">RENAME CONSTRAINT</span> ...;  ALTER INDEX ... <span class="hl">RENAME TO</span> ...</pre>
+      <p class="src-line"><a class="ref" data-p="alembic/versions/b60aec9ffc02_merge_lightstick_category_into_merch.py" data-l="38-100"></a></p>
+      <p lang="en">Its <code>downgrade()</code> restores the schema but openly says it can't restore which products used to be lightsticks, because that information was deleted (<a class="ref" data-p="alembic/versions/b60aec9ffc02_merge_lightstick_category_into_merch.py" data-l="102-110"></a>).</p>
+      <p lang="ja">この <code>downgrade()</code> はスキーマは元に戻すが、どの商品が元々ライトスティックだったかは戻せないと明記している。その情報は削除されたから（<a class="ref" data-p="alembic/versions/b60aec9ffc02_merge_lightstick_category_into_merch.py" data-l="102-110"></a>）。</p>
+
+      <h3><span lang="en">5. Adding an enum value</span><span lang="ja" class="sub">5. enum に値を追加する</span></h3>
+<pre class="code">op.execute(sa.text("ALTER TYPE notification_type_enum <span class="hl">ADD VALUE IF NOT EXISTS</span> 'lottery_draw_completed'"))
+
+def downgrade() -&gt; None:
+    <span class="c"># Postgres has no ALTER TYPE ... DROP VALUE</span>
+    pass</pre>
+      <p class="src-line"><a class="ref" data-p="alembic/versions/7c7c3f5e19fc_add_lottery_draw_completed_to_notification_type.py" data-l="30-46"></a></p>
+
+      <h3><span lang="en">6. Where migrations run</span><span lang="ja" class="sub">6. マイグレーションが実行される場所</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Where</span><span lang="ja">場所</span></th><th><span lang="en">How</span><span lang="ja">方法</span></th></tr></thead>
+          <tbody>
+            <tr><td>CI</td><td><span lang="en">Empty Postgres 16, <code>alembic upgrade head</code>, then pytest</span><span lang="ja">空の Postgres 16 で <code>alembic upgrade head</code>、その後 pytest</span> (<a class="ref" data-p=".github/workflows/test.yml" data-l="67-103"></a>)</td></tr>
+            <tr><td><span lang="en">Production (Render)</span><span lang="ja">本番（Render）</span></td><td><span lang="en">The container's start script runs <code>upgrade head</code>, then starts uvicorn</span><span lang="ja">コンテナの起動スクリプトが <code>upgrade head</code> を実行してから uvicorn を起動</span> (<a class="ref" data-p="Dockerfile" data-l="29-34"></a>)</td></tr>
+            <tr><td><span lang="en">Celery worker</span><span lang="ja">Celery ワーカー</span></td><td><span lang="en">Never runs migrations; only the web service does</span><span lang="ja">マイグレーションは実行しない。Web サービスだけが実行する</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>One concern per migration</b>: if one fails, you know exactly what to fix, and a revert touches only one change. A table and its own trigger ship together, because the trigger is that table's rule.</span><span lang="ja" class="sub"><b>1マイグレーション1関心事</b>：失敗したとき何を直せばよいかがすぐ分かり、取り消しも1つの変更だけで済む。テーブルとその専用トリガーは一緒に出す。トリガーはそのテーブル自身のルールだから。</span></li>
+        <li><span lang="en"><b>Raw SQL where Alembic has no API</b>: triggers, the generated <code>venues.size</code> column and enum blocks use <code>op.execute</code>. Everything else uses <code>op.*</code> so it stays readable.</span><span lang="ja" class="sub"><b>Alembic に API がない部分は生の SQL</b>：トリガー、生成列 <code>venues.size</code>、enum のブロックは <code>op.execute</code> を使う。それ以外は読みやすさのため <code>op.*</code> を使う。</span></li>
+        <li><span lang="en"><b>Migrate on boot</b>: simple for one instance, and a deploy can't start new code against an old schema. The cost is covered below.</span><span lang="ja" class="sub"><b>起動時にマイグレーション</b>：インスタンスが1つなら単純で、古いスキーマに対して新しいコードが動くことがない。コストは下で説明する。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout">
+        <p class="label"><span lang="en">Migrate on boot doesn't scale out</span><span lang="ja">起動時マイグレーションはスケールしない</span></p>
+        <p lang="en">With two web instances starting together, both run <code>upgrade head</code> at the same time. Postgres locks make one wait, but a long migration also delays startup and health checks. Better: a separate release step (Render's pre-deploy command or a one-off job) that runs once before new instances start.</p>
+        <p lang="ja">Web インスタンスが2つ同時に起動すると、両方が同時に <code>upgrade head</code> を実行する。Postgres のロックで片方は待たされるが、長いマイグレーションは起動とヘルスチェックも遅らせる。より良い方法：新しいインスタンスの起動前に1回だけ実行する独立したリリース手順（Render の pre-deploy コマンドや単発のジョブ）。</p>
+      </div>
+      <div class="callout">
+        <p class="label"><span lang="en">Locks on big tables</span><span lang="ja">大きなテーブルのロック</span></p>
+        <p lang="en">A backfill <code>UPDATE</code> plus <code>SET NOT NULL</code> in one transaction holds strong locks on the whole table. It's fine at this size, but on millions of rows you'd backfill in batches, add a <code>CHECK (col IS NOT NULL) NOT VALID</code>, validate it separately, and build indexes <code>CONCURRENTLY</code>.</p>
+        <p lang="ja">バックフィルの <code>UPDATE</code> と <code>SET NOT NULL</code> を1つのトランザクションで行うと、テーブル全体に強いロックがかかる。今の規模なら問題ないが、数百万行ならバッチでバックフィルし、<code>CHECK (col IS NOT NULL) NOT VALID</code> を追加して別に検証し、インデックスは <code>CONCURRENTLY</code> で作る。</p>
+      </div>
+      <div class="callout">
+        <p class="label"><span lang="en">No drift check</span><span lang="ja">差分チェックがない</span></p>
+        <p lang="en">CI proves the chain applies cleanly, but nothing checks that the models and the migrated schema match. Adding <code>alembic check</code> to CI would fail the build when a model changes without a migration.</p>
+        <p lang="ja">CI はマイグレーションが問題なく適用できることは証明するが、モデルと適用後のスキーマが一致しているかは確認していない。CI に <code>alembic check</code> を追加すれば、マイグレーションなしでモデルを変えたときにビルドが失敗する。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">What <code>alembic_version</code> stores and what <code>upgrade head</code> does.</span><span lang="ja" class="sub"><code>alembic_version</code> が保存するものと、<code>upgrade head</code> の動作。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why <code>create_all()</code> is not allowed.</span><span lang="ja" class="sub"><code>create_all()</code> を使わない理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Expand → migrate → contract, with the idempotency-key example.</span><span lang="ja" class="sub">拡張 → 移行 → 縮小 を冪等キーの例で。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">Why the <code>DO $$ … duplicate_object</code> block beats <code>checkfirst=True</code>.</span><span lang="ja" class="sub"><code>DO $$ … duplicate_object</code> が <code>checkfirst=True</code> より良い理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">Why some downgrades can't fully reverse.</span><span lang="ja" class="sub">一部の downgrade が完全には元に戻せない理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">How FK dependencies decide migration order.</span><span lang="ja" class="sub">外部キーの依存関係がマイグレーションの順番を決める仕組み。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">The risks of migrating on boot, and the alternative.</span><span lang="ja" class="sub">起動時マイグレーションのリスクと代替案。</span></span></label></li>
+        <li><label><input type="checkbox" id="c8"><span><span lang="en">How to add NOT NULL to a large table without downtime.</span><span lang="ja" class="sub">大きなテーブルにダウンタイムなしで NOT NULL を追加する方法。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why use migrations instead of <code>Base.metadata.create_all()</code>?</span><span lang="ja" class="sub"><code>Base.metadata.create_all()</code> ではなくマイグレーションを使うのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en"><code>create_all()</code> only creates missing tables. It never alters an existing column, never backfills data, and leaves no history. Migrations are ordered, reviewed, repeatable changes that bring every environment to the same version, including data changes and triggers.</p>
+            <p lang="ja"><code>create_all()</code> は存在しないテーブルを作るだけ。既存の列の変更やデータのバックフィルはせず、履歴も残らない。マイグレーションは順番があり、レビューされ、繰り返し実行できる変更で、データ変更やトリガーも含めてすべての環境を同じバージョンにする。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How do you add a NOT NULL column to a table that already has data?</span><span lang="ja" class="sub">データがあるテーブルに NOT NULL 列を追加するには？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Add it as nullable, backfill existing rows, then set NOT NULL. In this repo <code>payment.idempotency_key</code> went through exactly that: added nullable, filled with <code>gen_random_uuid()</code>, then made NOT NULL. Alternatively, add it with a server default if one value fits every old row.</p>
+            <p lang="ja">NULL 可で追加し、既存行をバックフィルしてから NOT NULL にする。このリポジトリの <code>payment.idempotency_key</code> がまさにその流れ：NULL 可で追加、<code>gen_random_uuid()</code> で埋め、NOT NULL にした。古い行すべてに1つの値が合うなら、サーバー側のデフォルト付きで追加する方法もある。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Tell me about a migration that went wrong.</span><span lang="ja" class="sub">うまくいかなかったマイグレーションについて話してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">An enum migration used <code>checkfirst=True</code>. After an interrupted deploy, the dev DB had the enum type but <code>alembic_version</code> didn't record the migration. On every restart, Alembic re-ran it and <code>CREATE TYPE</code> failed, so the container crash-looped. The fix was a <code>DO $$ … EXCEPTION WHEN duplicate_object THEN NULL</code> block, which is atomic and tolerates the type already existing. All enum migrations now use it.</p>
+            <p lang="ja">enum のマイグレーションで <code>checkfirst=True</code> を使っていた。デプロイが途中で止まった後、開発 DB には enum 型が存在するのに、<code>alembic_version</code> にはそのマイグレーションが記録されていなかった。再起動のたびに Alembic が再実行して <code>CREATE TYPE</code> が失敗し、コンテナが再起動ループになった。修正は <code>DO $$ … EXCEPTION WHEN duplicate_object THEN NULL</code> ブロックで、アトミックで型がすでにあっても問題ない。今ではすべての enum マイグレーションがこれを使う。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Do you always write a <code>downgrade()</code>? Does it always work?</span><span lang="ja" class="sub"><code>downgrade()</code> は必ず書きますか？必ず動きますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">I write one, but some changes are one-way. Postgres can't drop an enum value, so that downgrade is a documented no-op. Merging the Lightstick category into Merch deleted the information about which products were lightsticks, so the downgrade restores the schema but not that data, and the code says so. In production, rolling forward with a new fix is usually safer than running a downgrade.</p>
+            <p lang="ja">書くが、一方通行の変更もある。Postgres は enum の値を削除できないので、その downgrade は何もしないことを明記している。Lightstick カテゴリーを Merch に統合したときは、どの商品がライトスティックだったかという情報を削除したので、downgrade はスキーマは戻すがそのデータは戻せず、コードにそう書いてある。本番では downgrade を実行するより、新しい修正で前に進める方が通常は安全。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How would you rename a column with zero downtime?</span><span lang="ja" class="sub">ダウンタイムなしで列名を変えるには？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Never rename in one step, because old code still running would break. (1) Add the new column. (2) Deploy code that writes both and reads the old one. (3) Backfill in batches. (4) Deploy code that reads the new one. (5) Stop writing the old one. (6) Drop it in a later migration. Each deploy is compatible with the schema before and after it, so a rolling deploy never sees a mismatch.</p>
+            <p lang="ja">1回で名前を変えてはいけない。動いている古いコードが壊れるから。(1) 新しい列を追加、(2) 両方に書き古い方を読むコードをデプロイ、(3) バッチでバックフィル、(4) 新しい列を読むコードをデプロイ、(5) 古い列への書き込みをやめる、(6) 後のマイグレーションで古い列を削除。各デプロイは前後どちらのスキーマとも互換があるので、ローリングデプロイ中も不整合が起きない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">Your migrations run on container start. What happens with 10 instances?</span><span lang="ja" class="sub">マイグレーションがコンテナ起動時に動きます。インスタンスが10個ならどうなりますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">All ten race to run <code>upgrade head</code>. Postgres DDL locks serialize them, and the later ones find nothing to do, so the data is safe, but startups stall behind the lock and health checks can fail. Also, instances still running old code may see the new schema before they're replaced. I'd move migrations to one pre-deploy job, keep every migration backward compatible with the previous release, and set a <code>lock_timeout</code> so a migration fails fast instead of blocking traffic.</p>
+            <p lang="ja">10個すべてが <code>upgrade head</code> を競って実行する。Postgres の DDL ロックで直列化され、後のものはやることがないのでデータは安全だが、起動がロック待ちで止まり、ヘルスチェックが失敗することがある。また、古いコードのままのインスタンスが置き換わる前に新しいスキーマを見ることもある。マイグレーションはデプロイ前の単発ジョブに移し、各マイグレーションを前のリリースと後方互換にし、<code>lock_timeout</code> を設定してトラフィックを止めずにすぐ失敗させる。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Run <code>alembic history</code> and <code>alembic current</code>. Find the migration that creates <code>tickets</code> and the one that adds its trigger.</span><span lang="ja" class="sub"><code>alembic history</code> と <code>alembic current</code> を実行し、<code>tickets</code> を作るマイグレーションとトリガーを追加するマイグレーションを見つける。</span></li>
+          <li><span lang="en">Run <code>alembic downgrade -1</code> then <code>upgrade head</code> on a scratch DB. Which recent migrations are one-way?</span><span lang="ja" class="sub">テスト用 DB で <code>alembic downgrade -1</code> と <code>upgrade head</code> を実行する。最近のマイグレーションのうち一方通行なのはどれか？</span></li>
+          <li><span lang="en">Write a migration adding <code>products.is_active</code> (soft delete) using expand → migrate → contract.</span><span lang="ja" class="sub">拡張 → 移行 → 縮小 の手順で <code>products.is_active</code>（論理削除）を追加するマイグレーションを書く。</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lottery Draw · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 07</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 07</p>
+      <h1><span lang="en">Lottery draw algorithm</span><span lang="ja" class="sub">抽選アルゴリズム</span></h1>
+      <p class="lede" lang="en">The core domain logic: fans rank tiers, apply for free, and a draw assigns at most one ticket per fan per concert.</p>
+      <p class="lede" lang="ja">中心となる業務ロジック：ファンが枠に順位を付けて無料で応募し、抽選で1公演につき1人最大1枚のチケットを割り当てる。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">A fan <b>ranks tiers</b> for a concert (1st VIP, 2nd Premium…), then applies to each tier's lottery. Applying is free.</span><span lang="ja" class="sub">ファンは公演の<b>枠に順位を付け</b>（第1希望 VIP、第2希望 Premium…）、各枠の抽選に応募する。応募は無料。</span></li>
+          <li><span lang="en">All tiers of a concert are drawn <b>together</b>, rank by rank. A fan who wins at rank 1 is skipped at rank 2.</span><span lang="ja" class="sub">1公演の全枠を<b>まとめて</b>、順位ごとに抽選する。第1希望で当選したファンは第2希望では除外される。</span></li>
+          <li><span lang="en">Winners get a <code>pending_payment</code> ticket with a deadline. The seat is counted in <code>sold_quantity</code> immediately.</span><span lang="ja" class="sub">当選者には期限付きの <code>pending_payment</code> チケットが発行され、席は即座に <code>sold_quantity</code> に数えられる。</span></li>
+          <li><span lang="en">Randomness comes from <code>secrets.SystemRandom</code> (OS entropy), not the default <code>random</code>.</span><span lang="ja" class="sub">乱数は標準の <code>random</code> ではなく <code>secrets.SystemRandom</code>（OS のエントロピー）を使う。</span></li>
+          <li><span lang="en">The whole draw is <b>one transaction</b> under row locks, and it runs in a Celery worker.</span><span lang="ja" class="sub">抽選全体は行ロックのもとで<b>1つのトランザクション</b>として、Celery ワーカーで実行される。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Why a lottery at all</span><span lang="ja" class="sub">そもそもなぜ抽選なのか</span></h3>
+      <p lang="en">First-come-first-served for 50,000 fans and 5,000 seats rewards bots and fast connections and creates a traffic spike. A lottery spreads applications over days, is fair to slow connections, and turns the peak into one batch job. That's how real Japanese idol ticketing works.</p>
+      <p lang="ja">5万人のファンに5千席を先着順で売ると、ボットや速い回線が有利になり、アクセスが一気に集中する。抽選なら応募は数日に分散され、回線の遅い人にも公平で、ピークを1回のバッチ処理に変えられる。日本のアイドルのチケット販売は実際にこの方式。</p>
+
+      <h3><span lang="en">Fair randomness</span><span lang="ja" class="sub">公平な乱数</span></h3>
+      <p lang="en">Python's <code>random</code> is a Mersenne Twister: fast, but predictable if someone sees enough outputs. <code>secrets.SystemRandom</code> reads from the OS's cryptographic source, so results can't be predicted or reproduced. <code>sample(population, k)</code> picks k distinct items with equal probability.</p>
+      <p lang="ja">Python の <code>random</code> はメルセンヌ・ツイスターで、速いが出力を十分見られると予測できる。<code>secrets.SystemRandom</code> は OS の暗号用の乱数源を使うので、結果を予測も再現もできない。<code>sample(population, k)</code> は k 個の異なる要素を等しい確率で選ぶ。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. The data</span><span lang="ja" class="sub">1. データ</span></h3>
+<pre class="code">ticket_types         <span class="c"># VIP / Premium / Regular per concert, with total and sold quantity</span>
+lottery_preferences  <span class="c"># (concert, fan, tier, rank): UNIQUE per rank and per tier</span>
+lottery_campaigns    <span class="c"># one per lottery tier: entry window, payment_deadline_hours, status</span>
+lottery_entries      <span class="c"># (campaign, fan, status: pending → won | lost)</span>
+tickets              <span class="c"># created for winners: pending_payment + payment_deadline_at</span></pre>
+      <p lang="en">Two triggers back this up: an entry requires a matching preference, and entries per fan per campaign are capped.</p>
+      <p lang="ja">2つのトリガーが支える：応募には対応する希望順位が必要で、キャンペーンごとの1ファンの応募数には上限がある。</p>
+
+      <h3><span lang="en">2. Guard, then lock</span><span lang="ja" class="sub">2. 確認してからロック</span></h3>
+<pre class="code">if LotteryDrawService._user_scope_violation(current_user, company_id):
+    raise ForbiddenError(...)
+ticket_types = db.query(TicketType).filter(TicketType.concert_id == concert_id).<span class="hl">with_for_update()</span>.all()
+campaigns = db.query(LotteryCampaign).filter(..., LotteryCampaign.status == CampaignStatus.open).<span class="hl">with_for_update()</span>.all()
+for campaign in campaigns:
+    if campaign.entry_end_at &gt; datetime.now(timezone.utc):
+        raise BadRequestError("Not every lottery campaign for this concert has ended yet", code="entries_not_ended")</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/events/lottery_draw_service.py" data-l="28-48"></a></p>
+      <p lang="en">Locking the campaigns <code>FOR UPDATE</code> blocks new applies (they take <code>FOR SHARE</code>) and a second concurrent draw. After the lock, a second draw finds no <code>open</code> campaigns and fails cleanly. See topic 06.</p>
+      <p lang="ja">キャンペーンを <code>FOR UPDATE</code> でロックすると、新しい応募（<code>FOR SHARE</code> を取る）と、同時に走る2回目の抽選をブロックできる。ロック後、2回目の抽選は <code>open</code> のキャンペーンを見つけられず、きれいに失敗する。トピック06 を参照。</p>
+
+      <h3><span lang="en">3. The rank cascade</span><span lang="ja" class="sub">3. 順位ごとの繰り下げ</span></h3>
+<pre class="code">for rank in range(1, max_rank + 1):
+    for campaign in campaigns:
+        ticket_type = ...
+        if ticket_type.total_quantity - ticket_type.sold_quantity &gt; 0:
+            candidates = [e for e in entries
+                          if e.campaign_id == campaign.id and e.status == pending
+                          and <span class="hl">e.user_id not in won_user_ids</span>
+                          and preferences_by_entry[e.id] == rank]
+            capacity = min(len(candidates), ticket_type.total_quantity - ticket_type.sold_quantity)
+            winners = <span class="hl">secrets.SystemRandom().sample(candidates, capacity)</span>
+            for candidate in winners:
+                candidate.status = won
+                db.add(Ticket(..., status=pending_payment,
+                              payment_deadline_at=now + timedelta(hours=campaign.payment_deadline_hours)))
+                won_user_ids.add(candidate.user_id)
+            ticket_type.sold_quantity += len(winners)</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/events/lottery_draw_service.py" data-l="59-84"></a></p>
+
+      <h3><span lang="en">Worked example</span><span lang="ja" class="sub">具体例</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Fan</span><span lang="ja">ファン</span></th><th><span lang="en">Rank 1</span><span lang="ja">第1希望</span></th><th><span lang="en">Rank 2</span><span lang="ja">第2希望</span></th><th><span lang="en">Result (VIP 1 seat, Regular 2 seats)</span><span lang="ja">結果（VIP 1席、Regular 2席）</span></th></tr></thead>
+          <tbody>
+            <tr><td>A</td><td>VIP</td><td>Regular</td><td><span lang="en">Rank 1: A and B compete for 1 VIP seat. Say A is picked: A wins VIP.</span><span lang="ja">第1希望：A と B が VIP 1席を争う。A が選ばれたとすると、A が VIP に当選。</span></td></tr>
+            <tr><td>B</td><td>VIP</td><td>Regular</td><td><span lang="en">Not picked for VIP, so the entry moves on to rank 2 (Regular).</span><span lang="ja">VIP で選ばれなかったので、第2希望（Regular）に回る。</span></td></tr>
+            <tr><td>C</td><td>Regular</td><td>—</td><td><span lang="en">Rank 1: only candidate for Regular. Wins Regular.</span><span lang="ja">第1希望：Regular の唯一の候補。Regular に当選。</span></td></tr>
+            <tr><td>D</td><td>Regular</td><td>—</td><td><span lang="en">Regular had 2 seats: C and D both win at rank 1. So B at rank 2 finds 0 seats and ends <b>lost</b>.</span><span lang="ja">Regular は2席：第1希望で C と D が両方当選。そのため第2希望の B は空席0で<b>落選</b>。</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p lang="en">Note the order: every tier is drawn at rank 1 before any tier is drawn at rank 2. So a fan's first choice always beats someone else's second choice for the same seat.</p>
+      <p lang="ja">順番に注意：すべての枠で第1希望を抽選してから、第2希望に進む。そのため同じ席について、ある人の第1希望は他の人の第2希望より常に優先される。</p>
+
+      <h3><span lang="en">4. Losers, status, commit</span><span lang="ja" class="sub">4. 落選、ステータス、コミット</span></h3>
+<pre class="code">for entry in entries:
+    if entry.status == LotteryEntryStatus.pending:
+        entry.status = LotteryEntryStatus.lost
+for campaign in campaigns:
+    campaign.status = CampaignStatus.drawn
+<span class="hl">commit_or_raise(db)</span>     <span class="c"># all winners, tickets, notifications, counters in one commit</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/services/events/lottery_draw_service.py" data-l="86-98"></a></p>
+
+      <h3><span lang="en">5. Paying for a win, and the deadline</span><span lang="ja" class="sub">5. 当選分の支払いと期限</span></h3>
+<pre class="code">if ticket.payment_deadline_at and ticket.payment_deadline_at &lt; datetime.now(timezone.utc):
+    <span class="c"># Past the deadline: expire the ticket and release its seat.</span>
+    ticket.status = TicketStatus.expired
+    <span class="hl">ticket_type.sold_quantity -= 1</span>
+    commit_or_raise(db)
+    raise TicketNotPayableError(..., code="payment_deadline_passed")</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/events/ticket_service.py" data-l="176-182"></a></p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>One ticket per fan by construction</b>: <code>won_user_ids</code> excludes earlier winners, so the "one ticket per concert" trigger should never fire here. It's only a backstop.</span><span lang="ja" class="sub"><b>構造的に1人1枚</b>：<code>won_user_ids</code> で先に当選した人を除外するので、「1公演1枚」のトリガーはここでは発火しないはず。あくまで最後の砦。</span></li>
+        <li><span lang="en"><b>Draw all tiers together</b>: drawing tiers independently would let a fan win VIP and Regular and then fail on the one-per-concert rule. The cascade needs every tier in one pass.</span><span lang="ja" class="sub"><b>全枠をまとめて抽選</b>：枠ごとに別々に抽選すると、ファンが VIP と Regular の両方に当選し、1公演1枚のルールで失敗する。繰り下げには全枠を1回で処理する必要がある。</span></li>
+        <li><span lang="en"><b>Reserve the seat at win time</b>: <code>sold_quantity</code> goes up before payment, so the site never promises more seats than exist. The cost is seats held by winners who never pay.</span><span lang="ja" class="sub"><b>当選時に席を確保</b>：支払い前に <code>sold_quantity</code> を増やすので、実在する以上の席を約束しない。コストは、支払わない当選者が席を押さえてしまうこと。</span></li>
+        <li><span lang="en"><b>Manager-triggered, not scheduled</b>: a manager presses "draw" after entries close. Simple and auditable; a scheduled draw would need no human but adds a scheduler.</span><span lang="ja" class="sub"><b>スケジュールではなくマネージャーが実行</b>：応募締切後にマネージャーが「抽選」を押す。単純で監査しやすい。スケジュール実行なら人は要らないが、スケジューラーが増える。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #24</p>
+        <p lang="en"><b>Quadratic loops.</b> Candidates are rebuilt by scanning all entries for every rank × campaign, and each entry's preference is found by scanning all preferences. Fine for thousands, slow for 100k. Fix: group entries into a dict keyed by <code>(campaign_id, rank)</code> once, and index preferences by <code>(user_id, ticket_type_id)</code>.</p>
+        <p lang="ja"><b>二次的なループ。</b>順位×キャンペーンごとに全応募を走査して候補を作り直し、各応募の希望順位も全希望を走査して探している。数千件なら問題ないが、10万件では遅い。対策：応募を <code>(campaign_id, rank)</code> をキーにした dict に一度まとめ、希望順位を <code>(user_id, ticket_type_id)</code> で引けるようにする。</p>
+      </div>
+      <div class="callout bad">
+        <p class="label"><span lang="en">No expiry sweep</span><span lang="ja">期限切れの一括処理がない</span></p>
+        <p lang="en">An unpaid win is only expired when the fan tries to pay after the deadline. A winner who never comes back holds the seat forever. Fix: a periodic job (Celery beat) that expires overdue tickets and releases seats, optionally running a second-chance draw from the lost pool.</p>
+        <p lang="ja">未払いの当選は、ファンが期限後に支払おうとしたときにしか期限切れにならない。二度と来ない当選者は永遠に席を押さえたまま。対策：期限切れのチケットを失効させて席を戻す定期ジョブ（Celery beat）。落選者から再抽選することもできる。</p>
+      </div>
+      <div class="callout">
+        <p class="label">bugs.md #6, #25</p>
+        <p lang="en">#6: with <code>max_entries_per_user &gt; 1</code> one fan could be sampled twice in the same tier; mitigated by locking that setting to 1. #25: a failure <i>after</i> the commit is reported to managers as a failed draw. Topic 08 covers that one.</p>
+        <p lang="ja">#6：<code>max_entries_per_user &gt; 1</code> だと1人のファンが同じ枠で2回選ばれうる。設定を1に固定して緩和済み。#25：コミット<i>後</i>の失敗が、マネージャーには抽選失敗として報告される。こちらはトピック08。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">Why a lottery instead of first-come-first-served.</span><span lang="ja" class="sub">先着順ではなく抽選にした理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">The five tables involved and how they link.</span><span lang="ja" class="sub">関係する5つのテーブルとそのつながり。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">The rank cascade, using the worked example.</span><span lang="ja" class="sub">具体例を使った順位ごとの繰り下げ。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">Why <code>secrets.SystemRandom</code> and not <code>random</code>.</span><span lang="ja" class="sub"><code>random</code> ではなく <code>secrets.SystemRandom</code> を使う理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">How locking stops a double draw and late applies.</span><span lang="ja" class="sub">ロックで二重抽選と遅れた応募をどう防ぐか。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">What happens to a winner who doesn't pay.</span><span lang="ja" class="sub">支払わない当選者がどうなるか。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">The complexity problem (#24) and its fix.</span><span lang="ja" class="sub">計算量の問題（#24）とその修正。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Explain your lottery in plain words.</span><span lang="ja" class="sub">抽選の仕組みを簡単に説明してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">Fans rank the tiers they want and apply for free. After entries close, a manager triggers the draw. For rank 1, each tier randomly picks as many winners as it has seats among the fans who put it first. Everyone who didn't win moves on to their rank-2 tier, and so on. Winners get a ticket they must pay for before a deadline; everyone else is marked lost.</p>
+            <p lang="ja">ファンは希望する枠に順位を付けて無料で応募する。応募締切後、マネージャーが抽選を実行する。第1希望では、各枠がそこを第1希望にしたファンの中から席数分の当選者をランダムに選ぶ。当選しなかった人は第2希望の枠に回り、以降同様。当選者は期限までに支払う必要のあるチケットを受け取り、それ以外は落選となる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How do you make sure the draw is fair?</span><span lang="ja" class="sub">抽選の公平性をどう確保していますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Every eligible entry in a tier at a rank has the same chance: <code>sample</code> picks uniformly without replacement, using a cryptographic random source so nobody can predict it. Each fan gets one entry per campaign, admins and managers can't enter, and a fan can win at most one ticket per concert.</p>
+            <p lang="ja">ある順位・ある枠の対象となる応募は、すべて同じ確率で選ばれる。<code>sample</code> は重複なしで一様に選び、暗号用の乱数源を使うので誰も予測できない。各ファンはキャンペーンごとに1応募、管理者とマネージャーは応募できず、1公演で当選できるのは最大1枚。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">What stops two managers from running the draw at the same time?</span><span lang="ja" class="sub">2人のマネージャーが同時に抽選を実行するのをどう防ぎますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The draw locks the concert's ticket types and open campaigns with <code>FOR UPDATE</code>. The second draw waits on that lock. When it gets it, the first draw has committed and set the campaigns to <code>drawn</code>, so the second finds no open campaigns and fails with <code>no_open_campaigns</code>. There's an integration test that runs two draws concurrently and asserts only one succeeds.</p>
+            <p lang="ja">抽選は公演のチケット枠と開いているキャンペーンを <code>FOR UPDATE</code> でロックする。2回目の抽選はそのロックを待つ。取得できたときには1回目がコミット済みでキャンペーンは <code>drawn</code> になっているので、2回目は開いているキャンペーンを見つけられず <code>no_open_campaigns</code> で失敗する。2つの抽選を同時に走らせ、1つだけ成功することを確かめる統合テストがある。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why draw all tiers of a concert in one job instead of one per tier?</span><span lang="ja" class="sub">枠ごとではなく公演の全枠を1つのジョブで抽選するのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Because of the one-ticket-per-concert rule. If VIP and Regular were drawn separately, the same fan could win both, and one ticket insert would then fail the trigger and roll back the whole draw. Drawing together lets the rank cascade skip fans who already won, so the rule holds by construction.</p>
+            <p lang="ja">1公演1枚のルールがあるから。VIP と Regular を別々に抽選すると同じファンが両方に当選し、チケットの挿入がトリガーに引っかかって抽選全体がロールバックされる。まとめて抽選すれば、繰り下げで当選済みのファンを除外でき、ルールが構造的に守られる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">The concert has 500,000 entries. What breaks, and how do you fix it?</span><span lang="ja" class="sub">応募が50万件あります。何が壊れ、どう直しますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">(1) The nested list scans are roughly quadratic; group entries by <code>(campaign, rank)</code> and index preferences by <code>(user, tier)</code> once to make it linear. (2) Loading every entry as an ORM object uses a lot of memory; stream in batches, or do the selection in SQL, for example <code>ORDER BY random()</code> with a limit per tier, or assign each entry a random number at apply time and pick the lowest. (3) One huge transaction holds locks for a long time and creates hundreds of thousands of notification rows; write results with bulk inserts and send notifications afterwards from a queue.</p>
+            <p lang="ja">(1) 入れ子のリスト走査はほぼ二次的。応募を <code>(キャンペーン, 順位)</code> でまとめ、希望順位を <code>(ユーザー, 枠)</code> で一度だけ索引化すれば線形になる。(2) 全応募を ORM オブジェクトとして読み込むとメモリを大量に使う。バッチで流すか、SQL で選ぶ（例えば枠ごとに件数制限付きの <code>ORDER BY random()</code>、または応募時に乱数を割り当てて小さい順に選ぶ）。(3) 巨大な1トランザクションは長時間ロックを持ち、数十万件の通知行を作る。結果は一括挿入で書き、通知は後からキューで送る。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How would you let a fan verify the draw wasn't rigged?</span><span lang="ja" class="sub">抽選が不正でないことをファンが検証できるようにするには？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Commit-reveal. Before entries close, publish a hash of a secret seed. After the draw, publish the seed. Sort entries in a published, deterministic order and run a deterministic shuffle seeded with it. Anyone can replay the draw and check the winners, and because the seed was committed before entries closed, it couldn't be chosen to favor anyone. This trades the OS random source for a reproducible one, which is the point.</p>
+            <p lang="ja">コミット・リビール方式。応募締切前に秘密のシードのハッシュを公開し、抽選後にシードを公開する。応募を公開された決定的な順序で並べ、そのシードで決定的なシャッフルを行う。誰でも抽選を再現して当選者を確認でき、シードは締切前に確定しているので特定の人に有利なように選べない。OS の乱数源を再現可能な乱数源に置き換えることになるが、それこそが目的。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Re-run the worked example by hand with VIP = 2 seats. Who wins what?</span><span lang="ja" class="sub">VIP を2席にして具体例を手で計算し直す。誰が何に当選するか？</span></li>
+          <li><span lang="en">Rewrite the candidate loop in <code>lottery_draw_service.py</code> using a <code>defaultdict</code> keyed by <code>(campaign_id, rank)</code>. Check the tests in <code>tests/integration/events/</code> still pass.</span><span lang="ja" class="sub"><code>lottery_draw_service.py</code> の候補ループを <code>(campaign_id, rank)</code> をキーにした <code>defaultdict</code> で書き直し、<code>tests/integration/events/</code> のテストが通ることを確認する。</span></li>
+          <li><span lang="en">Design the expiry sweep: what query finds overdue tickets, how often does it run, and which rows does it lock?</span><span lang="ja" class="sub">期限切れの一括処理を設計する：期限切れのチケットを探すクエリ、実行間隔、ロックする行は？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>
