@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>i-dolly Interview Prep</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs">study / index</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">FastAPI · PostgreSQL · Redis · Celery</p>
+      <h1><span lang="en">Studying i-dolly for a backend interview</span><span lang="ja" class="sub">i-dolly でバックエンド面接に備える</span></h1>
+      <p class="lede" lang="en">Fourteen backend topics, each tied to real code in this repo. Every page has a short TL;DR, the theory, where the repo does it, the weak spots, a checklist and practice questions with hidden answers.</p>
+      <p class="lede" lang="ja">バックエンドの14トピック。各ページはこのリポジトリの実際のコードに紐づいています。TL;DR、理論、リポジトリでの実装箇所、弱点、チェックリスト、答えを隠した練習問題で構成されています。</p>
+
+      <h2><span class="tag">PITCH</span><span lang="en">The 60-second project pitch</span><span lang="ja">60秒のプロジェクト紹介</span></h2>
+      <div class="tldr">
+        <p lang="en">i-dolly is a ticket-reservation and album-marketplace backend for idol concerts, built with FastAPI, SQLAlchemy 2.0 and PostgreSQL. Fans apply to concert lotteries or buy tickets directly, and they buy albums and merch through a cart and checkout flow. The interesting parts are on the data side: inventory and last-seat sales are protected with row-level locks and single-commit transactions; business rules like "one ticket per fan per concert" and a 3-unit anti-resale cap are enforced in the service layer and again by Postgres triggers; managers are scoped to their own management company. Redis handles caching and rate limiting, and Celery runs the lottery draw and emails in the background. I proved the locking with integration tests that race real threads against a real Postgres.</p>
+        <p lang="ja">i-dolly はアイドルコンサートのチケット予約とアルバム販売のためのバックエンドで、FastAPI・SQLAlchemy 2.0・PostgreSQL で作りました。ファンはコンサートの抽選に応募するか直接チケットを購入し、カートと決済の流れでアルバムやグッズを買います。工夫した点はデータ側です。在庫と最後の1席の販売は行ロックと1回のコミットで守り、「1公演につき1人1枚」や転売防止の3個上限といったルールはサービス層で確認したうえで、Postgres のトリガーでも二重に強制しています。マネージャーは自社のデータだけを操作できます。Redis はキャッシュとレート制限、Celery は抽選処理とメール送信をバックグラウンドで実行します。ロックが正しく動くことは、実際の Postgres に対してスレッドを競合させる統合テストで確認しました。</p>
+      </div>
+
+      <h2><span class="tag">TOPICS</span><span lang="en">Study order</span><span lang="ja">学習の順番</span></h2>
+      <p lang="en">Go in order: 01–05 are the foundations, 06–11 are the parts interviewers dig into, and 12–14 are how you talk about quality and scale. The number on each card is how many checklist items you've ticked on that page. It's saved in this browser only.</p>
+      <p lang="ja">順番に進めてください。01〜05 は基礎、06〜11 は面接で深掘りされる部分、12〜14 は品質と拡張性について話すための内容です。カードの数字はそのページでチェックした項目数で、このブラウザにだけ保存されます。</p>
+      <div class="cards" data-cards></div>
+
+      <h2><span class="tag">METHOD</span><span lang="en">How to use each page</span><span lang="ja">各ページの使い方</span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="how-1"><span><span lang="en">Read the TL;DR out loud. If you can't say it without looking, read the page.</span><span lang="ja" class="sub">TL;DR を声に出して読む。見ずに言えなければページを読む。</span></span></label></li>
+        <li><label><input type="checkbox" id="how-2"><span><span lang="en">Open every ↗ source link and find the highlighted line yourself.</span><span lang="ja" class="sub">すべての ↗ リンクを開き、該当行を自分で確認する。</span></span></label></li>
+        <li><label><input type="checkbox" id="how-3"><span><span lang="en">Answer each question before you open it. Say the answer in under a minute.</span><span lang="ja" class="sub">開く前に答える。1分以内で話せるようにする。</span></span></label></li>
+        <li><label><input type="checkbox" id="how-4"><span><span lang="en">Do the exercise on a local checkout. Breaking the code teaches more than reading it.</span><span lang="ja" class="sub">演習はローカル環境で実際に行う。コードを壊してみると読むより深く理解できる。</span></span></label></li>
+        <li><label><input type="checkbox" id="how-5"><span><span lang="en">Tick the checklist only when you can explain the item to someone else.</span><span lang="ja" class="sub">他人に説明できるようになってからチェックする。</span></span></label></li>
+      </ul>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

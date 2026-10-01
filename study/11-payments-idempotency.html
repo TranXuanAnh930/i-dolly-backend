@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Payments &amp; Idempotency · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 11</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 11</p>
+      <h1><span lang="en">Payments &amp; idempotency</span><span lang="ja" class="sub">決済と冪等性</span></h1>
+      <p class="lede" lang="en">A mock gateway for development, PayPal for real money, and how a retried checkout avoids charging twice.</p>
+      <p class="lede" lang="ja">開発用のモック決済、実際のお金用の PayPal、そして再試行した購入で二重に請求しない仕組み。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Two gateways behind one service: <b>mock</b> (instant success or failure) and <b>PayPal</b> (redirect, approve, then capture).</span><span lang="ja" class="sub">1つのサービスの裏に2つの決済手段：<b>モック</b>（即座に成功か失敗）と <b>PayPal</b>（リダイレクト、承認、その後キャプチャ）。</span></li>
+          <li><span lang="en">The client sends an <b>idempotency key</b> (UUID) with each checkout. A reused key gets <b>409</b>, backed by a UNIQUE constraint.</span><span lang="ja" class="sub">クライアントは購入ごとに<b>冪等キー</b>（UUID）を送る。再利用したキーには <b>409</b> を返し、UNIQUE 制約で裏付ける。</span></li>
+          <li><span lang="en">The server <b>recomputes the total</b> (with 10% tax) and rejects any mismatch with what the client sent.</span><span lang="ja" class="sub">サーバーは<b>合計を再計算</b>（消費税10%込み）し、クライアントの金額と一致しなければ拒否する。</span></li>
+          <li><span lang="en">PayPal finalization is <b>idempotent</b>: it only acts on a <code>pending</code> payment, under a row lock, so the redirect and the webhook can't both apply it.</span><span lang="ja" class="sub">PayPal の確定処理は<b>冪等</b>：行ロックのもとで <code>pending</code> の決済にだけ作用するので、リダイレクトと Webhook の両方が適用することはない。</span></li>
+          <li><span lang="en">Webhooks are <b>signature-verified</b> with PayPal before anything is trusted.</span><span lang="ja" class="sub">Webhook は何かを信用する前に、PayPal に問い合わせて<b>署名を検証</b>する。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Idempotency</span><span lang="ja" class="sub">冪等性</span></h3>
+      <p lang="en">An operation is idempotent if doing it twice has the same effect as doing it once. Networks lose responses: the server charged the card but the client timed out and retries. Without idempotency, that's a double charge. With an <b>idempotency key</b>, the client marks "this is the same attempt", and the server recognizes the retry.</p>
+      <p lang="ja">2回行っても1回と同じ結果になる操作を冪等という。ネットワークではレスポンスが失われる：サーバーはカードに請求したが、クライアントはタイムアウトして再試行する。冪等でなければ二重請求になる。<b>冪等キー</b>があれば、クライアントは「これは同じ試行だ」と示し、サーバーは再試行だと分かる。</p>
+
+      <h3><span lang="en">Redirect-based payment flow</span><span lang="ja" class="sub">リダイレクト型の決済フロー</span></h3>
+<pre class="code">1. checkout      → our API creates a PayPal order, saves Payment(status=pending), returns approval URL
+2. fan approves  → on PayPal's site
+3. capture       → frontend calls our API → we call PayPal "capture" → mark paid
+4. webhook       → PayPal also calls us, in case step 3 never happened</pre>
+      <p lang="en">Steps 3 and 4 can both arrive, in any order, more than once. Finalization must be safe to run many times.</p>
+      <p lang="ja">手順3と4はどちらも、順不同で、複数回届くことがある。確定処理は何回実行しても安全でなければならない。</p>
+
+      <h3><span lang="en">Never trust the client's price</span><span lang="ja" class="sub">クライアントの価格は信用しない</span></h3>
+      <p lang="en">The client can send any amount. The server must compute the total from its own data and treat the client's number only as a check that both sides agree.</p>
+      <p lang="ja">クライアントはどんな金額でも送れる。サーバーは自分のデータから合計を計算し、クライアントの数字は双方が一致していることの確認にだけ使う。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. Idempotency key: check + constraint</span><span lang="ja" class="sub">1. 冪等キー：確認と制約</span></h3>
+<pre class="code"><span class="c"># service pre-check (fast, clear error)</span>
+if db.query(Payment).filter(Payment.idempotency_key == payment_data.idempotency_key).first():
+    raise DuplicateIdempotencyKeyError()          <span class="c"># 409</span>
+
+<span class="c"># migration: the real guarantee, for two retries racing each other</span>
+op.create_unique_constraint('uq_payment_idempotency_key', 'payment', ['idempotency_key'])</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/marketplace/order_service.py" data-l="55-56"></a> · <a class="ref" data-p="alembic/versions/90347b38372a_add_idempotency_key_to_payment.py" data-l="25"></a> · <a class="ref" data-p="app/exception/db_triggers.py" data-l="71-74"></a></p>
+      <p lang="en">Two retries arriving together both pass the pre-check, but only one INSERT can win the UNIQUE index. The other gets an <code>IntegrityError</code>, which <code>commit_or_raise</code> translates into the same 409.</p>
+      <p lang="ja">同時に届いた2つの再試行はどちらも事前確認を通過するが、UNIQUE インデックスで INSERT に成功するのは1つだけ。もう1つは <code>IntegrityError</code> になり、<code>commit_or_raise</code> が同じ 409 に変換する。</p>
+
+      <h3><span lang="en">2. Server-side total</span><span lang="ja" class="sub">2. サーバー側での合計</span></h3>
+<pre class="code"><span class="c"># Japan's consumption tax. Prices are stored tax-exclusive; must match the frontend's tax.js.</span>
+TAX_RATE = 0.1
+def with_tax(amount: float) -&gt; int:
+    <span class="c"># Round half up like JS Math.round (Python's round() rounds half to even)</span>
+    return int(amount * (1 + TAX_RATE) + 0.5)
+
+total_amount = sum(with_tax(item.total_price) for item in cart_items)
+if payment_data.amount != total_amount:
+    raise PaymentAmountMismatch("Payment amount does not match cart total!")</pre>
+      <p class="src-line"><a class="ref" data-p="app/utils/tax.py"></a> · <a class="ref" data-p="app/services/marketplace/order_service.py" data-l="58-63"></a></p>
+      <p lang="en">Yen has no minor unit, so totals are whole integers. The rounding rule is spelled out so the backend and the JavaScript frontend agree to the yen.</p>
+      <p lang="ja">円には小数の単位がないので、合計は整数になる。バックエンドと JavaScript のフロントエンドが1円単位で一致するよう、丸め方を明示している。</p>
+
+      <h3><span lang="en">3. The mock gateway</span><span lang="ja" class="sub">3. モック決済</span></h3>
+<pre class="code">if gateway == PaymentGateway.mock:
+    if not data.<span class="hl">simulate_succ</span>:
+        payment_status = PaymentStatus.failed
+        order.status = OrderStatus.cancelled
+    else:
+        payment_status = PaymentStatus.success
+        ids = generate_mock_id()
+        order.status = OrderStatus.confirmed
+...
+db.add(payment)
+db.flush()   <span class="c"># Doesn't commit; the caller does.</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/services/marketplace/payment_service.py" data-l="24-68"></a></p>
+      <p lang="en">Tests and local dev choose success or failure explicitly. Only flushing lets checkout commit the order, items, payment and stock change together.</p>
+      <p lang="ja">テストやローカル開発では成功か失敗かを明示的に選べる。flush だけにすることで、購入処理が注文・明細・決済・在庫の変更をまとめてコミットできる。</p>
+
+      <h3><span lang="en">4. Idempotent PayPal finalization</span><span lang="ja" class="sub">4. 冪等な PayPal の確定処理</span></h3>
+<pre class="code">payment = db.query(Payment).filter(Payment.pg_order_id == pg_order_id).<span class="hl">with_for_update()</span>.first()
+if not payment or <span class="hl">payment.status != PaymentStatus.pending</span> or (user_id and payment.user_id != user_id):
+    return None          <span class="c"># already finalized, or not yours: do nothing</span>
+...
+paypal_payment = capture_order(pg_order_id)
+if paypal_payment["status"] == "COMPLETED":
+    payment.status = PaymentStatus.success
+    ...
+commit_or_raise(db)</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/marketplace/payment_service.py" data-l="130-205"></a></p>
+      <p lang="en">The row lock serializes the redirect call and the webhook. Whichever comes second sees <code>success</code> and does nothing. The state machine is the idempotency.</p>
+      <p lang="ja">行ロックでリダイレクト経由の呼び出しと Webhook を直列化する。後から来た方は <code>success</code> を見て何もしない。状態遷移そのものが冪等性になっている。</p>
+
+      <h3><span lang="en">5. The webhook</span><span lang="ja" class="sub">5. Webhook</span></h3>
+<pre class="code">async def _raw_body(request: Request) -&gt; bytes:
+    <span class="c"># Reads the body asynchronously so the webhook handler itself can be a sync `def`.</span>
+    return await request.body()
+
+@router.post("/paypal/webhook")
+def paypal_webhook(request: Request, raw_body: bytes = Depends(_raw_body), db = Depends(get_db)):
+    if not <span class="hl">verify_webhook_signature</span>(request.headers, raw_body):
+        raise ApiHTTPException(status_code=400, ..., code="invalid_webhook_signature")
+    pg_order_id = order_id_from_webhook(json.loads(raw_body))
+    if pg_order_id:
+        PaymentService.finalize_paypal_payment(db, pg_order_id)
+    <span class="c"># Return 200 whenever the signature is valid; a non-2xx response makes PayPal retry.</span>
+    return MessageResponse(msg="ok")</pre>
+      <p class="src-line"><a class="ref" data-p="app/router/marketplace/payment.py" data-l="20-66"></a> · <a class="ref" data-p="app/utils/paypal_client.py" data-l="129-163"></a></p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Client-generated key</b>: only the client knows two requests are the same attempt. The server can't tell a retry from a second purchase.</span><span lang="ja" class="sub"><b>クライアントが作るキー</b>：2つのリクエストが同じ試行だと知っているのはクライアントだけ。サーバーには再試行と2回目の購入の区別がつかない。</span></li>
+        <li><span lang="en"><b>409 instead of replaying the first response</b>: simpler, but the client must look up the result itself (order history, payment status) after a 409.</span><span lang="ja" class="sub"><b>最初のレスポンスを返し直すのではなく 409</b>：単純だが、409 の後はクライアントが自分で結果を確認する必要がある（注文履歴、決済状況）。</span></li>
+        <li><span lang="en"><b>A mock gateway on purpose</b>: the whole checkout, locking and stock logic can be developed and tested without a sandbox account or network.</span><span lang="ja" class="sub"><b>意図的なモック決済</b>：サンドボックスのアカウントやネットワークなしで、購入・ロック・在庫のロジック全体を開発・テストできる。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #8</p>
+        <p lang="en"><b>PayPal calls inside the transaction.</b> <code>capture_order</code> runs while holding <code>FOR UPDATE</code> on the payment, ticket type and products. If PayPal captures but our commit fails or the response times out, the fan is charged and our DB still says <code>pending</code>. Then the webhook tries to capture again, PayPal answers "already captured", and it never resolves. Fix: the webhook should apply the event's state, not re-capture; and the capture call should move outside the locked transaction. <code>create_order</code> in checkout has the same shape.</p>
+        <p lang="ja"><b>トランザクション内での PayPal 呼び出し。</b><code>capture_order</code> は payment・ticket type・products に <code>FOR UPDATE</code> をかけたまま実行される。PayPal 側でキャプチャが成功したのに、こちらのコミットが失敗したりレスポンスがタイムアウトしたりすると、ファンは請求済みなのに DB は <code>pending</code> のまま。すると Webhook が再度キャプチャを試み、PayPal は「キャプチャ済み」と返し、いつまでも解決しない。対策：Webhook は再キャプチャせずイベントの状態を反映する。キャプチャの呼び出しはロック中のトランザクションの外に出す。購入時の <code>create_order</code> も同じ形。</p>
+      </div>
+      <div class="callout">
+        <p class="label">bugs.md #12, #26, #27</p>
+        <p lang="en"><b>Pending forever.</b> If a fan never approves on PayPal, the order or ticket stays <code>pending</code> with no expiry. A pending direct-sale ticket blocks the fan from buying again (#12), a pending order can be marked shipped (#26), and stale orders pile up (#27). One fix covers all three: a deadline on pending payments and a sweep job that cancels them.</p>
+        <p lang="ja"><b>永遠に pending。</b>ファンが PayPal で承認しなければ、注文やチケットは期限なしで <code>pending</code> のまま。pending の直接販売チケットがあるとファンは再購入できず（#12）、pending の注文が発送済みにできてしまい（#26）、古い注文がたまっていく（#27）。1つの修正で3つとも解決できる：pending の決済に期限を設け、それを取り消す一括処理のジョブを作る。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">What idempotency means, with a double-charge example.</span><span lang="ja" class="sub">冪等性とは何か、二重請求の例で。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why the key needs both a pre-check and a UNIQUE constraint.</span><span lang="ja" class="sub">キーに事前確認と UNIQUE 制約の両方が必要な理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Why the server recomputes the total.</span><span lang="ja" class="sub">サーバーが合計を再計算する理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">The four steps of the PayPal flow.</span><span lang="ja" class="sub">PayPal フローの4つの手順。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">How finalization stays safe when the redirect and webhook both arrive.</span><span lang="ja" class="sub">リダイレクトと Webhook が両方届いても確定処理が安全な理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">Why webhooks must be verified, and why they return 200.</span><span lang="ja" class="sub">Webhook を検証すべき理由と、200 を返す理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">Bug #8 and the pending-forever bugs, with fixes.</span><span lang="ja" class="sub">バグ #8 と永遠に pending のバグ、その修正。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How do you stop a double charge when a fan double-clicks "Pay"?</span><span lang="ja" class="sub">ファンが「支払う」をダブルクリックしたとき、二重請求をどう防ぎますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The frontend generates one idempotency key per checkout attempt and sends it with both clicks. The first request stores a payment with that key. The second finds it and gets 409, or, if both arrive at once, loses on the UNIQUE constraint and gets the same 409. Rate limiting (3 checkouts per minute) is an extra guard.</p>
+            <p lang="ja">フロントエンドは購入の試行ごとに冪等キーを1つ作り、2回のクリックの両方でそれを送る。最初のリクエストがそのキーで決済を保存する。2回目はそれを見つけて 409 になる。同時に届いた場合も UNIQUE 制約で負けて同じ 409 になる。レート制限（毎分3回の購入）も追加の防御になる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why does the client send the amount at all, if the server computes it?</span><span lang="ja" class="sub">サーバーが計算するのに、なぜクライアントも金額を送るのですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">As a consistency check. The fan saw a price on screen; if the server's total differs (a price changed, a tax bug), it's better to refuse than to charge a different amount than the fan agreed to. The server's number is what's charged; the client's is only compared.</p>
+            <p lang="ja">一致の確認のため。ファンは画面で価格を見ている。サーバーの合計が違う場合（価格の変更、税のバグ）、ファンが同意したのと違う金額を請求するより拒否する方がよい。請求するのはサーバーの金額で、クライアントの金額は比較に使うだけ。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why do you need a webhook if the frontend already calls capture?</span><span lang="ja" class="sub">フロントエンドがキャプチャを呼ぶのに、なぜ Webhook が必要ですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The fan might close the tab after approving, lose network, or the capture call might time out. The webhook is PayPal telling us directly, with retries, so we eventually learn the outcome. Because both paths run the same finalization, which only acts on <code>pending</code> under a lock, receiving both is harmless.</p>
+            <p lang="ja">ファンが承認後にタブを閉じたり、通信が切れたり、キャプチャの呼び出しがタイムアウトしたりすることがある。Webhook は PayPal が再試行付きで直接知らせてくれるものなので、最終的に結果を知ることができる。どちらの経路も同じ確定処理を実行し、それはロックのもとで <code>pending</code> にだけ作用するので、両方届いても問題ない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">How do you know a webhook really came from PayPal?</span><span lang="ja" class="sub">Webhook が本当に PayPal から来たとどう分かりますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The endpoint is public, so anyone could post a fake "payment completed". We take PayPal's transmission headers and the raw body and call PayPal's verify-webhook-signature API; only a <code>SUCCESS</code> answer is accepted, anything else is a 400. We read the raw bytes because re-serialized JSON might not match what was signed.</p>
+            <p lang="ja">エンドポイントは公開されているので、誰でも偽の「支払い完了」を送れる。PayPal の送信ヘッダーと生の本文を使って PayPal の verify-webhook-signature API を呼び、<code>SUCCESS</code> の答えだけを受け入れ、それ以外は 400 にする。JSON を再シリアライズすると署名された内容と一致しないことがあるので、生のバイト列を読む。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">PayPal captured the money, but your commit failed. Now what?</span><span lang="ja" class="sub">PayPal はお金をキャプチャしたのに、コミットが失敗しました。どうしますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">That's bug #8, and there's no distributed transaction to save us. The fix is to design for reconciliation: (1) call capture outside any locked transaction, then update our DB in a short transaction keyed by the PayPal order id; (2) make the webhook apply PayPal's reported state (<code>CAPTURED</code>) instead of calling capture again; (3) run a periodic reconciliation job comparing our <code>pending</code> payments with PayPal's order status; (4) if stock is gone by the time the money arrives, refund automatically.</p>
+            <p lang="ja">それがバグ #8 で、助けてくれる分散トランザクションはない。対策は突き合わせを前提に設計すること：(1) キャプチャはロック中のトランザクションの外で呼び、PayPal の注文 id をキーにした短いトランザクションで DB を更新する。(2) Webhook は再キャプチャせず、PayPal が伝える状態（<code>CAPTURED</code>）を反映する。(3) こちらの <code>pending</code> の決済と PayPal の注文状態を比べる定期的な突き合わせジョブを動かす。(4) お金が届いた時点で在庫がなければ自動で返金する。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How would you improve your idempotency design?</span><span lang="ja" class="sub">冪等性の設計をどう改善しますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Store the key with a hash of the request body and the response. On a retry with the same key and body, return the stored response instead of 409, so the client doesn't need to know it was a retry. The same key with a different body is a client bug, so 422. Keep keys for a limited time (for example 24 hours) and scope them per user, so one user's key can't collide with another's.</p>
+            <p lang="ja">キーと一緒にリクエスト本文のハッシュとレスポンスを保存する。同じキー・同じ本文の再試行には 409 ではなく保存したレスポンスを返せば、クライアントは再試行だったことを気にしなくてよい。同じキーで本文が違うのはクライアントのバグなので 422。キーは一定期間（例えば24時間）だけ保存し、ユーザーごとに区切って、他のユーザーのキーと衝突しないようにする。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Check out with the mock gateway and the same <code>idempotency_key</code> twice. Look at the second response's <code>code</code>.</span><span lang="ja" class="sub">モック決済で同じ <code>idempotency_key</code> を使って2回購入する。2回目のレスポンスの <code>code</code> を確認する。</span></li>
+          <li><span lang="en">Read <code>test_same_idempotency_key_submitted_twice</code> in <code>tests/integration/events/test_ticket_checkout_concurrency.py</code>. What does it race?</span><span lang="ja" class="sub"><code>tests/integration/events/test_ticket_checkout_concurrency.py</code> の <code>test_same_idempotency_key_submitted_twice</code> を読む。何を競合させているか？</span></li>
+          <li><span lang="en">Sketch the sweep job that fixes #12, #26 and #27 together. Which statuses does it change, and what does it release?</span><span lang="ja" class="sub">#12・#26・#27 をまとめて直す一括処理のジョブを考える。どのステータスを変え、何を解放するか？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

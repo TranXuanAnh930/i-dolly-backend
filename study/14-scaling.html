@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scaling &amp; System Design · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 14</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 14</p>
+      <h1><span lang="en">Scaling &amp; system design</span><span lang="ja" class="sub">スケーリングとシステム設計</span></h1>
+      <p class="lede" lang="en">The follow-up every portfolio project gets: "What if 100× more fans showed up?" Where i-dolly would break first, and what you'd change.</p>
+      <p class="lede" lang="ja">どのポートフォリオにも来る追加質問：「ファンが100倍になったら？」i-dolly がどこから壊れるか、何を変えるか。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Today: <b>one web instance</b> (Render), one Celery worker, Supabase Postgres, one Redis. A <b>10-connection</b> DB pool.</span><span lang="ja" class="sub">現状：<b>Web インスタンス1つ</b>（Render）、Celery ワーカー1つ、Supabase の Postgres、Redis 1つ。DB 接続プールは<b>10本</b>。</span></li>
+          <li><span lang="en">The web tier is <b>stateless</b> (JWT, state in Postgres and Redis), so adding instances is easy. The <b>database</b> is the real limit.</span><span lang="ja" class="sub">Web 層は<b>ステートレス</b>（JWT、状態は Postgres と Redis）なのでインスタンスの追加は簡単。本当の制約は<b>データベース</b>。</span></li>
+          <li><span lang="en">The hardest load is a <b>hot row</b>: everyone buying the same tier locks the same row. The lottery exists to avoid that.</span><span lang="ja" class="sub">最も難しい負荷は<b>ホットな行</b>：全員が同じ枠を買うと同じ行をロックする。抽選はそれを避けるためにある。</span></li>
+          <li><span lang="en">Scale in order: measure → connection pooling → read replicas/cache → queue the spikes → split only if needed.</span><span lang="ja" class="sub">順番にスケールする：計測 → 接続プーリング → リードレプリカ/キャッシュ → 急増をキューで吸収 → 必要なときだけ分割。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">How to answer a scaling question</span><span lang="ja" class="sub">スケーリングの質問への答え方</span></h3>
+      <ol>
+        <li><span lang="en"><b>Clarify the numbers</b>: users, requests per second at peak, read/write ratio, data size.</span><span lang="ja" class="sub"><b>数字を確認</b>：ユーザー数、ピーク時の秒間リクエスト数、読み書きの比率、データ量。</span></li>
+        <li><span lang="en"><b>Find the bottleneck</b>: which resource runs out first (DB connections, CPU, a hot row)?</span><span lang="ja" class="sub"><b>ボトルネックを探す</b>：最初に足りなくなる資源はどれか（DB 接続、CPU、ホットな行）？</span></li>
+        <li><span lang="en"><b>Fix that one thing</b>, then find the next. Don't redesign everything.</span><span lang="ja" class="sub"><b>その1つを直し</b>、次を探す。すべてを作り直さない。</span></li>
+        <li><span lang="en"><b>Name the trade-off</b> of each change: consistency, cost, complexity.</span><span lang="ja" class="sub">各変更の<b>トレードオフを言う</b>：一貫性、コスト、複雑さ。</span></li>
+      </ol>
+
+      <h3><span lang="en">Little's Law for connection pools</span><span lang="ja" class="sub">接続プールとリトルの法則</span></h3>
+      <p lang="en">Connections in use ≈ requests per second × seconds each request holds a connection. With 10 connections and 20 ms per query-heavy request, the ceiling is about 500 requests/s. If a request holds a connection for 2 s (say, waiting on PayPal inside a transaction), the ceiling drops to 5 requests/s. Short transactions matter more than big servers.</p>
+      <p lang="ja">使用中の接続数 ≈ 秒間リクエスト数 × 1リクエストが接続を持つ秒数。接続10本で1リクエスト20ミリ秒なら上限は毎秒約500件。トランザクション内で PayPal を待つなどして1リクエストが2秒接続を持つと、上限は毎秒5件に落ちる。大きなサーバーより短いトランザクションの方が重要。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly stands today</span><span lang="ja">i-dolly の現状</span></h2>
+
+      <h3><span lang="en">1. Deployment shape</span><span lang="ja" class="sub">1. デプロイ構成</span></h3>
+<pre class="code">Render web (1 instance, uvicorn, ~40 threadpool threads)
+Render worker (Celery, --concurrency=1)
+Supabase Postgres  ←  pool_size=5, max_overflow=5, pool_timeout=10 (per process)
+Render Key Value (Redis): cache + rate limiter + Celery broker
+S3-compatible bucket: product and idol images</pre>
+      <p class="src-line"><a class="ref" data-p="render.yaml"></a> · <a class="ref" data-p="app/db/session.py" data-l="6-16"></a> · <a class="ref" data-p="docs/deployment.md"></a></p>
+      <p lang="en">The pool comment is worth quoting: it's sized against Supabase's connection cap, shared with the worker, not against the threadpool, and it fails fast after 10 s instead of queueing forever.</p>
+      <p lang="ja">接続プールのコメントは引用する価値がある：スレッドプールではなく、ワーカーと共有する Supabase の接続数上限に合わせて設定しており、いつまでも待たずに10秒で失敗するようにしている。</p>
+
+      <h3><span lang="en">2. What's already scale-friendly</span><span lang="ja" class="sub">2. すでにスケールしやすい点</span></h3>
+      <ul>
+        <li><span lang="en"><b>Stateless web tier</b>: auth is JWT; nothing lives in process memory except the pool.</span><span lang="ja" class="sub"><b>ステートレスな Web 層</b>：認証は JWT で、プール以外にプロセスのメモリに残るものはない。</span></li>
+        <li><span lang="en"><b>Shared rate limits</b> in Redis, so they still work with many instances.</span><span lang="ja" class="sub"><b>共有のレート制限</b>が Redis にあるので、インスタンスが増えても機能する。</span></li>
+        <li><span lang="en"><b>Cached public pages</b> absorb most reads (topic 09).</span><span lang="ja" class="sub"><b>キャッシュされた公開ページ</b>が読み取りの大半を吸収する（トピック09）。</span></li>
+        <li><span lang="en"><b>Heavy work in a worker</b>: the draw doesn't block web threads (topic 08).</span><span lang="ja" class="sub"><b>重い処理はワーカーで</b>：抽選が Web のスレッドを止めない（トピック08）。</span></li>
+        <li><span lang="en"><b>Lottery instead of first-come-first-served</b> for hot concerts, which spreads demand over the entry window.</span><span lang="ja" class="sub">人気公演では<b>先着順ではなく抽選</b>にして、需要を応募期間全体に分散する。</span></li>
+      </ul>
+
+      <h3><span lang="en">3. What breaks first</span><span lang="ja" class="sub">3. 最初に壊れるもの</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Limit</span><span lang="ja">制約</span></th><th><span lang="en">Why</span><span lang="ja">理由</span></th><th><span lang="en">Fix</span><span lang="ja">対策</span></th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">DB connections</span><span lang="ja">DB 接続</span></td><td><span lang="en">10 per process × N instances hits Supabase's cap</span><span lang="ja">プロセスごとに10本 × N インスタンスで Supabase の上限に達する</span></td><td><span lang="en">PgBouncer in transaction mode; shorter transactions</span><span lang="ja">トランザクションモードの PgBouncer、トランザクションを短く</span></td></tr>
+            <tr><td><span lang="en">Hot row on direct sale</span><span lang="ja">直接販売のホットな行</span></td><td><span lang="en"><code>FOR UPDATE</code> on one <code>ticket_types</code> row serializes every buyer</span><span lang="ja">1つの <code>ticket_types</code> 行への <code>FOR UPDATE</code> で全購入者が直列化</span></td><td><span lang="en">Waiting-room queue; Redis pre-decrement; lottery</span><span lang="ja">待合室のキュー、Redis で先に減算、抽選</span></td></tr>
+            <tr><td><span lang="en">External calls in transactions</span><span lang="ja">トランザクション内の外部呼び出し</span></td><td><span lang="en">PayPal latency holds locks and connections (bug #8)</span><span lang="ja">PayPal の遅延でロックと接続を保持（バグ #8）</span></td><td><span lang="en">Call outside the transaction</span><span lang="ja">トランザクションの外で呼ぶ</span></td></tr>
+            <tr><td><span lang="en">Large result sets</span><span lang="ja">大きな結果セット</span></td><td><span lang="en">Manager orders page loads all ids into memory; page count is wrong (#23)</span><span lang="ja">マネージャーの注文ページが全 id をメモリに読み込む、件数が誤り（#23）</span></td><td><span lang="en">Keyset pagination + <code>COUNT(*)</code></span><span lang="ja">キーセットページングと <code>COUNT(*)</code></span></td></tr>
+            <tr><td><span lang="en">Draw on huge concerts</span><span lang="ja">巨大な公演の抽選</span></td><td><span lang="en">Quadratic loops, one huge transaction (#24)</span><span lang="ja">二次的なループ、巨大な1トランザクション（#24）</span></td><td><span lang="en">Linear grouping; batch writes; notify after</span><span lang="ja">線形のまとめ方、一括書き込み、通知は後で</span></td></tr>
+            <tr><td><span lang="en">One Redis for everything</span><span lang="ja">すべてを1つの Redis で</span></td><td><span lang="en">Cache, limiter and queue fail together</span><span lang="ja">キャッシュ・制限・キューが一緒に落ちる</span></td><td><span lang="en">Separate instances; fail-open reads (#11)</span><span lang="ja">インスタンスを分ける、読み取りの素通り（#11）</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">4. Measuring first</span><span lang="ja" class="sub">4. まず計測</span></h3>
+      <p lang="en"><code>benchmark/bench.py</code> is a scaffold for three scenarios: cached reads, checkout under lock contention (successes must never exceed stock), and rate-limit bursts. It's not finished; filling it in is the honest first step before claiming any of the numbers above (<a class="ref" data-p="benchmark/bench.py" data-l="1-50"></a>).</p>
+      <p lang="ja"><code>benchmark/bench.py</code> は3つのシナリオ用の雛形：キャッシュされた読み取り、ロック競合下での購入（成功数が在庫を超えてはいけない）、レート制限の集中アクセス。まだ未完成で、上の数字を主張する前に、これを完成させるのが誠実な最初の一歩（<a class="ref" data-p="benchmark/bench.py" data-l="1-50"></a>）。</p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why not build for scale from day one</span><span lang="ja">なぜ最初から大規模向けに作らないのか</span></h2>
+      <ul>
+        <li><span lang="en">A monolith with clear domain folders is faster to change, and the domains (identity, talent, events, marketplace) already mark where services could split later.</span><span lang="ja" class="sub">ドメインごとにフォルダが分かれたモノリスは変更が速く、そのドメイン（identity・talent・events・marketplace）が将来サービスを分割できる境界をすでに示している。</span></li>
+        <li><span lang="en">The design choices that are hard to change later (UUID keys, row locking, idempotency keys, the lottery model) were made early. The easy-to-add ones (replicas, PgBouncer, more instances) can wait until measurements say so.</span><span lang="ja" class="sub">後から変えにくい設計（UUID キー、行ロック、冪等キー、抽選モデル）は早めに決めた。後から足しやすいもの（レプリカ、PgBouncer、インスタンスの追加）は計測結果が必要と示すまで待てる。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">What's missing for production scale</span><span lang="ja">本番規模に足りないもの</span></h2>
+      <div class="callout">
+        <p class="label"><span lang="en">Observability</span><span lang="ja">可観測性</span></p>
+        <p lang="en">No <code>logging</code> module (only <code>print()</code>), no metrics, no tracing, no health endpoint beyond <code>/</code>. At scale you can't fix what you can't see: structured logs with a request id, p95/p99 latency per route, DB pool usage and lock-wait time would come before any architecture change.</p>
+        <p lang="ja"><code>logging</code> モジュールを使っておらず（<code>print()</code> だけ）、メトリクスもトレースもなく、<code>/</code> 以外のヘルスチェックもない。規模が大きくなると、見えないものは直せない：アーキテクチャを変える前に、リクエスト id 付きの構造化ログ、ルートごとの p95/p99 のレイテンシ、DB プールの使用率、ロック待ち時間が必要。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">The current deployment, component by component.</span><span lang="ja" class="sub">現在のデプロイ構成を部品ごとに。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why the web tier is easy to scale and the DB isn't.</span><span lang="ja" class="sub">Web 層はスケールしやすく DB はしにくい理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Little's Law applied to the connection pool.</span><span lang="ja" class="sub">接続プールへのリトルの法則の適用。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">The hot-row problem and three ways around it.</span><span lang="ja" class="sub">ホットな行の問題と、それを避ける3つの方法。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">What PgBouncer and read replicas each solve, and their catches.</span><span lang="ja" class="sub">PgBouncer とリードレプリカがそれぞれ解決するものと、その注意点。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">Where I'd split services first, and why not yet.</span><span lang="ja" class="sub">最初にどこでサービスを分割するか、今はまだしない理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">What observability I'd add before scaling.</span><span lang="ja" class="sub">スケールする前に追加する可観測性。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Can you run more than one instance of your API?</span><span lang="ja" class="sub">API のインスタンスを複数動かせますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Yes. Auth is a JWT, sessions aren't in memory, rate-limit counters and cache are in Redis, and all real state is in Postgres. Two things to handle: migrations should move from container start to a single pre-deploy step, and the total of all pools must stay under Postgres's connection limit.</p>
+            <p lang="ja">はい。認証は JWT、セッションはメモリになく、レート制限のカウンターとキャッシュは Redis、実際の状態はすべて Postgres にある。対応すべきことは2つ：マイグレーションをコンテナ起動時から単一のデプロイ前の手順に移すこと、全プールの合計を Postgres の接続上限以下に保つこと。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">What would you add first if traffic grew 10×?</span><span lang="ja" class="sub">トラフィックが10倍になったら最初に何を追加しますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Measurement, then a connection pooler. Logs and metrics tell me what's actually slow. PgBouncer in transaction mode lets many app instances share a small number of real Postgres connections, which is usually the first hard limit on Supabase. Then more web instances, since they're stateless.</p>
+            <p lang="ja">計測、次に接続プーラー。ログとメトリクスで何が本当に遅いかが分かる。トランザクションモードの PgBouncer なら、多数のアプリのインスタンスが少数の本物の Postgres 接続を共有でき、Supabase ではたいていそれが最初の厳しい制約になる。その後、ステートレスなので Web のインスタンスを増やす。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Would read replicas help? What's the catch?</span><span lang="ja" class="sub">リードレプリカは役に立ちますか？注意点は？</span></span></summary>
+          <div class="ans">
+            <p lang="en">For public reads like listings and detail pages, yes, though the Redis cache already absorbs most of those. The catch is replication lag: a fan who just bought a ticket and immediately loads "my tickets" from a replica might not see it. So user-specific reads right after a write, and every decision (stock checks, locks) must go to the primary.</p>
+            <p lang="ja">一覧や詳細ページのような公開の読み取りには役立つが、それらの大半はすでに Redis のキャッシュが吸収している。注意点はレプリケーションの遅延：チケットを買った直後のファンがレプリカから「マイチケット」を読むと、表示されないことがある。書き込み直後のユーザー固有の読み取りと、すべての判断（在庫確認、ロック）はプライマリに送る必要がある。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">What does PgBouncer's transaction mode break?</span><span lang="ja" class="sub">PgBouncer のトランザクションモードで壊れるものは？</span></span></summary>
+          <div class="ans">
+            <p lang="en">A server connection is only yours for one transaction, so anything tied to a session breaks: session-level <code>SET</code>, advisory locks held across transactions, <code>LISTEN/NOTIFY</code>, and server-side prepared statements unless the driver disables them. i-dolly's row locks are fine, because they live inside one transaction. Row-Level Security using <code>SET LOCAL</code> would also be fine.</p>
+            <p lang="ja">サーバー接続は1トランザクションの間だけ自分のものになるので、セッションに結び付くものが壊れる：セッション単位の <code>SET</code>、トランザクションをまたぐアドバイザリーロック、<code>LISTEN/NOTIFY</code>、ドライバーで無効にしない限りサーバー側のプリペアドステートメント。i-dolly の行ロックは1トランザクション内で完結するので問題ない。<code>SET LOCAL</code> を使う行レベルセキュリティも問題ない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">Design a direct ticket sale for 200,000 fans and 10,000 seats opening at 10:00.</span><span lang="ja" class="sub">10時開始、20万人のファンと1万席の直接販売を設計してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">Keep the stampede away from the database. (1) A <b>virtual waiting room</b> in front: fans get a random queue position and are let in at a rate the backend can handle. (2) <b>Reserve in Redis</b>: an atomic <code>DECR</code> on the tier's remaining count; if it goes below zero, sold out immediately, no DB touched. (3) Winners of the decrement get a short <b>hold</b> (say 10 minutes) written to Postgres with the existing locked checkout, which now sees low contention. (4) Expired holds return seats with a sweep job. (5) Idempotency keys and one-ticket-per-concert rules stay in Postgres as the source of truth. Or, as i-dolly does: run it as a lottery.</p>
+            <p lang="ja">殺到をデータベースから遠ざける。(1) 前段に<b>仮想待合室</b>：ファンにランダムな順番を付け、バックエンドが処理できる速さで通す。(2) <b>Redis で確保</b>：枠の残数をアトミックに <code>DECR</code> し、0未満になれば DB に触れずに即座に売り切れ。(3) 減算に成功した人には短い<b>仮押さえ</b>（例えば10分）を与え、既存のロック付き購入処理で Postgres に書く。この時点では競合は少ない。(4) 期限切れの仮押さえは一括処理ジョブで席を戻す。(5) 冪等キーと1公演1枚のルールは、正の情報源として Postgres に残す。あるいは i-dolly のように抽選にする。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">When would you split this monolith into services?</span><span lang="ja" class="sub">このモノリスをいつサービスに分割しますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">When a part needs to scale, deploy or fail independently, not before. The first candidate is ticketing (events: campaigns, draw, checkout), because its load is spiky while the talent catalog is steady. The cost is real: checkout today is one Postgres transaction across tickets, payments and notifications. Splitting it means sagas and an outbox instead. Until the numbers force it, a modular monolith with clear domain boundaries is the better trade.</p>
+            <p lang="ja">ある部分を独立してスケール・デプロイ・障害分離する必要が出たとき。それより前ではない。最初の候補はチケット（events：キャンペーン、抽選、購入）で、タレントのカタログは安定しているのに負荷が急増しやすいから。コストは本物：今の購入はチケット・決済・通知にまたがる1つの Postgres トランザクション。分割すると代わりにサーガとアウトボックスが必要になる。数字が強いるまでは、ドメインの境界がはっきりしたモジュラーモノリスの方が良い選択。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Finish the <code>auth_writes</code> scenario in <code>benchmark/bench.py</code>: 50 concurrent checkouts on a tier with 10 seats. Record p50/p95 and confirm exactly 10 succeed.</span><span lang="ja" class="sub"><code>benchmark/bench.py</code> の <code>auth_writes</code> シナリオを完成させる：10席の枠に同時に50件の購入。p50/p95 を記録し、ちょうど10件が成功することを確認する。</span></li>
+          <li><span lang="en">Draw the architecture for the 200,000-fan sale on paper. Mark which parts are strongly consistent and which are eventually consistent.</span><span lang="ja" class="sub">20万人の販売のアーキテクチャを紙に描く。強い一貫性の部分と結果整合性の部分に印を付ける。</span></li>
+          <li><span lang="en">Fix bug #23: add a real total count and keyset pagination to the manager orders page.</span><span lang="ja" class="sub">バグ #23 を直す：マネージャーの注文ページに本当の総数とキーセットページングを追加する。</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

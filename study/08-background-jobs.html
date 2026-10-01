@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Background Jobs · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 08</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 08</p>
+      <h1><span lang="en">Background jobs &amp; side effects</span><span lang="ja" class="sub">バックグラウンドジョブと副作用</span></h1>
+      <p class="lede" lang="en">What runs outside the request (the lottery draw, emails), and the hard part: side effects that happen after a commit.</p>
+      <p class="lede" lang="ja">リクエストの外で動くもの（抽選、メール）と、難しい部分：コミットの後に起きる副作用。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en"><b>Celery</b> with <b>Redis</b> as broker runs two kinds of task: the lottery draw and email sending.</span><span lang="ja" class="sub"><b>Redis</b> をブローカーにした <b>Celery</b> が、抽選とメール送信の2種類のタスクを実行する。</span></li>
+          <li><span lang="en">The draw endpoint checks permissions synchronously, then <b>enqueues</b> the draw and returns immediately.</span><span lang="ja" class="sub">抽選のエンドポイントは権限を同期的に確認してから抽選を<b>キューに入れ</b>、すぐに返す。</span></li>
+          <li><span lang="en">In-app notifications are rows written <b>in the same transaction</b> as the change, so they commit or roll back together.</span><span lang="ja" class="sub">アプリ内通知は変更と<b>同じトランザクション</b>で書く行なので、一緒にコミットまたはロールバックされる。</span></li>
+          <li><span lang="en">Emails are sent <b>only after the commit</b>, so a failed commit never sends a confirmation.</span><span lang="ja" class="sub">メールは<b>コミット後にだけ</b>送るので、コミットが失敗したのに確認メールが届くことはない。</span></li>
+          <li><span lang="en">The weak spot is the gap after the commit: anything that fails there is a real problem (bug #25).</span><span lang="ja" class="sub">弱点はコミット後の隙間：そこで失敗したものは実際の問題になる（バグ #25）。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Why a task queue</span><span lang="ja" class="sub">なぜタスクキューを使うのか</span></h3>
+      <p lang="en">Some work is slow (a draw over thousands of entries), depends on an unreliable third party (an email API), or shouldn't block the user. A queue moves it out of the request: the API <b>produces</b> a message, the broker stores it, and a separate <b>worker</b> process consumes it.</p>
+      <p lang="ja">遅い処理（数千件の応募の抽選）、不安定な外部サービスに依存する処理（メール API）、ユーザーを待たせるべきでない処理がある。キューはそれをリクエストの外に出す：API がメッセージを<b>生成</b>し、ブローカーが保存し、別の<b>ワーカー</b>プロセスが処理する。</p>
+
+      <h3><span lang="en">The dual-write problem</span><span lang="ja" class="sub">二重書き込み問題</span></h3>
+      <p lang="en">Writing to the DB and sending a message are two systems with no shared transaction. Send before commit and the commit may fail, so you emailed about something that didn't happen. Commit then send, and the send may fail, so it happened and nobody heard. The standard fix is the <b>transactional outbox</b>: write the message as a row in the same transaction, and have a relay publish it later.</p>
+      <p lang="ja">DB への書き込みとメッセージ送信は、トランザクションを共有しない2つのシステム。コミット前に送ると、コミットが失敗して起きていないことをメールしてしまう。コミット後に送ると、送信が失敗して起きたのに誰にも伝わらない。標準的な解決策は<b>トランザクショナル・アウトボックス</b>：メッセージを同じトランザクション内で行として書き、後で中継プロセスが送信する。</p>
+
+      <h3><span lang="en">Delivery guarantees</span><span lang="ja" class="sub">配信の保証</span></h3>
+      <p lang="en">Queues give <b>at-most-once</b> (ack before running: a crash loses the task) or <b>at-least-once</b> (ack after running: a crash runs it again). Exactly-once isn't really available, so tasks should be <b>idempotent</b>: running twice has the same effect as once.</p>
+      <p lang="ja">キューは<b>最大1回</b>（実行前に ack：クラッシュするとタスクが消える）か<b>最低1回</b>（実行後に ack：クラッシュすると再実行される）のどちらか。厳密な1回は実質的に存在しないので、タスクは<b>冪等</b>にする：2回実行しても1回と同じ結果になる。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. The Celery app</span><span lang="ja" class="sub">1. Celery アプリ</span></h3>
+<pre class="code"><span class="c"># Same Redis instance as the cache, on a separate DB index (CELERY_BROKER_DB).</span>
+_redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.CELERY_BROKER_DB}"
+celery_app = Celery("i_dolly", broker=_redis_url, backend=_redis_url,
+                    include=["app.tasks.example", "app.tasks.lottery", "app.tasks.email"])
+celery_app.conf.update(<span class="hl">task_serializer="json"</span>, accept_content=["json"], ...)</pre>
+      <p class="src-line"><a class="ref" data-p="app/celery_app.py" data-l="1-21"></a> · <span lang="en">worker start:</span><span lang="ja">ワーカー起動：</span> <a class="ref" data-p="Dockerfile" data-l="36-46"></a></p>
+      <p lang="en">JSON only (not pickle), so a message can't execute code when it's decoded. Tasks take plain ids as arguments, never ORM objects, and open their own DB session.</p>
+      <p lang="ja">JSON のみ（pickle は使わない）なので、メッセージをデコードしたときにコードが実行されることはない。タスクの引数は ORM オブジェクトではなく単純な id で、タスクは自分で DB セッションを開く。</p>
+
+      <h3><span lang="en">2. Triggering the draw</span><span lang="ja" class="sub">2. 抽選の実行</span></h3>
+<pre class="code">@router.put("/lottery-draw/{id}", response_model=MessageResponse)
+def draw_lottery_for_concert(id, current_user = Depends(require_manager_or_admin), db = Depends(get_db)):
+    <span class="c"># Company scoping is checked here, synchronously: a rejection inside the Celery task couldn't
+    # be returned to the caller.</span>
+    concert = ConcertService.get_concert(db, id)
+    ...
+    ConcertService.notify_managers_of_draw_trigger(db, concert)
+    <span class="hl">celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)])</span>
+    return MessageResponse(msg="Lottery draw task has been scheduled. ...")</pre>
+      <p class="src-line"><a class="ref" data-p="app/router/events/concert.py" data-l="137-152"></a></p>
+      <p lang="en"><code>send_task</code> by name means the router doesn't import the task module. Validation that the caller needs to see (404, 403) happens before enqueueing; failures inside the task reach managers as notifications instead.</p>
+      <p lang="ja">名前で <code>send_task</code> するので、ルーターはタスクのモジュールを import しない。呼び出し元に見せるべき検証（404、403）はキューに入れる前に行い、タスク内の失敗は通知としてマネージャーに届く。</p>
+
+      <h3><span lang="en">3. The draw task</span><span lang="ja" class="sub">3. 抽選タスク</span></h3>
+<pre class="code">@celery_app.task(name="app.tasks.lottery.draw_lottery")
+def draw_lottery_task(concert_id: str, user_id: str) -&gt; dict:
+    db = session()
+    try:
+        current_user = db.get(Users, uuid.UUID(user_id))
+        result = LotteryDrawService.draw_lottery(db, current_user, uuid.UUID(concert_id))
+        return result.model_dump(mode="json")
+    <span class="hl">except Exception:</span>
+        db.rollback()
+        ConcertService.<span class="hl">notify_managers_of_draw_failure</span>(db, concert)
+        raise
+    finally:
+        db.close()</pre>
+      <p class="src-line"><a class="ref" data-p="app/tasks/lottery.py" data-l="13-28"></a></p>
+      <p lang="en">Running it twice is safe: the second run finds no <code>open</code> campaigns and raises. The draw's own state (<code>campaign.status</code>) is what makes it idempotent.</p>
+      <p lang="ja">2回実行しても安全：2回目は <code>open</code> のキャンペーンを見つけられず例外になる。抽選自身の状態（<code>campaign.status</code>）が冪等性を生んでいる。</p>
+
+      <h3><span lang="en">4. Notifications: same transaction</span><span lang="ja" class="sub">4. 通知：同じトランザクション</span></h3>
+<pre class="code">def create_notification(db, user_id, notification_type, **entity_ids) -&gt; Notification:
+    """Add (<span class="hl">without committing</span>) a notification, so it commits or rolls back with the caller's
+    transaction."""
+    notification = Notification(user_id=user_id, type=notification_type, **entity_ids)
+    db.add(notification)
+    return notification</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/shared/notification_service.py" data-l="16-23"></a></p>
+      <p lang="en">A fan can never see "you won" for a draw that rolled back. This is the outbox idea applied to in-app messages.</p>
+      <p lang="ja">ロールバックされた抽選について「当選しました」とファンに表示されることはない。アウトボックスの考え方をアプリ内メッセージに適用したもの。</p>
+
+      <h3><span lang="en">5. Emails: after the commit</span><span lang="ja" class="sub">5. メール：コミットの後</span></h3>
+<pre class="code">commit_or_raise(db)
+CacheInvalidation.delete_cached_concert_detail(ticket_type.concert_id)
+<span class="c"># Only after the commit succeeded, so a failed commit never sends a confirmation.</span>
+if confirmed:
+    celery_app.send_task("app.tasks.email.send_email", args=[user.email, subject, email_body])</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/events/ticket_service.py" data-l="146-155"></a> · <span lang="en">sender:</span><span lang="ja">送信側：</span> <a class="ref" data-p="app/utils/email_sender.py" data-l="6-22"></a></p>
+      <p lang="en">This was a real fix (bug #16): emails used to be queued before the commit. In <code>DEBUG</code> mode the sender prints emails instead of calling Resend, so local dev never sends real mail.</p>
+      <p lang="ja">これは実際の修正（バグ #16）：以前はコミット前にメールをキューに入れていた。<code>DEBUG</code> モードでは送信側が Resend を呼ばずにメールを表示するだけなので、ローカル開発で本物のメールが送られることはない。</p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Celery + Redis</b>: Redis is already there for caching, so no new infrastructure. The cost: cache, rate limiter and queue now share one failure point.</span><span lang="ja" class="sub"><b>Celery と Redis</b>：Redis はキャッシュ用にすでにあるので、新しいインフラが不要。コスト：キャッシュ・レート制限・キューが1つの障害点を共有する。</span></li>
+        <li><span lang="en"><b>Draw in a worker</b>: the draw can take seconds and holds locks; running it in a request would tie up a web thread and risk a proxy timeout. The manager gets an instant "scheduled" answer and a notification later.</span><span lang="ja" class="sub"><b>抽選はワーカーで</b>：抽選は数秒かかりロックも持つので、リクエスト内で実行すると Web のスレッドを占有し、プロキシのタイムアウトの危険もある。マネージャーにはすぐ「予約済み」と返し、後で通知する。</span></li>
+        <li><span lang="en"><b>Worker concurrency 1</b>: one task at a time. The worker shares Supabase's connection cap with the web service (<a class="ref" data-p="app/db/session.py" data-l="6-16"></a>), so fewer parallel tasks means fewer connections. It also means one slow email delays the next task.</span><span lang="ja" class="sub"><b>ワーカーの並列数は1</b>：一度に1タスク。ワーカーは Web サービスと Supabase の接続数上限を共有しているので（<a class="ref" data-p="app/db/session.py" data-l="6-16"></a>）、並列数が少ないほど接続も少なくて済む。一方で、遅いメールが1通あると次のタスクも遅れる。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #25</p>
+        <p lang="en"><b>A committed draw reported as failed.</b> After the draw commits, it busts the cache and notifies managers of completion. If either raises (Redis down, a second commit fails), the task's <code>except</code> tells managers the draw <i>failed</i>, though winners and tickets are saved. The planned fix makes the commit the boundary: the service ends at the commit, and the task runs post-commit steps outside the failure branch, each guarded and logged (<a class="ref" data-p="docs/plans/lottery-draw-post-commit.md"></a>).</p>
+        <p lang="ja"><b>コミット済みの抽選が失敗と報告される。</b>抽選はコミット後にキャッシュを削除し、マネージャーに完了を通知する。どちらかが例外を出すと（Redis の停止、2回目のコミット失敗）、当選者とチケットは保存済みなのに、タスクの <code>except</code> が抽選の<i>失敗</i>をマネージャーに伝える。予定している修正はコミットを境界にすること：サービスはコミットで終わり、タスクはコミット後の処理を失敗の分岐の外で、それぞれ保護してログを取りながら実行する（<a class="ref" data-p="docs/plans/lottery-draw-post-commit.md"></a>）。</p>
+      </div>
+      <div class="callout bad">
+        <p class="label">bugs.md #11</p>
+        <p lang="en"><b>Redis down after commit → 500 for a successful write.</b> <code>send_task</code> and cache deletes run after the commit with no error handling. A fan can get a 500 for a paid order, retry with a new idempotency key, and pay twice. Plan: best-effort invalidation and dispatch, client timeouts (<a class="ref" data-p="docs/plans/redis-outage.md"></a>).</p>
+        <p lang="ja"><b>コミット後に Redis が停止 → 成功した書き込みに 500。</b><code>send_task</code> とキャッシュ削除はコミット後にエラー処理なしで実行される。ファンは支払い済みの注文に 500 を受け取り、新しい冪等キーで再試行して二重に支払うおそれがある。計画：無効化と送信を失敗しても続行する方式にし、クライアントにタイムアウトを設定する（<a class="ref" data-p="docs/plans/redis-outage.md"></a>）。</p>
+      </div>
+      <div class="callout">
+        <p class="label"><span lang="en">Other gaps</span><span lang="ja">その他の不足</span></p>
+        <p lang="en">Email failures are printed and dropped: no retries, no dead-letter queue. Celery's default acks early, so a worker crash mid-task loses it. The rendered email body, including verification links, is stored in the Redis broker. There's no scheduler (no Celery beat), so nothing expires unpaid lottery wins.</p>
+        <p lang="ja">メールの失敗は表示されて捨てられる：再試行もデッドレターキューもない。Celery はデフォルトで早めに ack するので、タスク途中でワーカーが落ちるとタスクが失われる。確認用リンクを含むメール本文がそのまま Redis ブローカーに保存される。スケジューラー（Celery beat）がないので、未払いの当選を失効させる処理がない。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">Producer, broker, worker, and what each is in this repo.</span><span lang="ja" class="sub">プロデューサー・ブローカー・ワーカーと、このリポジトリでのそれぞれ。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Why the draw runs in a worker and permissions are checked before enqueueing.</span><span lang="ja" class="sub">抽選をワーカーで実行し、権限をキュー投入前に確認する理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">The dual-write problem, with an example from this repo.</span><span lang="ja" class="sub">二重書き込み問題を、このリポジトリの例で。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">Why notifications are rows in the same transaction but emails go after the commit.</span><span lang="ja" class="sub">通知は同じトランザクションの行、メールはコミット後に送る理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">At-most-once vs. at-least-once, and why tasks should be idempotent.</span><span lang="ja" class="sub">最大1回と最低1回の違いと、タスクを冪等にすべき理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">Bug #25 and the "commit is the boundary" fix.</span><span lang="ja" class="sub">バグ #25 と「コミットを境界にする」修正。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">What a transactional outbox is and how it would help here.</span><span lang="ja" class="sub">トランザクショナル・アウトボックスとは何か、ここでどう役立つか。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why does the lottery draw run in Celery and not in the API request?</span><span lang="ja" class="sub">抽選を API リクエストではなく Celery で実行するのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">It can take a while with many entries, it holds row locks, and it writes many rows. In a request it would tie up a web thread and a DB connection and could hit the proxy timeout, leaving the manager unsure whether it ran. In a worker, the API answers "scheduled" immediately and the result arrives as a notification.</p>
+            <p lang="ja">応募が多いと時間がかかり、行ロックを持ち、大量の行を書く。リクエスト内だと Web のスレッドと DB 接続を占有し、プロキシのタイムアウトに当たって、マネージャーは実行されたのか分からなくなる。ワーカーなら API はすぐ「予約済み」と答え、結果は通知で届く。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why pass ids to a task instead of the ORM object?</span><span lang="ja" class="sub">タスクに ORM オブジェクトではなく id を渡すのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The task runs in another process, maybe later. An ORM object is tied to the request's session and can't be serialized to JSON, and even if it could, its data might be stale by the time the task runs. Passing ids makes the task load fresh data in its own session.</p>
+            <p lang="ja">タスクは別のプロセスで、場合によっては後で実行される。ORM オブジェクトはリクエストのセッションに結び付いていて JSON にできず、仮にできてもタスク実行時には古くなっているかもしれない。id を渡せば、タスクは自分のセッションで最新のデータを読み込む。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">When do you send the confirmation email, and why then?</span><span lang="ja" class="sub">確認メールはいつ送りますか？なぜそのタイミング？</span></span></summary>
+          <div class="ans">
+            <p lang="en">After <code>commit_or_raise</code> succeeds. Earlier, a failed commit would mean the fan got "your ticket is confirmed" for a purchase that was rolled back. The remaining risk is the other direction: the commit succeeds but enqueueing fails. For an email that's acceptable, since the order is still visible in the app. For something critical I'd use an outbox.</p>
+            <p lang="ja"><code>commit_or_raise</code> が成功した後。それより前だと、コミットが失敗したときに、ロールバックされた購入について「チケットが確定しました」とファンに届いてしまう。残るリスクは逆方向で、コミットは成功したのにキューへの投入が失敗すること。メールならアプリで注文が見えるので許容できる。重要なものならアウトボックスを使う。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">What happens if the worker crashes in the middle of a draw?</span><span lang="ja" class="sub">抽選の途中でワーカーがクラッシュしたらどうなりますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">The DB transaction never commits, so Postgres rolls it back and releases the locks: no half-drawn state. With Celery's default early ack, the message is already gone, so the draw doesn't retry. The campaigns are still <code>open</code>, so the manager can trigger it again. Setting <code>acks_late=True</code> would redeliver it automatically, and that's safe because the draw is idempotent.</p>
+            <p lang="ja">DB のトランザクションはコミットされないので、Postgres がロールバックしてロックを解放する。中途半端な抽選状態は残らない。Celery のデフォルトは早めの ack なので、メッセージはすでに消えていて抽選は再試行されない。キャンペーンは <code>open</code> のままなので、マネージャーがもう一度実行できる。<code>acks_late=True</code> にすれば自動で再配信され、抽選は冪等なので安全。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">Design a reliable way to send "you won" emails to 5,000 winners.</span><span lang="ja" class="sub">5,000人の当選者に「当選しました」メールを確実に送る方法を設計してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">Transactional outbox. In the draw's transaction, insert one <code>outbox</code> row per winner (type, recipient, payload). After commit, a relay polls unsent rows with <code>FOR UPDATE SKIP LOCKED</code>, enqueues one email task each, and marks them sent. Tasks use <code>acks_late</code>, retry with exponential backoff, and are idempotent by outbox id, so a retry never sends twice. Failures after N tries go to a dead-letter table for review. That also fits the <code>domain_events</code> table the repo already plans for its ETL work.</p>
+            <p lang="ja">トランザクショナル・アウトボックス。抽選のトランザクション内で、当選者ごとに <code>outbox</code> 行（種類、宛先、内容）を挿入する。コミット後、中継プロセスが <code>FOR UPDATE SKIP LOCKED</code> で未送信の行を取り出し、それぞれメールタスクをキューに入れて送信済みにする。タスクは <code>acks_late</code> で、指数バックオフで再試行し、outbox の id で冪等にするので再試行でも二重送信しない。N 回失敗したものはデッドレターのテーブルに入れて確認する。これはリポジトリが ETL 用にすでに計画している <code>domain_events</code> テーブルとも合う。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Run <code>docker compose up</code>, trigger a draw from <code>/docs</code>, and watch the <code>worker</code> logs.</span><span lang="ja" class="sub"><code>docker compose up</code> で起動し、<code>/docs</code> から抽選を実行して <code>worker</code> のログを見る。</span></li>
+          <li><span lang="en">Read <code>tests/unit/test_tasks.py</code>. How does it test the failure path without a real broker?</span><span lang="ja" class="sub"><code>tests/unit/test_tasks.py</code> を読む。本物のブローカーなしで失敗の経路をどうテストしているか？</span></li>
+          <li><span lang="en">Implement the plan in <code>docs/plans/lottery-draw-post-commit.md</code> and add a test where cache invalidation raises after commit.</span><span lang="ja" class="sub"><code>docs/plans/lottery-draw-post-commit.md</code> の計画を実装し、コミット後にキャッシュ削除が例外を出すケースのテストを追加する。</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

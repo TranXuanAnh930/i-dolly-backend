@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Known Issues · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 13</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 13</p>
+      <h1><span lang="en">Known issues &amp; tradeoffs</span><span lang="ja" class="sub">既知の問題とトレードオフ</span></h1>
+      <p class="lede" lang="en">Every open bug in one place, ranked, with a one-line fix, plus the fixed bugs that make good stories.</p>
+      <p class="lede" lang="ja">未解決のバグを1か所にまとめ、重要度順に並べて1行の修正方針を添えたもの。話のネタになる修正済みのバグも含む。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">The project keeps an <b>honest bug backlog</b> (<code>docs/bugs.md</code>) with severity, cause and planned fix.</span><span lang="ja" class="sub">プロジェクトは重要度・原因・修正計画付きの<b>正直なバグ一覧</b>（<code>docs/bugs.md</code>）を管理している。</span></li>
+          <li><span lang="en">The biggest open risks share a theme: <b>what happens after the commit</b>, when a second system (PayPal, Redis) fails.</span><span lang="ja" class="sub">最大の未解決リスクには共通点がある：<b>コミットの後</b>、2つ目のシステム（PayPal、Redis）が失敗したときに何が起きるか。</span></li>
+          <li><span lang="en">The second theme is <b>state that never expires</b>: pending payments and unpaid lottery wins.</span><span lang="ja" class="sub">2つ目の共通点は<b>期限切れにならない状態</b>：pending の決済や未払いの当選。</span></li>
+          <li><span lang="en">Several real security bugs were found and fixed (IDORs, stored XSS, unauthenticated pages). Talk about how you found them.</span><span lang="ja" class="sub">実際のセキュリティバグをいくつも見つけて直した（IDOR、保存型 XSS、認証のないページ）。どうやって見つけたかを話す。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">How to talk about weaknesses</span><span lang="ja">弱点の話し方</span></h2>
+      <p lang="en">"What would you improve?" is a test of judgment, not a trap. A strong answer has four parts: <b>what</b> the problem is, the <b>impact</b> (who gets hurt, how badly), <b>why</b> it exists (a trade-off, or an honest miss), and the <b>fix</b> with its cost. Rank by impact, not by how easy it is to explain. Never claim there are no problems.</p>
+      <p lang="ja">「何を改善しますか？」は罠ではなく判断力のテスト。良い答えは4つの要素を持つ：問題が<b>何か</b>、<b>影響</b>（誰がどれだけ困るか）、<b>なぜ</b>存在するか（トレードオフか、正直な見落としか）、そしてコスト付きの<b>修正</b>。説明しやすさではなく影響の大きさで順位を付ける。問題がないとは決して言わない。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Open issues, ranked</span><span lang="ja">未解決の問題（重要度順）</span></h2>
+      <p class="src-line"><span lang="en">Source of truth:</span><span lang="ja">正の情報源：</span> <a class="ref" data-p="docs/bugs.md"></a> · <a class="ref" data-p="docs/project_status.md"></a></p>
+
+      <h3><span lang="en">Critical: money and security</span><span lang="ja" class="sub">重大：お金とセキュリティ</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th><span lang="en">Problem → impact</span><span lang="ja">問題 → 影響</span></th><th><span lang="en">Fix</span><span lang="ja">修正</span></th><th><span lang="en">Topic</span><span lang="ja">トピック</span></th></tr></thead>
+          <tbody>
+            <tr><td>8</td><td><span lang="en">PayPal capture inside locked transaction → charged but DB says pending; webhook can't recover</span><span lang="ja">ロック中のトランザクション内で PayPal をキャプチャ → 請求済みなのに DB は pending、Webhook でも回復できない</span></td><td><span lang="en">Capture outside the lock; webhook applies state; reconciliation job</span><span lang="ja">ロックの外でキャプチャ、Webhook は状態を反映、突き合わせジョブ</span></td><td><a href="11-payments-idempotency.html">11</a></td></tr>
+            <tr><td>7</td><td><span lang="en">Leftmost <code>X-Forwarded-For</code> trusted → login rate limit bypassed</span><span lang="ja"><code>X-Forwarded-For</code> の一番左を信用 → ログインのレート制限を回避される</span></td><td><span lang="en">Read from the right, skip N proxies; per-account limit</span><span lang="ja">右から読み N 段のプロキシを飛ばす、アカウントごとの制限</span></td><td><a href="10-rate-limiting.html">10</a></td></tr>
+            <tr><td>2</td><td><span lang="en">Deleting a product cascades to order items → order history lost</span><span lang="ja">商品の削除が注文明細に連鎖 → 注文履歴が消える</span></td><td><span lang="en"><code>RESTRICT</code> + soft delete</span><span lang="ja"><code>RESTRICT</code> と論理削除</span></td><td><a href="02-data-modeling.html">02</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">High: reliability</span><span lang="ja" class="sub">高：信頼性</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th><span lang="en">Problem → impact</span><span lang="ja">問題 → 影響</span></th><th><span lang="en">Fix</span><span lang="ja">修正</span></th><th><span lang="en">Topic</span><span lang="ja">トピック</span></th></tr></thead>
+          <tbody>
+            <tr><td>11</td><td><span lang="en">Redis down → reads 500, successful writes 500 after commit, possible double payment on retry</span><span lang="ja">Redis 停止 → 読み取りが 500、成功した書き込みもコミット後に 500、再試行で二重支払いのおそれ</span></td><td><span lang="en">Fall back to DB; best-effort invalidation; timeouts</span><span lang="ja">DB に切り替え、削除は失敗しても続行、タイムアウト</span></td><td><a href="09-caching.html">09</a></td></tr>
+            <tr><td>25</td><td><span lang="en">Failure after the draw commits → managers told it failed</span><span lang="ja">抽選のコミット後の失敗 → マネージャーに失敗と伝わる</span></td><td><span lang="en">Commit is the boundary; post-commit steps guarded</span><span lang="ja">コミットを境界にし、コミット後の処理は保護する</span></td><td><a href="08-background-jobs.html">08</a></td></tr>
+            <tr><td>12, 26, 27</td><td><span lang="en">Abandoned PayPal payments stay pending forever → fan locked out, unpaid orders shippable</span><span lang="ja">放置された PayPal 決済が永遠に pending → ファンが購入できない、未払いの注文が発送可能</span></td><td><span lang="en">Deadline + sweep job</span><span lang="ja">期限と一括処理のジョブ</span></td><td><a href="11-payments-idempotency.html">11</a></td></tr>
+            <tr><td>—</td><td><span lang="en">No sweep for unpaid lottery wins → seats held forever</span><span lang="ja">未払いの当選を処理する仕組みがない → 席が永遠に押さえられる</span></td><td><span lang="en">Celery beat job</span><span lang="ja">Celery beat のジョブ</span></td><td><a href="07-lottery-draw.html">07</a></td></tr>
+            <tr><td>13</td><td><span lang="en">Resale cap checked before the lock, counts cancelled orders</span><span lang="ja">転売上限の確認がロック前、取消済みの注文も数える</span></td><td><span lang="en">Lock user row; count confirmed only</span><span lang="ja">ユーザー行をロック、確定分だけ数える</span></td><td><a href="06-transactions-concurrency.html">06</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">Medium: auth hygiene and scale</span><span lang="ja" class="sub">中：認証の衛生と規模</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th><span lang="en">Problem</span><span lang="ja">問題</span></th><th><span lang="en">Fix</span><span lang="ja">修正</span></th><th><span lang="en">Topic</span><span lang="ja">トピック</span></th></tr></thead>
+          <tbody>
+            <tr><td>18, 19, 20</td><td><span lang="en">Password change keeps sessions; reset link reusable; refresh tokens in plain text; one session per user</span><span lang="ja">パスワード変更でセッションが残る、リセット用リンクが再利用可能、リフレッシュトークンが平文、1ユーザー1セッション</span></td><td><span lang="en">Revoke on change; <code>jti</code>; store hashes</span><span lang="ja">変更時に無効化、<code>jti</code>、ハッシュで保存</span></td><td><a href="04-authentication.html">04</a></td></tr>
+            <tr><td>24</td><td><span lang="en">Draw loops are roughly quadratic</span><span lang="ja">抽選のループがほぼ二次</span></td><td><span lang="en">Group into dicts once</span><span lang="ja">一度だけ dict にまとめる</span></td><td><a href="07-lottery-draw.html">07</a></td></tr>
+            <tr><td>23</td><td><span lang="en">Pagination returns page size as total; manager orders page loads everything into memory</span><span lang="ja">ページングが総数ではなくページサイズを返す、マネージャーの注文ページが全件をメモリに読み込む</span></td><td><span lang="en"><code>COUNT(*)</code> + keyset pagination</span><span lang="ja"><code>COUNT(*)</code> とキーセットページング</span></td><td><a href="14-scaling.html">14</a></td></tr>
+            <tr><td>—</td><td><span lang="en">Money as <code>float</code>; no <code>logging</code>, only <code>print()</code></span><span lang="ja">金額が <code>float</code>、<code>logging</code> がなく <code>print()</code> だけ</span></td><td><span lang="en"><code>Numeric</code>/<code>Decimal</code>; structured logging</span><span lang="ja"><code>Numeric</code>/<code>Decimal</code>、構造化ログ</span></td><td><a href="02-data-modeling.html">02</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">Fixed bugs that make good stories</span><span lang="ja" class="sub">話のネタになる修正済みのバグ</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th><span lang="en">Bug</span><span lang="ja">バグ</span></th><th><span lang="en">Lesson</span><span lang="ja">教訓</span></th></tr></thead>
+          <tbody>
+            <tr><td>3, 28</td><td><span lang="en">IDORs on cart and shipping addresses, including <code>user_id == user_id</code></span><span lang="ja">カートと配送先の IDOR（<code>user_id == user_id</code> を含む）</span></td><td><span lang="en">Test user A against user B's ids; don't just read the filter</span><span lang="ja">ユーザー A でユーザー B の id を試すテストを書く。フィルタを読むだけにしない</span></td></tr>
+            <tr><td>29</td><td><span lang="en">Manager pages had no auth and trusted a client-sent <code>company_id</code></span><span lang="ja">マネージャー用ページに認証がなく、クライアントが送る <code>company_id</code> を信用していた</span></td><td><span lang="en">Tenant id comes from the token, never the request</span><span lang="ja">テナント id はリクエストではなくトークンから取る</span></td></tr>
+            <tr><td>—</td><td><span lang="en">Upload used the client's file extension → an <code>.html</code> "image" served from the API origin (stored XSS)</span><span lang="ja">アップロードでクライアントの拡張子を使用 → <code>.html</code> の「画像」が API のオリジンから配信される（保存型 XSS）</span></td><td><span lang="en">Derive the extension from a whitelisted content type</span><span lang="ja">許可リストのコンテンツタイプから拡張子を決める</span></td></tr>
+            <tr><td>9</td><td><span lang="en">161 <code>async def</code> handlers doing blocking work</span><span lang="ja">ブロッキング処理をする161個の <code>async def</code> ハンドラー</span></td><td><span lang="en">Match the handler type to the stack below it</span><span lang="ja">ハンドラーの種類を下の層に合わせる</span></td></tr>
+            <tr><td>16</td><td><span lang="en">Confirmation emails queued before the commit</span><span lang="ja">確認メールをコミット前にキューに入れていた</span></td><td><span lang="en">Side effects go after the commit</span><span lang="ja">副作用はコミットの後に</span></td></tr>
+            <tr><td>—</td><td><span lang="en">Enum migration crash-loop with <code>checkfirst=True</code></span><span lang="ja"><code>checkfirst=True</code> による enum マイグレーションの再起動ループ</span></td><td><span lang="en">Make migrations idempotent and atomic</span><span lang="ja">マイグレーションを冪等かつアトミックにする</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why these are still open</span><span lang="ja">なぜ未解決なのか</span></h2>
+      <ul>
+        <li><span lang="en"><b>#8 and #11 need design first</b>: they change how payment and caching fail, so they have written plans before code (<code>docs/plans/</code>).</span><span lang="ja" class="sub"><b>#8 と #11 は先に設計が必要</b>：決済とキャッシュの失敗の仕方を変えるので、コードの前に計画を書いている（<code>docs/plans/</code>）。</span></li>
+        <li><span lang="en"><b>Pending-state bugs are grouped</b>: #12, #26, #27 share one root cause (no expiry), so they'll be fixed together with one sweep job.</span><span lang="ja" class="sub"><b>pending 状態のバグはまとめる</b>：#12・#26・#27 は根本原因（期限がない）が同じなので、1つの一括処理ジョブでまとめて直す。</span></li>
+        <li><span lang="en"><b>Some are out of scope on purpose</b>: #14 (order cancel doesn't restock) is for an endpoint the frontend doesn't use.</span><span lang="ja" class="sub"><b>意図的に範囲外のものもある</b>：#14（注文取消で在庫が戻らない）はフロントエンドが使っていないエンドポイントの話。</span></li>
+      </ul>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">The top three open issues, each as what, impact, why, fix.</span><span lang="ja" class="sub">未解決の上位3つを、それぞれ「何・影響・理由・修正」で。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">The common theme behind #8, #11 and #25.</span><span lang="ja" class="sub">#8・#11・#25 に共通する点。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">The common theme behind #12, #26, #27 and unpaid lottery wins.</span><span lang="ja" class="sub">#12・#26・#27 と未払いの当選に共通する点。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">Two security bugs I found, how, and the lesson.</span><span lang="ja" class="sub">見つけたセキュリティバグ2つと、その見つけ方と教訓。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">Why some bugs have a written plan before any code.</span><span lang="ja" class="sub">一部のバグでコードより先に計画を書いている理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">What I'd fix first with one week, and why.</span><span lang="ja" class="sub">1週間あったら最初に何を直すか、その理由。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">What's the weakest part of this project?</span><span lang="ja" class="sub">このプロジェクトで一番弱い部分は？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Failure handling between systems. Inside Postgres, things are atomic and well tested. But PayPal calls happen inside locked transactions, and Redis failures after a commit surface as 500s. In both cases a successful operation can look failed, and a fan might pay twice. Both have written fix plans: move external calls out of transactions, make post-commit work best-effort, and reconcile with PayPal.</p>
+            <p lang="ja">システム間の失敗の扱い。Postgres の中はアトミックでよくテストされている。しかし PayPal の呼び出しはロック中のトランザクション内で行われ、コミット後の Redis の失敗は 500 として表に出る。どちらの場合も成功した操作が失敗に見え、ファンが二重に支払うおそれがある。両方とも修正計画を書いてある：外部呼び出しをトランザクションの外に出す、コミット後の処理は失敗しても続行する、PayPal と突き合わせる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">You have one week. What do you fix first?</span><span lang="ja" class="sub">1週間あります。最初に何を直しますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">(1) #11 Redis fallback: small change, and today a cache blip can take down the site and cause double payments. (2) #7 IP spoofing: a clear security hole with a written plan. (3) #2 product delete: a migration to <code>RESTRICT</code> plus soft delete, to protect order history. #8 is the most serious but needs a proper design and PayPal sandbox testing, so I'd start its design that week rather than rush it.</p>
+            <p lang="ja">(1) #11 Redis のフォールバック：変更は小さく、今はキャッシュの一瞬の不調でサイトが落ち、二重支払いも起きうる。(2) #7 IP の偽装：明確なセキュリティの穴で、計画も書いてある。(3) #2 商品の削除：注文履歴を守るため、<code>RESTRICT</code> と論理削除のマイグレーション。#8 は最も深刻だが、きちんとした設計と PayPal サンドボックスでのテストが必要なので、急がずにその週は設計から始める。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Tell me about a security bug you found.</span><span lang="ja" class="sub">見つけたセキュリティバグについて話してください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">Image upload took the file extension from the client's filename. Someone could upload an HTML file with an image content type, and the API would serve it as HTML from its own origin: stored XSS. The fix derives the extension from a whitelist of allowed content types, so the file on disk can only ever be an image type. The broader rule: never let client input decide how your server serves a file.</p>
+            <p lang="ja">画像のアップロードで、拡張子をクライアントのファイル名から取っていた。画像のコンテンツタイプで HTML ファイルをアップロードすると、API が自分のオリジンからそれを HTML として配信してしまう：保存型 XSS。修正では許可したコンテンツタイプの一覧から拡張子を決めるので、ディスク上のファイルは必ず画像の種類になる。より広い原則：サーバーがファイルをどう配信するかをクライアントの入力に決めさせない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How do you decide what to fix and what to leave?</span><span lang="ja" class="sub">何を直し、何を残すかをどう決めますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Impact times likelihood, against cost. Money and security first, even if rare. Then things that make correct operations look failed, because they cause user retries and support load. Group bugs by root cause so one fix closes several (#12, #26, #27). Things on unused paths (#14) are documented and parked. Everything goes into one tracked backlog with severity, so the decision is visible and can be revisited.</p>
+            <p lang="ja">影響×発生確率とコストを比べる。まずお金とセキュリティ、まれでも優先する。次に正しい操作が失敗に見えるもの。ユーザーの再試行やサポートの負担につながるから。根本原因ごとにバグをまとめ、1つの修正で複数を片付ける（#12・#26・#27）。使われていない経路のもの（#14）は記録して保留する。すべてを重要度付きの1つのバグ一覧で管理するので、判断が見えるし見直せる。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Pick three open bugs and say each one out loud in under 45 seconds: what, impact, why, fix.</span><span lang="ja" class="sub">未解決のバグを3つ選び、それぞれ45秒以内で声に出して説明する：何・影響・理由・修正。</span></li>
+          <li><span lang="en">Read <code>docs/plans/redis-outage.md</code> and implement step 1 (fail-open reads) on a branch.</span><span lang="ja" class="sub"><code>docs/plans/redis-outage.md</code> を読み、ブランチで手順1（読み取りの素通り）を実装する。</span></li>
+          <li><span lang="en">Replace <code>print()</code> with <code>logging</code> in one module. What would you add to each log line to make incidents easy to trace?</span><span lang="ja" class="sub">1つのモジュールで <code>print()</code> を <code>logging</code> に置き換える。障害を追いやすくするため、各ログ行に何を加えるか？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

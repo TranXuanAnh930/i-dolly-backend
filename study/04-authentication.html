@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Authentication · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 04</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 04</p>
+      <h1><span lang="en">Authentication: JWT &amp; refresh tokens</span><span lang="ja" class="sub">認証：JWT とリフレッシュトークン</span></h1>
+      <p class="lede" lang="en">How a fan logs in, stays logged in, and logs out, and where the tokens live.</p>
+      <p class="lede" lang="ja">ファンがログインし、ログイン状態を保ち、ログアウトする仕組みと、トークンの保存場所。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Passwords are hashed with <b>bcrypt</b>. The plain password is never stored.</span><span lang="ja" class="sub">パスワードは <b>bcrypt</b> でハッシュ化する。平文は保存しない。</span></li>
+          <li><span lang="en">Login returns a <b>short-lived access JWT</b> in the body and a <b>refresh token in an httpOnly cookie</b>.</span><span lang="ja" class="sub">ログインすると、本文で<b>短命なアクセス JWT</b>、<b>httpOnly Cookie でリフレッシュトークン</b>を返す。</span></li>
+          <li><span lang="en">The access token is stateless (signature + expiry). The refresh token is <b>stateful</b>: a DB row that can be revoked.</span><span lang="ja" class="sub">アクセストークンはステートレス（署名と有効期限）。リフレッシュトークンは<b>ステートフル</b>で、無効化できる DB の行。</span></li>
+          <li><span lang="en">Each refresh <b>rotates</b> the refresh token. Logout revokes it.</span><span lang="ja" class="sub">リフレッシュのたびにトークンを<b>ローテーション</b>する。ログアウトで無効化する。</span></li>
+          <li><span lang="en">Email-link tokens use a <b>separate secret</b> and a <code>type</code> claim, so a verify link can't reset a password.</span><span lang="ja" class="sub">メールリンク用トークンは<b>別の秘密鍵</b>と <code>type</code> クレームを使うので、確認用リンクでパスワードをリセットできない。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">Authentication vs. authorization</span><span lang="ja" class="sub">認証と認可</span></h3>
+      <p lang="en"><b>Authentication</b>: who are you? (login, tokens). <b>Authorization</b>: what may you do? (roles, ownership). 401 means "I don't know who you are", 403 means "I know, and the answer is no". Topic 05 covers authorization.</p>
+      <p lang="ja"><b>認証</b>：あなたは誰か（ログイン、トークン）。<b>認可</b>：何をしてよいか（ロール、所有権）。401 は「あなたが誰か分からない」、403 は「分かったうえで許可しない」。認可はトピック05。</p>
+
+      <h3><span lang="en">What a JWT is</span><span lang="ja" class="sub">JWT とは</span></h3>
+      <p lang="en"><code>header.payload.signature</code>, each base64url-encoded. The payload is readable by anyone, so it's <b>signed, not encrypted</b>. The server trusts it because only the server knows the secret (HS256). Because it's self-contained, the server doesn't need a DB lookup to validate it, and it also can't "un-issue" it before it expires.</p>
+      <p lang="ja"><code>header.payload.signature</code> で、それぞれ base64url エンコードされている。ペイロードは誰でも読めるので、<b>暗号化ではなく署名</b>されているだけ。秘密鍵（HS256）を知っているのはサーバーだけなので、サーバーはそれを信頼できる。自己完結しているので検証に DB を引く必要がないが、期限前に「発行を取り消す」こともできない。</p>
+
+      <h3><span lang="en">Why two tokens</span><span lang="ja" class="sub">なぜトークンが2つあるのか</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th><span lang="en">Access token</span><span lang="ja">アクセストークン</span></th><th><span lang="en">Refresh token</span><span lang="ja">リフレッシュトークン</span></th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">Lifetime</span><span lang="ja">有効期間</span></td><td><span lang="en">Minutes</span><span lang="ja">数分</span></td><td><span lang="en">Days</span><span lang="ja">数日</span></td></tr>
+            <tr><td><span lang="en">Sent</span><span lang="ja">送信先</span></td><td><span lang="en">Every API call (<code>Authorization: Bearer</code>)</span><span lang="ja">毎回の API 呼び出し（<code>Authorization: Bearer</code>）</span></td><td><span lang="en">Only to <code>/refresh</code> (cookie)</span><span lang="ja"><code>/refresh</code> にだけ（Cookie）</span></td></tr>
+            <tr><td><span lang="en">Check</span><span lang="ja">検証</span></td><td><span lang="en">Signature, no DB</span><span lang="ja">署名のみ、DB 不要</span></td><td><span lang="en">DB row: exists, not revoked, not expired</span><span lang="ja">DB 行：存在、未失効、期限内</span></td></tr>
+            <tr><td><span lang="en">If stolen</span><span lang="ja">盗まれたら</span></td><td><span lang="en">Useful until it expires</span><span lang="ja">期限切れまで使われる</span></td><td><span lang="en">Can be revoked</span><span lang="ja">無効化できる</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p lang="en">You get cheap checks on every request and a way to end sessions, without a DB lookup per call.</p>
+      <p lang="ja">毎回の確認は軽く、セッションを終わらせる手段もあり、しかも呼び出しごとに DB を引かずに済む。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. Login</span><span lang="ja" class="sub">1. ログイン</span></h3>
+<pre class="code">@router.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), _: None = Depends(<span class="hl">rate_limit(10, 60, ip_key)</span>), ...):
+    db_user = AuthService.authenticate_user(db, form_data.username, form_data.password)
+    if not db_user:
+        raise ApiHTTPException(status_code=401, detail="Invalid credentials", code="invalid_credentials")
+    token = AuthService.create_tokens(db, db_user)
+    response = JSONResponse(content={"access_token": token["access_token"]})
+    response.set_cookie("refresh_token", token["refresh_token"],
+                        <span class="hl">httponly=True, secure=True, samesite="none"</span>)</pre>
+      <p class="src-line"><a class="ref" data-p="app/router/identity/auth.py" data-l="25-35"></a> · <span lang="en">bcrypt:</span><span lang="ja">bcrypt：</span> <a class="ref" data-p="app/utils/hashing.py" data-l="1-9"></a></p>
+      <ul>
+        <li><span lang="en">The same "Invalid credentials" message for a wrong email and a wrong password, so login doesn't reveal which emails exist.</span><span lang="ja" class="sub">メールアドレス違いでもパスワード違いでも同じ「Invalid credentials」を返し、どのメールが登録されているかを明かさない。</span></li>
+        <li><span lang="en"><code>httponly</code>: JavaScript can't read the cookie, so an XSS bug can't steal it. <code>secure</code>: HTTPS only. <code>samesite="none"</code>: needed because the frontend is on a different site.</span><span lang="ja" class="sub"><code>httponly</code>：JavaScript から読めないので XSS で盗まれない。<code>secure</code>：HTTPS のみ。<code>samesite="none"</code>：フロントエンドが別サイトにあるため必要。</span></li>
+      </ul>
+
+      <h3><span lang="en">2. Issuing tokens</span><span lang="ja" class="sub">2. トークンの発行</span></h3>
+<pre class="code"><span class="c"># One active session per user: revoke existing refresh tokens.</span>
+db.query(RefreshToken).filter(RefreshToken.user_id == user.id, RefreshToken.revoked == False) \
+  .update({"revoked": True})
+access_token = create_access_token(data={"sub": str(user.id)})   <span class="c"># JWT with exp</span>
+refresh_token_str = <span class="hl">str(uuid.uuid4())</span>                            <span class="c"># opaque, random</span>
+db.add(RefreshToken(user_id=user.id, token=refresh_token_str, expires_at=expires))
+db.commit()</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/identity/auth_service.py" data-l="41-63"></a> · <a class="ref" data-p="app/utils/jwt_manager.py" data-l="10-19"></a></p>
+      <p lang="en">The refresh token is a random UUID, not a JWT. It only means something because of its DB row, which is exactly what makes it revocable.</p>
+      <p lang="ja">リフレッシュトークンは JWT ではなくランダムな UUID。DB の行があって初めて意味を持ち、だからこそ無効化できる。</p>
+
+      <h3><span lang="en">3. Checking the access token on every request</span><span lang="ja" class="sub">3. 毎回のリクエストでアクセストークンを確認</span></h3>
+<pre class="code">def get_current_user(request: Request, token: str = Depends(oauth_scheme), db: Session = Depends(get_db)) -&gt; Users:
+    user = _user_from_token(token, db)     <span class="c"># decode → uuid(sub) → db.get(Users)</span>
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    <span class="hl">request.state.user = user</span>              <span class="c"># read later by the rate limiter</span>
+    return user</pre>
+      <p class="src-line"><a class="ref" data-p="app/deps/auth.py" data-l="17-34"></a></p>
+      <p lang="en">A missing <code>sub</code>, a malformed id or a deleted user all return 401, never a 500. There is also an optional version for public pages that personalize for logged-in fans (<a class="ref" data-p="app/deps/auth.py" data-l="35-42"></a>).</p>
+      <p lang="ja"><code>sub</code> がない、id の形式が不正、ユーザーが削除済み、のいずれも 500 ではなく 401 を返す。ログイン中のファン向けに表示を変える公開ページ用に、任意ログイン版もある（<a class="ref" data-p="app/deps/auth.py" data-l="35-42"></a>）。</p>
+
+      <h3><span lang="en">4. Refresh and rotate</span><span lang="ja" class="sub">4. リフレッシュとローテーション</span></h3>
+<pre class="code">token = request.cookies.get("refresh_token")
+user = AuthService.verify_refresh_token(db, token)   <span class="c"># row exists, not revoked, not expired</span>
+if not user:
+    raise ApiHTTPException(401, ..., code="invalid_refresh_token")
+new_token = AuthService.<span class="hl">create_tokens</span>(db, user)          <span class="c"># revokes the old one, issues a new pair</span></pre>
+      <p class="src-line"><a class="ref" data-p="app/router/identity/auth.py" data-l="37-48"></a> · <a class="ref" data-p="app/services/identity/auth_service.py" data-l="66-74"></a></p>
+
+      <h3><span lang="en">5. Email-link tokens</span><span lang="ja" class="sub">5. メールリンク用トークン</span></h3>
+<pre class="code">to_encode = {"sub": str(user_id), <span class="hl">"type": token_type</span>, "exp": expires}
+return jwt.encode(to_encode, <span class="hl">settings.JWT_EMAIL_SECRET_KEY</span>, ...)
+...
+if payload.get("type") != expected_type:
+    return None</pre>
+      <p class="src-line"><a class="ref" data-p="app/utils/jwt_manager.py" data-l="32-55"></a></p>
+      <p lang="en">A separate secret means an email-link token can never pass as a login token. The <code>type</code> claim means a verification link can't be used as a password-reset link. The forgot-password endpoint always answers "If that email is registered…", so it doesn't reveal accounts either.</p>
+      <p lang="ja">秘密鍵が別なので、メールリンク用トークンがログイン用トークンとして通ることはない。<code>type</code> クレームがあるので、確認用リンクをパスワードリセットに使えない。パスワード再設定の窓口は常に「そのメールが登録されていれば…」と答えるので、アカウントの有無も明かさない。</p>
+
+      <!-- ============ WHY ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Refresh token in an httpOnly cookie</b>: the long-lived secret is never visible to JavaScript, so an XSS bug can't steal it. Where the frontend keeps the short-lived access token is the frontend's choice (<code>docs/api-spec.md</code>); keeping it in memory rather than <code>localStorage</code> is the safer option.</span><span lang="ja" class="sub"><b>リフレッシュトークンは httpOnly Cookie</b>：長寿命の秘密は JavaScript から見えないので、XSS で盗まれない。短命なアクセストークンをどこに置くかはフロントエンド側の判断（<code>docs/api-spec.md</code>）で、<code>localStorage</code> よりメモリに置く方が安全。</span></li>
+        <li><span lang="en"><b>Cost of <code>SameSite=None</code></b>: the browser sends the cookie on cross-site requests, so CSRF matters for <code>/refresh</code>. It's limited because <code>/refresh</code> only returns a token in the response body, which a cross-site attacker can't read under CORS.</span><span lang="ja" class="sub"><b><code>SameSite=None</code> のコスト</b>：ブラウザはクロスサイトのリクエストにも Cookie を送るので、<code>/refresh</code> には CSRF の考慮が必要。ただし <code>/refresh</code> はトークンをレスポンス本文で返すだけで、CORS により他サイトの攻撃者は読めないので影響は限定的。</span></li>
+        <li><span lang="en"><b>bcrypt</b>: slow on purpose, with a per-password salt, so a leaked table is expensive to crack. It's also CPU-heavy, which is one more reason login is rate-limited.</span><span lang="ja" class="sub"><b>bcrypt</b>：意図的に遅く、パスワードごとにソルトを持つので、漏れたテーブルを解読するのが高くつく。CPU 負荷も高いので、ログインをレート制限する理由の1つでもある。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #20</p>
+        <p lang="en"><b>Refresh tokens stored in plain text, and one session per user.</b> A DB leak hands out working refresh tokens; store a SHA-256 hash instead and compare hashes. Also, <code>create_tokens</code> revokes all of a user's tokens, so logging in on a phone logs out the laptop.</p>
+        <p lang="ja"><b>リフレッシュトークンが平文で保存され、1ユーザー1セッション。</b>DB が漏れると有効なリフレッシュトークンがそのまま使われる。代わりに SHA-256 のハッシュを保存して比較すべき。また <code>create_tokens</code> がユーザーの全トークンを無効化するので、スマホでログインするとノートPCがログアウトされる。</p>
+      </div>
+      <div class="callout bad">
+        <p class="label">bugs.md #18, #19</p>
+        <p lang="en"><b>Password changes don't end sessions.</b> Changing a password doesn't revoke refresh tokens (reset does), and a reset link can be reused until it expires because nothing marks it used. Fix: revoke on change, and bind the reset token to a <code>jti</code> or the current password hash.</p>
+        <p lang="ja"><b>パスワード変更でセッションが終わらない。</b>パスワード変更ではリフレッシュトークンが無効化されず（リセットではされる）、リセット用リンクも使用済みにならないため期限まで再利用できる。対策：変更時に無効化し、リセット用トークンを <code>jti</code> か現在のパスワードハッシュに結び付ける。</p>
+      </div>
+      <div class="callout">
+        <p class="label"><span lang="en">Other things to mention</span><span lang="ja">その他言及すべき点</span></p>
+        <p lang="en">No refresh-token reuse detection: a stolen, already-rotated token just fails, and nobody is alerted. <code>JWT_REFRESH_SECRET_KEY</code> is a required setting but nothing uses it (<a class="ref" data-p="app/config/settings.py" data-l="7"></a>). <code>/register</code> answers "Email already registered", which does reveal accounts; rate limiting reduces that risk.</p>
+        <p lang="ja">リフレッシュトークンの再利用検知がない：盗まれてローテーション済みのトークンは失敗するだけで、誰にも通知されない。<code>JWT_REFRESH_SECRET_KEY</code> は必須設定だが使われていない（<a class="ref" data-p="app/config/settings.py" data-l="7"></a>）。<code>/register</code> は「Email already registered」と返すのでアカウントの有無が分かる。レート制限でリスクを下げている。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">401 vs. 403.</span><span lang="ja" class="sub">401 と 403 の違い。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">What's inside a JWT, and why it's signed but not encrypted.</span><span lang="ja" class="sub">JWT の中身と、暗号化ではなく署名である理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">Why there's an access token and a refresh token.</span><span lang="ja" class="sub">アクセストークンとリフレッシュトークンが両方ある理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">The login → request → refresh → logout flow in this repo.</span><span lang="ja" class="sub">このリポジトリでのログイン → リクエスト → リフレッシュ → ログアウトの流れ。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">What <code>httponly</code>, <code>secure</code> and <code>samesite</code> do.</span><span lang="ja" class="sub"><code>httponly</code>・<code>secure</code>・<code>samesite</code> の役割。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">Why bcrypt, and what a salt is.</span><span lang="ja" class="sub">bcrypt を使う理由とソルトとは何か。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en">How email tokens are kept separate from login tokens.</span><span lang="ja" class="sub">メール用トークンとログイン用トークンを分けている方法。</span></span></label></li>
+        <li><label><input type="checkbox" id="c8"><span><span lang="en">Bugs #18, #19, #20 and how to fix them.</span><span lang="ja" class="sub">バグ #18・#19・#20 とその直し方。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">How do you store passwords?</span><span lang="ja" class="sub">パスワードはどう保存していますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Hashed with bcrypt through passlib. bcrypt adds a random salt per password and is deliberately slow, so identical passwords get different hashes and brute-forcing a leaked table is expensive. Login compares with <code>verify_password</code>; the plain password is never stored or logged.</p>
+            <p lang="ja">passlib 経由で bcrypt によりハッシュ化している。bcrypt はパスワードごとにランダムなソルトを付け、意図的に遅いので、同じパスワードでもハッシュが異なり、漏れたテーブルの総当たりは高くつく。ログイン時は <code>verify_password</code> で比較し、平文は保存もログ出力もしない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">Why not keep the access token in <code>localStorage</code>?</span><span lang="ja" class="sub">アクセストークンを <code>localStorage</code> に保存しないのはなぜ？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Any script on the page can read <code>localStorage</code>, so one XSS bug leaks the token. Keeping the short-lived access token in memory and the long-lived refresh token in an httpOnly cookie means scripts can't read the long-lived secret. After a reload, the app calls <code>/refresh</code> to get a new access token.</p>
+            <p lang="ja"><code>localStorage</code> はページ上のどのスクリプトからも読めるので、XSS のバグが1つあればトークンが漏れる。短命なアクセストークンはメモリに、長寿命のリフレッシュトークンは httpOnly Cookie に置けば、長寿命の秘密はスクリプトから読めない。再読み込み後は <code>/refresh</code> を呼んで新しいアクセストークンを取得する。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">JWTs are stateless. How do you log someone out?</span><span lang="ja" class="sub">JWT はステートレスです。どうやってログアウトさせますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Logout revokes the refresh token row and clears the cookie, so no new access tokens can be issued. The current access token stays valid until it expires, which is why its lifetime is short. If instant revocation were required, I'd add a denylist of token ids (<code>jti</code>) in Redis with a TTL equal to the token's remaining life, or a per-user "tokens valid after" timestamp.</p>
+            <p lang="ja">ログアウトでリフレッシュトークンの行を無効化し Cookie を消すので、新しいアクセストークンは発行されない。今のアクセストークンは期限まで有効なので、有効期間を短くしている。即時失効が必要なら、トークン id（<code>jti</code>）の拒否リストを残り期間と同じ TTL で Redis に置くか、ユーザーごとに「この時刻以降に発行されたトークンのみ有効」というタイムスタンプを持つ。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">What is refresh-token rotation, and what does it protect against?</span><span lang="ja" class="sub">リフレッシュトークンのローテーションとは？何を防ぎますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Every refresh issues a new refresh token and revokes the old one, so a stolen token is only useful until the real user refreshes. The stronger version adds reuse detection: if a revoked token is presented, assume theft and revoke the whole token family. i-dolly rotates but doesn't detect reuse yet.</p>
+            <p lang="ja">リフレッシュのたびに新しいリフレッシュトークンを発行し、古いものを無効化する。盗まれたトークンは本人が次にリフレッシュするまでしか使えない。さらに強い方法は再利用検知で、無効化済みのトークンが提示されたら盗難とみなし、そのトークン系列をすべて無効化する。i-dolly はローテーションはしているが、再利用検知はまだない。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">Your DB is leaked. What can the attacker do with the auth tables?</span><span lang="ja" class="sub">DB が漏洩しました。攻撃者は認証テーブルで何ができますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Passwords: only bcrypt hashes, so they'd have to crack them slowly. Refresh tokens: today they're stored in plain text (bug #20), so any unexpired, unrevoked token lets them mint access tokens. Fix: store <code>sha256(token)</code> and compare the hash; a random token has enough entropy that a fast hash is fine. Also rotate the JWT secret, which invalidates all access tokens at once.</p>
+            <p lang="ja">パスワード：bcrypt のハッシュだけなので、時間をかけて解読するしかない。リフレッシュトークン：現状は平文で保存されている（バグ #20）ので、期限内で未失効のものがあればアクセストークンを発行できてしまう。対策：<code>sha256(token)</code> を保存してハッシュで比較する。ランダムなトークンはエントロピーが十分なので高速なハッシュで問題ない。さらに JWT の秘密鍵をローテーションすれば、全アクセストークンを一度に無効化できる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">Would you use HS256 or RS256 here?</span><span lang="ja" class="sub">ここでは HS256 と RS256 のどちらを使いますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">HS256 is fine while one service both issues and verifies tokens: one shared secret, fast. RS256 matters when other services need to verify tokens without being able to create them: they get the public key only. If i-dolly split into services, or used an external identity provider, I'd switch to RS256 with a JWKS endpoint and key rotation.</p>
+            <p lang="ja">1つのサービスがトークンの発行と検証の両方を行う間は HS256 で十分：共有の秘密鍵が1つで速い。RS256 が必要になるのは、他のサービスがトークンを作れないまま検証だけしたい場合で、公開鍵だけを渡せばよい。i-dolly をサービス分割したり外部の ID プロバイダーを使ったりするなら、JWKS エンドポイントと鍵ローテーション付きで RS256 に切り替える。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Log in through <code>/docs</code>, copy the access token, and decode it at jwt.io. Which claims are there?</span><span lang="ja" class="sub"><code>/docs</code> からログインし、アクセストークンをコピーして jwt.io でデコードする。どんなクレームがあるか？</span></li>
+          <li><span lang="en">Call <code>/account/refresh</code> twice with the first cookie. Why does the second call fail?</span><span lang="ja" class="sub">最初の Cookie で <code>/account/refresh</code> を2回呼ぶ。2回目が失敗するのはなぜか？</span></li>
+          <li><span lang="en">Sketch the fix for bug #20: what changes in <code>create_tokens</code>, <code>verify_refresh_token</code> and the migration?</span><span lang="ja" class="sub">バグ #20 の修正を考える：<code>create_tokens</code>・<code>verify_refresh_token</code>・マイグレーションで何が変わるか？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>

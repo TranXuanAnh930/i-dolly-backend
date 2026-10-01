@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Transactions &amp; Concurrency · i-dolly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<link rel="stylesheet" href="assets/study.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" data-rail aria-label="Topics">
+    <a class="brand" href="index.html">i-dolly <small><span lang="en">Backend interview prep</span><span lang="ja" class="sub">バックエンド面接対策</span></small></a>
+  </nav>
+
+  <main>
+    <div class="col">
+      <div class="topbar">
+        <span class="crumbs"><a href="index.html">study</a> / 06</span>
+        <div class="langs" role="group" aria-label="Language">
+          <button type="button" data-l="en">EN</button>
+          <button type="button" data-l="ja">日本語</button>
+          <button type="button" data-l="both">EN + 日本語</button>
+        </div>
+      </div>
+
+      <p class="eyebrow">Topic 06</p>
+      <h1><span lang="en">Transactions &amp; concurrency</span><span lang="ja" class="sub">トランザクションと並行性</span></h1>
+      <p class="lede" lang="en">How i-dolly stops two fans from buying the same last seat, and how you prove it works.</p>
+      <p class="lede" lang="ja">2人のファンが同じ最後の1席を買えないようにする仕組みと、それが正しく動くことの証明方法。</p>
+
+      <!-- ============ TL;DR ============ -->
+      <h2><span class="tag">TL;DR</span><span lang="en">Say this in 30 seconds</span><span lang="ja">30秒で言えること</span></h2>
+      <div class="tldr">
+        <ul>
+          <li><span lang="en">Each checkout is <b>one transaction with one commit at the end</b>. Any error rolls back everything.</span><span lang="ja" class="sub">各チェックアウトは<b>最後に1回だけコミットする1つのトランザクション</b>。どこかで失敗すれば全部ロールバックされる。</span></li>
+          <li><span lang="en">The scarce row (product stock, ticket tier) is locked with <code>SELECT … FOR UPDATE</code> before it is checked, so a second buyer waits and then sees the updated number.</span><span lang="ja" class="sub">在庫やチケット枠などの行は、確認する前に <code>SELECT … FOR UPDATE</code> でロックする。2人目は待たされ、更新後の値を読む。</span></li>
+          <li><span lang="en">Multiple rows are locked in a <b>fixed order</b> (<code>ORDER BY id</code>) to avoid deadlocks.</span><span lang="ja" class="sub">複数行は<b>決まった順番</b>（<code>ORDER BY id</code>）でロックし、デッドロックを防ぐ。</span></li>
+          <li><span lang="en">Rules are checked twice: in the service (clear error) and by a <b>Postgres trigger or UNIQUE constraint</b> (backstop).</span><span lang="ja" class="sub">ルールは2回確認する。サービス層（分かりやすいエラー）と、<b>Postgres のトリガーや UNIQUE 制約</b>（最後の砦）。</span></li>
+          <li><span lang="en">Races are tested with <b>real threads against real Postgres</b>, released together by a barrier.</span><span lang="ja" class="sub">競合は<b>実際の Postgres に対して実スレッド</b>を Barrier で同時に走らせてテストしている。</span></li>
+        </ul>
+      </div>
+
+      <!-- ============ PRIMER ============ -->
+      <h2><span class="tag">PRIMER</span><span lang="en">The theory you need</span><span lang="ja">必要な理論</span></h2>
+
+      <h3><span lang="en">The check-then-act race</span><span lang="ja" class="sub">「確認してから更新」の競合</span></h3>
+      <p lang="en">Postgres runs at <b>READ COMMITTED</b> by default: each statement sees data committed before it started. So "read stock → check it → write stock" is not safe. Two transactions can both read <code>quantity = 1</code>, both pass the check, and both sell. This is a <b>lost update</b>.</p>
+      <p lang="ja">Postgres のデフォルト分離レベルは <b>READ COMMITTED</b> で、各文はその開始時点でコミット済みのデータを読む。そのため「在庫を読む → 確認 → 書き込む」は安全ではない。2つのトランザクションが両方 <code>quantity = 1</code> を読み、両方とも確認を通過して販売してしまう。これが<b>更新の消失（lost update）</b>。</p>
+
+      <h3><span lang="en">Four ways to fix it</span><span lang="ja" class="sub">解決方法は4つ</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Approach</span><span lang="ja">方法</span></th><th><span lang="en">How</span><span lang="ja">仕組み</span></th><th><span lang="en">Good for</span><span lang="ja">向いている場面</span></th></tr></thead>
+          <tbody>
+            <tr><td><b><span lang="en">Pessimistic lock</span><span lang="ja">悲観的ロック</span></b><br><code>FOR UPDATE</code></td><td><span lang="en">Lock the row when you read it; others wait until you commit.</span><span lang="ja">読む時点で行をロックし、他はコミットまで待つ。</span></td><td><span lang="en">High contention: hot items, ticket drops. <b>Used here.</b></span><span lang="ja">競合が多い場面：人気商品、チケット発売。<b>本プロジェクトで採用。</b></span></td></tr>
+            <tr><td><b><span lang="en">Optimistic lock</span><span lang="ja">楽観的ロック</span></b><br><code>version</code> column</td><td><span lang="en"><code>UPDATE … WHERE version = :v</code>; retry if 0 rows changed.</span><span lang="ja"><code>UPDATE … WHERE version = :v</code> を実行し、更新0行なら再試行。</span></td><td><span lang="en">Low contention: profile edits.</span><span lang="ja">競合が少ない場面：プロフィール編集など。</span></td></tr>
+            <tr><td><b><span lang="en">Atomic conditional update</span><span lang="ja">条件付きアトミック更新</span></b></td><td><code>UPDATE … SET qty = qty - 1 WHERE id = :id AND qty &gt;= 1</code></td><td><span lang="en">A single counter with no other logic.</span><span lang="ja">他のロジックがない単純なカウンター。</span></td></tr>
+            <tr><td><b>SERIALIZABLE</b></td><td><span lang="en">The DB detects conflicts and aborts one transaction; the app retries.</span><span lang="ja">DB が競合を検知して片方を中止し、アプリが再試行する。</span></td><td><span lang="en">Complex invariants across many rows, when retries are acceptable.</span><span lang="ja">多くの行にまたがる複雑な制約で、再試行が許容できる場合。</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3><span lang="en">Lock modes used in this repo</span><span lang="ja" class="sub">このリポジトリで使うロックモード</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>SQL</th><th>SQLAlchemy</th><th><span lang="en">Blocks</span><span lang="ja">ブロックする相手</span></th></tr></thead>
+          <tbody>
+            <tr><td><code>FOR UPDATE</code></td><td><code>.with_for_update()</code></td><td><span lang="en">Other <code>FOR UPDATE</code>, <code>FOR SHARE</code>, and writes. Plain reads are not blocked.</span><span lang="ja">他の <code>FOR UPDATE</code>・<code>FOR SHARE</code>・書き込み。通常の読み取りはブロックしない。</span></td></tr>
+            <tr><td><code>FOR SHARE</code></td><td><code>with_for_update={"read": True}</code></td><td><span lang="en"><code>FOR UPDATE</code> and writes. Other <code>FOR SHARE</code> readers are not blocked.</span><span lang="ja"><code>FOR UPDATE</code> と書き込み。他の <code>FOR SHARE</code> はブロックしない。</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p lang="en">Row locks are held until the transaction <b>commits or rolls back</b>. There is no "unlock" call.</p>
+      <p lang="ja">行ロックはトランザクションが<b>コミットまたはロールバックされるまで</b>保持される。明示的な「アンロック」はない。</p>
+
+      <!-- ============ IN THE REPO ============ -->
+      <h2><span class="tag">IN THE REPO</span><span lang="en">Where i-dolly does it</span><span lang="ja">i-dolly での実装箇所</span></h2>
+
+      <h3><span lang="en">1. Album checkout: lock products in id order</span><span lang="ja" class="sub">1. アルバム購入：商品を id 順にロック</span></h3>
+<pre class="code"><span class="c"># populate_existing() is required: the resale-cap query already loaded these rows unlocked,
+# and without it the stock check would read those stale copies instead of the locked rows.</span>
+products = db.query(Product).filter(Product.id.in_(product_ids)) \
+    .<span class="hl">order_by(Product.id)</span>.<span class="hl">with_for_update()</span>.<span class="hl">populate_existing()</span>.all()
+for product in products:
+    item = next(...)
+    if product.quantity &lt; item.quantity:
+        raise InsufficientStockError("Insufficient Stock")</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/marketplace/order_service.py" data-l="80-86"></a></p>
+      <ul>
+        <li><span lang="en"><b><code>order_by(Product.id)</code></b>: two carts holding {A, B} and {B, A} would deadlock if each locked in its own order. With a fixed order, both lock A first.</span><span lang="ja" class="sub"><b><code>order_by(Product.id)</code></b>：{A, B} と {B, A} のカートがそれぞれ別の順番でロックするとデッドロックする。順番を固定すれば両方とも A から取る。</span></li>
+        <li><span lang="en"><b><code>populate_existing()</code></b>: SQLAlchemy's identity map already holds these rows from an earlier unlocked query. Without it, the ORM would return the old in-memory objects even though the DB returned fresh, locked values.</span><span lang="ja" class="sub"><b><code>populate_existing()</code></b>：SQLAlchemy の identity map には、前のロックなしクエリで読んだ行がすでにある。これがないと、DB がロック後の最新値を返しても ORM はメモリ上の古いオブジェクトを返してしまう。</span></li>
+        <li><span lang="en">Stock is decremented and the cart cleared before the <b>single commit</b> at <a class="ref" data-p="app/services/marketplace/order_service.py" data-l="115"></a>.</span><span lang="ja" class="sub">在庫を減らしカートを空にしてから、<b>1回だけのコミット</b>を行う（<a class="ref" data-p="app/services/marketplace/order_service.py" data-l="115"></a>）。</span></li>
+      </ul>
+
+      <h3><span lang="en">What the lock does, step by step</span><span lang="ja" class="sub">ロックの動き（時系列）</span></h3>
+      <div class="race" role="table" aria-label="Two checkouts racing for the last album">
+        <div class="h t">t</div><div class="h"><span lang="en">Fan A</span><span lang="ja">ファン A</span></div><div class="h"><span lang="en">Fan B</span><span lang="ja">ファン B</span></div>
+        <div class="t">1</div><div><code>BEGIN</code></div><div><code>BEGIN</code></div>
+        <div class="t">2</div><div><span lang="en">lock product → qty = 1</span><span lang="ja">商品をロック → qty = 1</span></div><div class="wait"><span lang="en">tries lock → waits</span><span lang="ja">ロック要求 → 待機</span></div>
+        <div class="t">3</div><div><span lang="en">qty := 0, insert order</span><span lang="ja">qty := 0、注文を作成</span></div><div class="wait"><span lang="en">waiting…</span><span lang="ja">待機中…</span></div>
+        <div class="t">4</div><div class="win"><code>COMMIT</code> <span lang="en">(lock released)</span><span lang="ja">（ロック解放）</span></div><div><span lang="en">gets lock → reads qty = 0</span><span lang="ja">ロック取得 → qty = 0 を読む</span></div>
+        <div class="t">5</div><div></div><div class="lose">InsufficientStockError → <code>ROLLBACK</code></div>
+      </div>
+
+      <h3><span lang="en">2. Last concert seat: lock the fan, then the tier</span><span lang="ja" class="sub">2. 最後の1席：ファン → チケット枠の順にロック</span></h3>
+<pre class="code">user = db.query(Users).filter(Users.id == user_id).<span class="hl">with_for_update()</span>.first()
+...
+ticket_type = db.query(TicketType).filter(TicketType.id == data.ticket_type_id).<span class="hl">with_for_update()</span>.first()
+...
+if ticket_type.sold_quantity &gt;= ticket_type.total_quantity:
+    raise InsufficientTicketStockError("No tickets left for this tier")
+if TicketService._existing_live_ticket(db, user_id, ticket_type.concert_id):
+    raise DuplicateConcertTicketError(...)</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/events/ticket_service.py" data-l="90-126"></a></p>
+      <p lang="en">The <b>tier lock</b> stops two different fans from both taking the last seat. The <b>user lock</b> stops the <i>same</i> fan from double-submitting and getting two tickets for one concert, even across two different tiers, because the "already has a ticket?" check is a read that no tier lock protects.</p>
+      <p lang="ja"><b>チケット枠のロック</b>は、別々のファンが最後の1席を同時に取るのを防ぐ。<b>ユーザーのロック</b>は、<i>同じ</i>ファンが二重送信して1公演で2枚取るのを防ぐ（別の枠同士でも）。「すでにチケットを持っているか」の確認は、枠のロックでは守られない読み取りだから。</p>
+
+      <h3><span lang="en">3. Lottery apply vs. draw: FOR SHARE vs. FOR UPDATE</span><span lang="ja" class="sub">3. 抽選応募と抽選実行：FOR SHARE と FOR UPDATE</span></h3>
+<pre class="code"><span class="c"># FOR SHARE: the draw locks campaigns FOR UPDATE, so an apply and a draw can't interleave.</span>
+campaign = db.get(LotteryCampaign, campaign_id, <span class="hl">with_for_update={"read": True}</span>, populate_existing=True)</pre>
+      <p class="src-line"><a class="ref" data-p="app/services/events/lottery_entry_service.py" data-l="36-39"></a> · <span lang="en">draw side:</span><span lang="ja">抽選側：</span> <a class="ref" data-p="app/services/events/lottery_draw_service.py" data-l="43"></a></p>
+      <p lang="en">Thousands of fans apply at once, so applies take a <b>shared</b> lock and don't block each other. The draw takes an <b>exclusive</b> lock, so it waits for in-flight applies, and any apply that arrives during the draw waits, then re-reads <code>status = drawn</code> and is rejected. Without this, an entry could land after the draw and stay <code>pending</code> forever.</p>
+      <p lang="ja">大量のファンが同時に応募するので、応募は<b>共有</b>ロックを取り、互いにブロックしない。抽選は<b>排他</b>ロックを取るため、処理中の応募が終わるのを待つ。抽選中に来た応募は待たされた後に <code>status = drawn</code> を読み直して拒否される。これがないと、抽選後に入った応募が永遠に <code>pending</code> のまま残る。</p>
+
+      <h3><span lang="en">4. The database as a backstop</span><span lang="ja" class="sub">4. 最後の砦としてのデータベース</span></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><span lang="en">Rule</span><span lang="ja">ルール</span></th><th><span lang="en">Service check</span><span lang="ja">サービス層の確認</span></th><th><span lang="en">DB backstop</span><span lang="ja">DB 側の強制</span></th></tr></thead>
+          <tbody>
+            <tr><td><span lang="en">One live ticket per fan per concert</span><span lang="ja">1公演につき1人1枚</span></td><td><code>_existing_live_ticket</code></td><td><a class="ref" data-p="alembic/versions/c3817b3a32b9_create_tickets_table.py" data-l="111-140">trg_tickets_one_per_concert</a></td></tr>
+            <tr><td><span lang="en">Max 3 units per product per fan</span><span lang="ja">1商品につき1人3個まで</span></td><td><a class="ref" data-p="app/services/marketplace/order_service.py" data-l="68-78">order_service</a></td><td><a class="ref" data-p="alembic/versions/7abe0b6123b3_anti_resale_cap_trigger.py" data-l="32-68">trg_orders_items_resale_cap</a></td></tr>
+            <tr><td><span lang="en">Only fans can buy</span><span lang="ja">購入はファンのみ</span></td><td><code>user.role != fan</code></td><td><a class="ref" data-p="alembic/versions/11cc2a1672a1_fan_only_purchase_trigger.py" data-l="48-75">trg_*_fan_only</a></td></tr>
+            <tr><td><span lang="en">Same checkout not charged twice</span><span lang="ja">同じ決済を二重に請求しない</span></td><td><span lang="en">idempotency key pre-check</span><span lang="ja">冪等キーの事前確認</span></td><td><a class="ref" data-p="alembic/versions/90347b38372a_add_idempotency_key_to_payment.py" data-l="25">UNIQUE</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p lang="en"><code>commit_or_raise()</code> rolls back and turns the raw Postgres error into a typed exception with its own HTTP status (<a class="ref" data-p="app/exception/db_triggers.py" data-l="99-127"></a>). So a trigger firing becomes a clean 400 or 403 instead of a 500.</p>
+      <p lang="ja"><code>commit_or_raise()</code> はロールバックし、Postgres の生エラーを HTTP ステータスを持つ型付き例外に変換する（<a class="ref" data-p="app/exception/db_triggers.py" data-l="99-127"></a>）。トリガーが発火しても 500 ではなく、きれいな 400 や 403 になる。</p>
+      <div class="callout">
+        <p class="label"><span lang="en">Interview trap</span><span lang="ja">面接の落とし穴</span></p>
+        <p lang="en">A trigger that counts rows is <b>not race-proof on its own</b>. Under READ COMMITTED it can't see another transaction's uncommitted insert, so two parallel inserts can both count 0. The trigger catches bugs and direct SQL writes. The row locks are what stop the race.</p>
+        <p lang="ja">行数を数えるトリガーは<b>単体では競合に対して安全ではない</b>。READ COMMITTED では他のトランザクションの未コミットの INSERT が見えないため、並行する2つの INSERT が両方とも 0 件と数えうる。トリガーはバグや直接の SQL 書き込みを防ぐもので、競合を防いでいるのは行ロック。</p>
+      </div>
+
+      <h3><span lang="en">5. Proving it: the race harness</span><span lang="ja" class="sub">5. 証明：競合テスト用ハーネス</span></h3>
+<pre class="code">barrier = threading.Barrier(len(fns))
+def _run(index, fn):
+    <span class="hl">barrier.wait()</span>  <span class="c"># every thread blocks here until all of them have arrived</span>
+    outcomes[index].result = fn()</pre>
+      <p class="src-line"><a class="ref" data-p="tests/integration/_concurrency.py" data-l="51-85"></a> · <span lang="en">used by</span><span lang="ja">使用例：</span> <a class="ref" data-p="tests/integration/marketplace/test_orders_concurrency.py" data-l="181-200"></a> · <a class="ref" data-p="tests/integration/events/test_ticket_checkout_concurrency.py" data-l="143-208"></a> · <a class="ref" data-p="tests/integration/events/test_lottery_apply_window.py" data-l="65-92"></a></p>
+      <p lang="en">Three fans race for 1 unit, and the test asserts exactly one 200, two 400s and final stock 0. It uses real OS threads, not asyncio, because the DB layer is synchronous and only real blocking on real Postgres locks reproduces the race. A race test is only useful if it fails when the lock is removed. Exercise 2 below checks that.</p>
+      <p lang="ja">3人のファンが在庫1個を奪い合い、200 がちょうど1回、400 が2回、最終在庫が 0 であることを確認する。asyncio ではなく実際の OS スレッドを使うのは、DB 層が同期処理で、実際の Postgres ロックで本当にブロックさせないと競合を再現できないから。競合テストはロックを外したときに失敗しなければ意味がない。下の演習2で確かめよう。</p>
+
+      <!-- ============ TRADEOFFS ============ -->
+      <h2><span class="tag">WHY</span><span lang="en">Why this design, and what it costs</span><span lang="ja">この設計を選んだ理由とそのコスト</span></h2>
+      <ul>
+        <li><span lang="en"><b>Pessimistic over optimistic</b>: a ticket drop is the worst case for optimistic locking, where most attempts would conflict and retry. Locking makes losers wait a few milliseconds and then fail cleanly.</span><span lang="ja" class="sub"><b>楽観的より悲観的を選んだ理由</b>：チケット発売は楽観的ロックにとって最悪のケースで、ほとんどの試行が衝突して再試行になる。ロックなら負けた側は数ミリ秒待って、きれいに失敗する。</span></li>
+        <li><span lang="en"><b>Not a single atomic UPDATE</b>: checkout also creates an order, items and a payment, and checks the resale cap. That logic needs a stable view of the row, so a lock fits better.</span><span lang="ja" class="sub"><b>単一のアトミック UPDATE にしない理由</b>：チェックアウトでは注文・明細・決済の作成や転売上限の確認も行う。このロジックには行の安定した状態が必要なので、ロックの方が合う。</span></li>
+        <li><span lang="en"><b>Cost</b>: every buyer of one hot item is serialized on one row. Throughput for that item is about 1 / (transaction time), so transactions must stay short. The pool is only 5 + 5 connections (<a class="ref" data-p="app/db/session.py" data-l="6-16"></a>), so a long lock also starves other requests.</span><span lang="ja" class="sub"><b>コスト</b>：人気商品1つの購入者は全員1行の上で直列化される。その商品のスループットはおよそ 1 / トランザクション時間なので、トランザクションは短く保つ必要がある。接続プールは 5 + 5 本だけなので（<a class="ref" data-p="app/db/session.py" data-l="6-16"></a>）、長いロックは他のリクエストも詰まらせる。</span></li>
+      </ul>
+
+      <!-- ============ WEAK SPOTS ============ -->
+      <h2><span class="tag">WEAK SPOTS</span><span lang="en">Known gaps you should own</span><span lang="ja">自分から説明すべき既知の問題</span></h2>
+      <div class="callout bad">
+        <p class="label">bugs.md #8</p>
+        <p lang="en"><b>Network call while holding locks.</b> <code>finalize_paypal_payment</code> calls PayPal's capture API while holding <code>FOR UPDATE</code> on payment, ticket type and products (<a class="ref" data-p="app/services/marketplace/payment_service.py" data-l="132-182"></a>). A slow gateway holds the locks for up to 10 s. If PayPal captures but our commit fails, the fan is charged and the DB says <code>pending</code>. Fix: keep transactions short (reserve → commit → call gateway → finalize in a new transaction), plus webhook reconciliation.</p>
+        <p lang="ja"><b>ロックを保持したままのネットワーク呼び出し。</b><code>finalize_paypal_payment</code> は payment・ticket type・products に <code>FOR UPDATE</code> をかけたまま PayPal の capture API を呼ぶ（<a class="ref" data-p="app/services/marketplace/payment_service.py" data-l="132-182"></a>）。ゲートウェイが遅いと最大10秒ロックが続く。PayPal 側で決済が完了したのにコミットが失敗すると、請求済みなのに DB は <code>pending</code> のままになる。対策：トランザクションを短くする（確保 → コミット → ゲートウェイ呼び出し → 別トランザクションで確定）と、Webhook による突き合わせ。</p>
+      </div>
+      <div class="callout bad">
+        <p class="label">bugs.md #13</p>
+        <p lang="en"><b>Resale cap checked before the lock.</b> The 3-unit sum runs before any lock is taken (<a class="ref" data-p="app/services/marketplace/order_service.py" data-l="68-78"></a>), and album checkout does not lock the user row. Two parallel checkouts by the same fan can both pass, and the trigger has the same READ COMMITTED blind spot. Fix: lock the user row first, as ticket checkout already does.</p>
+        <p lang="ja"><b>転売上限の確認がロック前に行われる。</b>3個上限の合計はロックを取る前に計算され（<a class="ref" data-p="app/services/marketplace/order_service.py" data-l="68-78"></a>）、アルバム購入ではユーザー行をロックしない。同じファンの並行チェックアウトが両方通過しうるうえ、トリガーにも同じ READ COMMITTED の死角がある。対策：チケット購入と同じく、最初にユーザー行をロックする。</p>
+      </div>
+
+      <!-- ============ CHECKLIST ============ -->
+      <h2><span class="tag">CHECKLIST</span><span lang="en">I can explain…</span><span lang="ja">説明できること</span> <span class="progress" data-progress></span></h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox" id="c1"><span><span lang="en">Why "read, check, write" breaks under READ COMMITTED, with a concrete example.</span><span lang="ja" class="sub">「読む・確認・書く」が READ COMMITTED で壊れる理由を具体例で。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span><span lang="en">Pessimistic vs. optimistic locking, and why this project chose pessimistic.</span><span lang="ja" class="sub">悲観的ロックと楽観的ロックの違いと、悲観的を選んだ理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span><span lang="en">When a row lock is released.</span><span lang="ja" class="sub">行ロックがいつ解放されるか。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span><span lang="en">How <code>ORDER BY id</code> prevents deadlocks.</span><span lang="ja" class="sub"><code>ORDER BY id</code> がデッドロックを防ぐ仕組み。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span><span lang="en">What <code>populate_existing()</code> fixes in the SQLAlchemy identity map.</span><span lang="ja" class="sub"><code>populate_existing()</code> が identity map のどんな問題を解決するか。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span><span lang="en">Why ticket checkout locks the <i>user</i> row as well as the tier.</span><span lang="ja" class="sub">チケット購入で枠だけでなく<i>ユーザー</i>行もロックする理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span><span lang="en"><code>FOR SHARE</code> vs. <code>FOR UPDATE</code> in the lottery apply/draw pair.</span><span lang="ja" class="sub">抽選の応募と実行での <code>FOR SHARE</code> と <code>FOR UPDATE</code> の使い分け。</span></span></label></li>
+        <li><label><input type="checkbox" id="c8"><span><span lang="en">Why triggers are a backstop and not the race fix.</span><span lang="ja" class="sub">トリガーが競合対策ではなく最後の砦である理由。</span></span></label></li>
+        <li><label><input type="checkbox" id="c9"><span><span lang="en">How the Barrier-based test proves the lock works.</span><span lang="ja" class="sub">Barrier を使ったテストでロックの効果をどう証明するか。</span></span></label></li>
+        <li><label><input type="checkbox" id="c10"><span><span lang="en">Bugs #8 and #13, and how I'd fix each.</span><span lang="ja" class="sub">バグ #8 と #13 の内容と、それぞれの直し方。</span></span></label></li>
+      </ul>
+
+      <!-- ============ QUESTIONS ============ -->
+      <h2><span class="tag">QUESTIONS</span><span lang="en">Practice questions</span><span lang="ja">練習問題</span></h2>
+      <div class="qcontrols">
+        <button type="button" class="btn" data-toggle-answers="open"><span lang="en">Show all answers</span><span lang="ja">すべての答えを表示</span></button>
+        <button type="button" class="btn" data-toggle-answers="close"><span lang="en">Hide all</span><span lang="ja">すべて隠す</span></button>
+      </div>
+      <div class="qs">
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">What is a race condition? Give one from this project.</span><span lang="ja" class="sub">競合状態とは？このプロジェクトの例を挙げてください。</span></span></summary>
+          <div class="ans">
+            <p lang="en">The result depends on the timing of concurrent operations. Example: two fans check out the last album. Both read quantity 1, both pass the stock check, and both orders succeed, so we oversell. i-dolly prevents it by locking the product row before the check.</p>
+            <p lang="ja">並行処理のタイミングによって結果が変わる状態。例：2人のファンが最後のアルバムを同時に購入すると、両方が在庫1を読んで確認を通過し、両方の注文が成功して売り越しになる。i-dolly では確認の前に商品行をロックして防いでいる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t1">BASIC</span><span><span lang="en">What does <code>SELECT … FOR UPDATE</code> do, and when is the lock released?</span><span lang="ja" class="sub"><code>SELECT … FOR UPDATE</code> は何をしますか？ロックはいつ解放されますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">It reads rows and takes an exclusive row lock on them. Other transactions that try to lock or modify those rows wait. Plain SELECTs still read the last committed version. The lock is released only at COMMIT or ROLLBACK.</p>
+            <p lang="ja">行を読み、その行に排他ロックをかける。同じ行をロックまたは更新しようとする他のトランザクションは待たされる。通常の SELECT は最後にコミットされた値を読める。ロックは COMMIT か ROLLBACK のときにだけ解放される。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why do you lock products with <code>ORDER BY id</code>?</span><span lang="ja" class="sub">なぜ商品を <code>ORDER BY id</code> でロックするのですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">To prevent deadlocks. If transaction 1 locks A then B, and transaction 2 locks B then A, each ends up holding one lock and waiting for the other. Postgres detects this and kills one of them. With a global order, both try A first and one simply waits.</p>
+            <p lang="ja">デッドロックを防ぐため。トランザクション1が A→B、トランザクション2が B→A の順でロックすると、互いに相手のロックを待ち続ける。Postgres はこれを検知して片方を強制終了する。全体で順番を決めておけば、両方とも A から取ろうとするので片方が待つだけで済む。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">What bug does <code>populate_existing()</code> prevent?</span><span lang="ja" class="sub"><code>populate_existing()</code> はどんなバグを防ぎますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">SQLAlchemy's session keeps one object per primary key (the identity map). The resale-cap query had already loaded those products without a lock. When the locked query runs, the ORM would normally hand back the cached objects and ignore the fresh column values, so the stock check would use stale numbers. <code>populate_existing()</code> overwrites them with what the locked SELECT returned.</p>
+            <p lang="ja">SQLAlchemy のセッションは主キーごとに1つのオブジェクトを保持する（identity map）。転売上限のクエリでその商品はロックなしですでに読み込まれている。ロック付きクエリを実行しても、ORM は通常キャッシュ済みのオブジェクトを返して新しい値を無視するため、在庫確認が古い値で行われる。<code>populate_existing()</code> はロック付き SELECT の結果で上書きする。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">Why does lottery apply use <code>FOR SHARE</code> and not <code>FOR UPDATE</code>?</span><span lang="ja" class="sub">抽選応募はなぜ <code>FOR UPDATE</code> ではなく <code>FOR SHARE</code> なのですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Applies only need to stop the draw from running at the same time. They don't need to stop each other. <code>FOR SHARE</code> locks are compatible with each other but conflict with the draw's <code>FOR UPDATE</code>. So thousands of applies run in parallel, and the draw gets a clean cut-off.</p>
+            <p lang="ja">応募が防ぎたいのは抽選との同時実行だけで、応募同士を止める必要はない。<code>FOR SHARE</code> 同士は共存できるが、抽選の <code>FOR UPDATE</code> とは衝突する。そのため大量の応募は並行して動き、抽選は明確な締め切りを得られる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t2">MID</span><span><span lang="en">You check rules in the service and in a trigger. Isn't that duplication?</span><span lang="ja" class="sub">サービス層とトリガーの両方でルールを確認するのは重複では？</span></span></summary>
+          <div class="ans">
+            <p lang="en">On purpose. The service check gives a fast, specific error message. The trigger guarantees the rule for every writer: a future endpoint, an admin script, or a bug. The trigger is not the race fix, though. Under READ COMMITTED it can't see uncommitted rows, so locks still do that job.</p>
+            <p lang="ja">意図的な重複。サービス層は速く具体的なエラーを返す。トリガーは、将来のエンドポイントや管理スクリプト、バグなど、どこから書き込まれてもルールを保証する。ただしトリガーは競合対策ではない。READ COMMITTED では未コミットの行が見えないので、競合はロックで防ぐ。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">50,000 fans hit "buy" at 10:00. Would you keep the row lock?</span><span lang="ja" class="sub">10時に5万人が「購入」を押します。行ロックのままで良いですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">For correctness, yes. For throughput, it's the bottleneck: one hot row serializes every buyer, and with a 10-connection pool most requests queue. Options: (1) a single atomic <code>UPDATE … WHERE sold &lt; total RETURNING</code> to shorten the critical section; (2) a waiting-room queue in front of checkout; (3) pre-decrement a counter in Redis and only send winners to Postgres; (4) split the stock across N rows and pick one at random. That's the reason i-dolly uses a <b>lottery</b> for hot concerts: it turns a stampede into a batch job.</p>
+            <p lang="ja">正しさの面ではロックで良い。ただしスループットの面ではボトルネックになる。1つの人気行で全購入者が直列化され、接続プールが10本なのでほとんどのリクエストは待ち行列に入る。選択肢：(1) 単一のアトミックな <code>UPDATE … WHERE sold &lt; total RETURNING</code> でクリティカルセクションを短くする、(2) 購入の前に待合室（キュー）を置く、(3) Redis のカウンターを先に減らし、当選者だけを Postgres に送る、(4) 在庫を N 行に分けてランダムに選ぶ。i-dolly が人気公演に<b>抽選</b>を使うのはこのためで、殺到をバッチ処理に変えられる。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">What's wrong with calling a payment API inside the transaction?</span><span lang="ja" class="sub">トランザクション内で決済 API を呼ぶと何が問題ですか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Two problems. (1) Locks and a pooled connection are held for the whole network round-trip, which kills throughput. (2) There's no atomic commit across two systems: PayPal can succeed while our commit fails, leaving a charged fan with a pending order (bug #8). The fix: reserve and commit, call the gateway outside any transaction, then finalize in a second short transaction keyed by an idempotency key. Also reconcile from webhooks, and apply the webhook's state instead of re-capturing.</p>
+            <p lang="ja">問題は2つ。(1) ネットワーク往復の間ずっとロックと接続を保持するので、スループットが落ちる。(2) 2つのシステムにまたがるアトミックなコミットはできない。PayPal 側は成功し、こちらのコミットは失敗すると、請求済みなのに注文が pending のまま残る（バグ #8）。対策：確保してコミットし、トランザクション外でゲートウェイを呼び、冪等キーを使った2つ目の短いトランザクションで確定する。さらに Webhook で突き合わせ、再キャプチャせずに Webhook の状態を反映する。</p>
+          </div>
+        </details>
+        <details class="q">
+          <summary><span class="tier t3">SENIOR</span><span><span lang="en">How do you know your locking actually works?</span><span lang="ja" class="sub">ロックが本当に機能していると、どうやって分かりますか？</span></span></summary>
+          <div class="ans">
+            <p lang="en">Integration tests against real Postgres. <code>run_concurrently</code> starts N threads, each with its own session and connection, and releases them together with a <code>threading.Barrier</code> so they really contend. The tests assert on outcomes and final state: exactly one success, stock 0. A good race test must also fail when the lock is removed, so you know it isn't passing by accident (bugs.md records this for the lottery apply-window test). Mocks or SQLite couldn't show this, because the behavior lives in Postgres's lock manager.</p>
+            <p lang="ja">実際の Postgres に対する統合テスト。<code>run_concurrently</code> は N 個のスレッドを起動し（それぞれ独自のセッションと接続を持つ）、<code>threading.Barrier</code> で同時にスタートさせて本当に競合させる。成功がちょうど1件で最終在庫が 0、といった結果と最終状態を検証する。良い競合テストはロックを外すと失敗する必要があり、それで偶然通っているのではないと分かる（抽選の応募期間テストについては bugs.md に記録がある）。モックや SQLite では確認できない。この挙動は Postgres のロックマネージャーにあるから。</p>
+          </div>
+        </details>
+      </div>
+
+      <!-- ============ EXERCISE ============ -->
+      <h2><span class="tag">EXERCISE</span><span lang="en">Try it yourself</span><span lang="ja">やってみよう</span></h2>
+      <div class="exercise">
+        <ol>
+          <li><span lang="en">Start Postgres (<code>docker compose up -d postgres</code>) and run <code>pytest tests/integration/marketplace/test_orders_concurrency.py</code>. It should pass.</span><span lang="ja" class="sub">Postgres を起動し（<code>docker compose up -d postgres</code>）、<code>pytest tests/integration/marketplace/test_orders_concurrency.py</code> を実行する。成功するはず。</span></li>
+          <li><span lang="en">Delete <code>.with_for_update()</code> at <a class="ref" data-p="app/services/marketplace/order_service.py" data-l="82"></a> and run it again a few times. Write down what fails and why.</span><span lang="ja" class="sub"><a class="ref" data-p="app/services/marketplace/order_service.py" data-l="82"></a> の <code>.with_for_update()</code> を消して何度か実行する。何が失敗したか、なぜかを書き出す。</span></li>
+          <li><span lang="en">Put it back, then delete only <code>.populate_existing()</code>. Does the test catch it? If not, why not?</span><span lang="ja" class="sub">元に戻し、今度は <code>.populate_existing()</code> だけを消す。テストは検出できるか？できないならなぜか？</span></li>
+          <li><span lang="en">Sketch the fix for bug #13 (lock the user row in album checkout). Which existing test pattern would you copy to prove it?</span><span lang="ja" class="sub">バグ #13 の修正（アルバム購入でユーザー行をロック）を書いてみる。証明するにはどの既存テストのパターンを真似するか？</span></li>
+        </ol>
+      </div>
+
+      <nav class="pager" data-pager aria-label="Topic navigation"></nav>
+    </div>
+  </main>
+</div>
+<script src="assets/study.js"></script>
+</body>
+</html>
