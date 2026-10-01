@@ -173,6 +173,12 @@ docker compose stop
 ```
 Keeps database data intact.
 
+### Make shortcuts
+A `Makefile` wraps the commands above — run `make help` for the full list. The common ones:
+`make env`, `make up` / `make up-d`, `make migrate`, `make seed` (or `make seed-ja`), `make test`
+(`make test a="-k lottery"` passes extra pytest args), `make cov`, `make lint`, `make check`
+(lint + `py_compile` sweep, no DB needed), `make migration m="message"`, and `make stop`.
+
 ---
 
 ## License
