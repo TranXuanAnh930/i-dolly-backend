@@ -7,6 +7,10 @@ cache and storage code. **Not reproduced against a live app or test run** — ea
 the code, not observed at runtime. Tick items off (or move them into `project_status.md` §4) as
 they're fixed.
 
+Every open item was re-read against the code on 2026-11-13 (again static, not run): all of them
+still hold. That pass corrected line references, added the **Review** notes below, and added
+#30–#32.
+
 ## 🔴 Critical
 
 - [x] **1. Duplicate `shipping_status` rows per order** — FIXED (see `project_status.md` §4
@@ -18,7 +22,7 @@ they're fixed.
   premise ("nothing inserted a shipping_status row") is wrong. Fix + add a unique constraint.
 - [ ] **2. Deleting a product deletes order history.** `order_items.product_id` is
   `ON DELETE CASCADE` (`models/marketplace/order.py:34`) and `delete_product` hard-deletes
-  (`product_service.py:206`). Any manager can do this to ownerless merch. Same class as item 17.
+  (`product_service.py:201`). Any manager can do this to ownerless merch. Same class as item 17.
 - [x] **3. Cart IDOR.** **FIXED**: the query now also filters by `Cart.user_id`. `CartService.remove_cart` (`cart_service.py:51`) filters only by
   `Cart.id`; `user_id` is accepted but unused — any user can delete anyone's cart row.
 - [x] **4. Lottery apply ignores entry window and campaign status.** `_stage_entry`
@@ -47,15 +51,18 @@ they're fixed.
   DB default of 1. The draw itself still doesn't dedupe by user; fix that before exposing the field
   again. Any rows already set above 1 are unchanged; check with
   `SELECT id FROM lottery_campaigns WHERE max_entries_per_user > 1`.
-- [ ] **7. IP rate limits spoofable.** `ProxyHeadersMiddleware(trusted_hosts="*")` (`main.py:66`)
+- [ ] **7. IP rate limits spoofable.** `ProxyHeadersMiddleware(trusted_hosts="*")` (`main.py:70`)
   makes uvicorn 0.38 take the *leftmost* `X-Forwarded-For` hop, which the client controls
   (Render appends, doesn't strip). Rotating the header bypasses login/register limits.
   **Fix planned:** `docs/plans/rate-limit-client-ip.md`.
+  **Review:** closer to High than Critical — it defeats the login/register limits but exposes no
+  data by itself.
 - [ ] **8. PayPal capture under row locks, no reconciliation.** `finalize_paypal_payment` calls
   `capture_order` (network, 10s timeout) while holding `FOR UPDATE` on payment/ticket_type/products
-  (`payment_service.py:159`, `:190`). If PayPal captures but the response times out or our commit
+  (`payment_service.py:153`, `:182`). If PayPal captures but the response times out or our commit
   fails → charged, DB `pending`. The webhook re-calls `capture_order` → 422 already captured →
   500 → retried for 3 days, never resolves. Webhook should apply the event, not re-capture.
+  Design it together with #30 and #32 (same function, same PayPal calls).
 
 ## 🟠 High
 
@@ -89,8 +96,15 @@ they're fixed.
   **OUT OF SCOPE**: the user-cancel path (`cancel_placed_order`) isn't used by the frontend; not in
   current scope. Note that declined mock payments (`payment_service.py:34`) and abandoned PayPal
   orders (#27) still count toward the cap without that endpoint.
+  **Review:** the fix is wider than a service filter. `fn_enforce_resale_cap` sums every order
+  with no status filter either, so it needs its own migration. And once only `confirmed` orders
+  count, a fan can open several `pending` PayPal orders that each pass the cap and capture them
+  all — `finalize_paypal_payment` has to re-check the cap before capturing.
 - [ ] **14. `cancel_placed_order` doesn't restock, refund, or bust the product cache.**
   **OUT OF SCOPE**: the frontend doesn't use this endpoint; not in current scope.
+  **Review:** the route is still live. `PATCH /order/cancel/{order_id}` (`router/marketplace/order.py:80`)
+  has no rate limit and lets a fan cancel their own paid, unshipped order with no refund or
+  restock. Remove or disable the route until the service is finished.
 - [x] **15. Cart price drift.** Re-adding an item updates `total_price` from the current price but
   leaves `Cart.price` stale (`cart_service.py` add_to_cart); checkout uses `total_price` for the
   order total and `price` for line items → they don't reconcile.
@@ -105,10 +119,17 @@ they're fixed.
   What happens after an order id is found is unchanged (#8).
 - [ ] **26. Unpaid PayPal orders can be shipped.** The PayPal path creates the order's
   `shipping_status` row as `pending` before payment (`payment_service.py:51`), and `ship_order`
-  checks only the shipping status, not `order.status` (`order_service.py:198`). An abandoned or
+  checks only the shipping status, not `order.status` (`order_service.py:202`). An abandoned or
   not-yet-captured order shows up on the manager orders page and can be marked shipped. Require
   `order.status == confirmed` in `ship_order`.
-  **DEFERRED**: to be fixed later, with #12 and #27.
+  **Review:** no longer deferred — the guard doesn't depend on #12 or #27 (one check plus a test).
+  `update_shipping_status` (`order_service.py:164`) needs the same check.
+- [ ] **30. PayPal `create_order` runs under row locks.** Same class as #8, at checkout rather than
+  capture. `OrderService.checkout` locks the cart's products `FOR UPDATE` (`order_service.py:69`)
+  and `checkout_ticket` locks the user and the ticket type (`ticket_service.py:91`, `:99`); both
+  then call `create_order` (network, 10s timeout) through `create_payment` /
+  `create_ticket_payment` (`payment_service.py:46`, `:94`) before committing. A slow PayPal call
+  blocks every other checkout of that product or tier. Found in the 2026-11-13 review.
 - [x] **28. `GET /shipping_addresses/fetch_byid/{id}` always 500s, and has no ownership check.**
   The route (`app/router/marketplace/shipping.py:30`) has no `get_current_user` dependency but its
   limiter uses `user_key`, which reads `request.state.user` → `AttributeError` (the limiter only
@@ -123,9 +144,13 @@ they're fixed.
 ## 🟡 Medium
 
 - [ ] **18.** `change_password_process` doesn't revoke refresh tokens (reset does).
+  **Review:** low impact today — `create_tokens` already revokes every other token at login, so
+  the only live token at that point is the one in use. It matters when that token is the stolen one.
 - [ ] **19.** Password-reset JWTs are reusable until expiry (no `jti` / password-hash binding).
 - [ ] **20.** Refresh tokens stored plaintext; every login revokes all other sessions
   (`auth_service.py` `create_tokens`).
+  **Review:** only the plaintext storage is a defect. One session per user is the documented
+  design (see the comment in `create_tokens`).
 - [x] **21.** `get_current_user`: `uuid.UUID(payload.get("sub"))` 500s on missing `sub`; unknown
   user returns 404 instead of 401.
   **FIXED**: a missing or malformed `sub` and an unknown user all return 401 (`None` for
@@ -135,7 +160,8 @@ they're fixed.
   **Half fixed**: the counter is created with its TTL and incremented in one `MULTI` transaction
   (`SET key 0 EX window NX` + `INCR`), so it can't exist without an expiry. The `user_key`
   ordering dependency is still open.
-- [ ] **23.** Paginated pages return `count=len(data)` (page size, not total); manager orders page
+- [ ] **23.** Paginated pages return `count=len(data)` (page size, not total)
+  (`order_service.py:267`, `ticket_service.py:281`, `product_service.py:477`); manager orders page
   loads every product and order id into memory.
 - [ ] **24.** Draw is O(entries × preferences) plus O(ranks × campaigns × entries).
 - [ ] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
@@ -153,6 +179,18 @@ they're fixed.
   resale cap (#13), and look shippable (#26). Same root cause as #12 (no expiry for PayPal pending
   state); fix them together.
   **DEFERRED**: to be fixed later, with #12 and #26.
+- [ ] **31. Stock gone between PayPal approval and capture leaves everything pending.** When the
+  tier is sold out or a product is short at capture time, `finalize_paypal_payment` returns `None`
+  without changing anything (`payment_service.py:142`, `:180`): the fan, who already approved on
+  PayPal, gets a 404, and the ticket or order stays `pending`. Nothing was captured, so no money
+  is lost, but it feeds #12 and #27. Mark the payment failed and cancel the ticket/order instead.
+  Found in the 2026-11-13 review.
+- [ ] **32. Capture success is read from the order status only.** `finalize_paypal_payment` treats
+  the capture response's top-level `status == "COMPLETED"` as paid (`payment_service.py:154`,
+  `:183`) and never reads the capture's own status
+  (`purchase_units[].payments.captures[].status`), which can be `PENDING` or `DECLINED` on a
+  completed order. Not reproduced against the sandbox. Check the capture status too.
+  Found in the 2026-11-13 review.
 - [x] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
   `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
   `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
@@ -188,18 +226,25 @@ they're fixed.
   `"JPY"`; leftover tutorial comment in `main.py`~~ — fixed: renamed to `max_rank`, default is
   `"JPY"`, and the comment is gone.
 
-## Suggested order (updated 2026-09-29)
+## Suggested order (updated 2026-11-13)
 
-Fixed so far: #1, #3, #4, #5, #6 (mitigated), most of #9, #10, #15, #16, #17, #21, half of #22,
+Fixed so far: #1, #3, #4, #5, #6 (mitigated), #9, #10, #15, #16, #17, #21, half of #22,
 #28, #29, and eight code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
-2. **Security:** ~~#28 broken/unguarded address lookup~~ (done); #7 spoofable IP rate limits
+2. **New quick wins:** #26 require `confirmed` before shipping; #14 remove or disable the cancel
+   route.
+3. **Security:** ~~#28 broken/unguarded address lookup~~ (done); #7 spoofable IP rate limits
    (plan in `docs/plans/rate-limit-client-ip.md`); ~~#29 unauthenticated manager pages~~ (done).
-3. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
-   soft delete or block). (#13 and #14 are out of scope — the frontend doesn't call
-   `cancel_placed_order`.)
-4. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation; #11 Redis
-   outage handling (plan in `docs/plans/redis-outage.md`).
-5. **Deferred (fix later):** PayPal pending-state bugs #12 (abandoned ticket locks the fan out),
-   #26 (unpaid orders shippable), #27 (abandoned orders never expire).
+4. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
+   soft delete or block).
+5. **Planned:** #11 Redis outage handling (plan in `docs/plans/redis-outage.md`) together with
+   #25 (plan in `docs/plans/lottery-draw-post-commit.md`) — the Redis fix removes one trigger of
+   #25.
+6. **Auth:** #18, #19, then the plaintext-storage half of #20.
+7. **PayPal pending state:** #12 (abandoned ticket locks the fan out) and #27 (abandoned orders
+   never expire) with a scheduled sweep, plus #31 and #13 (the cap can only count `confirmed`
+   orders once pending ones expire or are re-checked at capture).
+8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
+   #32.
+9. **Whenever convenient:** #22, #23, #24.
