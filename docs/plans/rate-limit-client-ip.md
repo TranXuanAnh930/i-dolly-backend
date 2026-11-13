@@ -2,8 +2,10 @@
 
 English | [日本語](rate-limit-client-ip_JP.md)
 
-**Status:** steps 1–6 implemented (2026-11-13). Steps 0 and 7 need the Render deployment and are
-still open: measure the hop count, set `TRUSTED_PROXY_HOPS`, then run the production check.
+**Status:** done (2026-11-14). Steps 1–6 implemented 2026-11-13. Step 0 measured three hops on
+Render — `X-Forwarded-For` arrived as `<sent by client>, <visitor>, <Cloudflare>, <Render proxy>`
+through both the custom domain and the `onrender.com` address — so `TRUSTED_PROXY_HOPS=3`.
+Step 7: 12 wrong-password logins with a different fake header each → ten 401s, then 429.
 
 ## Problem
 
