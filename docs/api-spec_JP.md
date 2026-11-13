@@ -47,6 +47,8 @@
 |---|---|---|
 | `not_authenticated` | 401 | アクセストークンがない、不正、期限切れ、またはそのユーザーがもう存在しない |
 | `invalid_credentials` | 401 | `POST /account/login`: メールアドレスまたはパスワードが違う |
+| `too_many_login_attempts` | 429 | `POST /account/login`: このメールアドレスで 15 分以内に 5 回失敗した |
+| `too_many_reset_requests` | 429 | `POST /profile/forgot-password`: このメールアドレスで 1 時間に 3 回を超えて依頼した |
 | `invalid_refresh_token` | 401 | `POST /account/refresh`: Cookie がない、期限切れ、または失効済み |
 | `invalid_token` | 400 / 401 | メール認証のリンク（400）またはパスワードリセットのトークン（401）が不正または期限切れ |
 | `incorrect_password` | 400 | `PUT /profile/change-password`: 現在のパスワードが違う |
@@ -195,7 +197,9 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 - リクエスト: `application/x-www-form-urlencoded`（JSON ではなく OAuth2 のフォーム）— `username`（このフィールドに
   ユーザーの **メールアドレス** を送る）、`password`
 - レスポンス: スキーマで強制されていない。標準的なトークンのペア（`access_token`、`refresh_token`、`token_type`）
-- UI: ログインページ。レート制限あり（10/分/IP）。
+- UI: ログインページ。レート制限あり（10/分/IP）。加えて、メールアドレスごとに 15 分あたり 5 回の失敗まで:
+  それ以降は、期間が終わるまで、正しいパスワードでもそのメールアドレスのログインはすべて 429
+  `too_many_login_attempts` を返す。「しばらくしてからもう一度お試しください」と表示する。
 
 ### `POST /account/refresh` 🔓
 リフレッシュトークンを新しいアクセストークンと交換する。
@@ -231,7 +235,8 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 ### `POST /profile/forgot-password` 🔓
 - リクエスト（`ForgotPasswordRequest`）: `email`
 - レスポンス: `{"msg": "reset link sent successfully"}`
-- UI:「パスワードをお忘れですか？」のフロー、ステップ 1
+- UI:「パスワードをお忘れですか？」のフロー、ステップ 1。メールアドレスごとに 1 時間あたり 3 回までで、それを
+  超えると 429 `too_many_reset_requests`。
 
 ### `POST /profile/set-password` 🔓
 メールで送られたリンクのトークンを使ってパスワードリセットを完了する。

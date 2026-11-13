@@ -211,10 +211,21 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
   warning and lets the request through (fail-open). A third key function, `user_or_ip_key`, is
   for auth-optional routes (`get_current_user_optional`): it keys on the user when a token was
   sent and falls back to the `ip_key` bucket for guests. `user_key`/`user_or_ip_key` read
-  `request.state.user`, so the auth dependency must come before `rate_limit` in the signature. Behind Render's reverse proxy, `main.py` wraps the app in
-  `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware` so `ip_key` sees a client IP rather
-  than the proxy's — but with `trusted_hosts="*"` that IP is the leftmost `X-Forwarded-For` hop,
-  which the client controls (`docs/bugs.md` #7; fix plan in `docs/plans/rate-limit-client-ip.md`).
+  `request.state.user`, so the auth dependency must come before `rate_limit` in the signature. `ip_key` takes the visitor's address from `client_ip()`, the one function that decides it.
+  Each trusted proxy appends the address it received the request from to `X-Forwarded-For`, so
+  with `TRUSTED_PROXY_HOPS` proxies in front the visitor is that many entries from the right;
+  everything further left was written by the client and is ignored. With the setting at `0`
+  (local dev), a header shorter than expected, or an entry that isn't an IP, it falls back to the
+  peer address. Nothing rewrites `request.client`: `main.py` no longer installs
+  `ProxyHeadersMiddleware`, whose `trusted_hosts="*"` took the leftmost, client-written entry
+  (`docs/bugs.md` #7).
+
+  **Per-account limits.** IP limits can't stop an attacker with many real IPs, so two routes also
+  count per email: `POST /account/login` allows 5 failed attempts per 15 minutes (checked before
+  the password; a success clears the count) and `POST /profile/forgot-password` allows 3 requests
+  per hour. Both count registered and unregistered addresses the same way, so the 429 doesn't
+  reveal whether an account exists, and key on a SHA-256 of the lower-cased email. The trade-off:
+  anyone who knows an address can lock its login for up to 15 minutes.
 
   **Coverage policy**:
 

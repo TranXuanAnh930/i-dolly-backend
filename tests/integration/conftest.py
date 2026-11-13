@@ -86,8 +86,6 @@ def reset_rate_limits():
     """Every integration test file needs this identically (rate_limit()'s
     Redis counters would otherwise leak between tests and randomly 429 an
     unrelated later test) — shared here instead of copy-pasted per file."""
-    for key in fake_redis.scan_iter("rate:ip:*"):
-        fake_redis.delete(key)
-    for key in fake_redis.scan_iter("rate:user:*"):
+    for key in fake_redis.scan_iter("rate:*"):
         fake_redis.delete(key)
     yield
