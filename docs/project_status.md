@@ -312,7 +312,8 @@ newly introduced.
    transport layer with `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware`
    (`trusted_hosts="*"`, since only Render's network can reach the container directly), not a
    hand-rolled `X-Forwarded-For` parse — that header is client-settable, so a naive parse would
-   let an attacker mint a fresh bucket per request.
+   let an attacker mint a fresh bucket per request. (That fix was itself spoofable and has been
+   replaced — see item 49.)
    ~~**Two more real bugs**~~ — **FIXED**: (a) the limiter's `GET` → conditional `SETEX`/`INCR`
    sequence was a non-atomic check-then-act, so a burst of concurrent requests could all see "no
    counter yet" and never trip the limit. Replaced with one `MULTI` transaction (`SET key 0 EX
@@ -1091,6 +1092,31 @@ newly introduced.
     `test_permissions.py::test_manager_settings_page_role_gate` (401/403/200 for all seven
     manager pages), plus manager-vs-admin scoping tests in `test_idol_group_management.py`,
     `test_product_management.py` and `test_ticket_and_concert_endpoints.py`.
+
+49. ~~**IP rate limits could be bypassed with a forged `X-Forwarded-For`**~~ (`bugs.md` #7) —
+    **FIXED in code, one deployment step left.** `ProxyHeadersMiddleware(trusted_hosts="*")` set
+    `request.client.host` from the leftmost header entry, which the client writes, so rotating it
+    gave every request a fresh bucket. Now:
+    - `main.py` no longer installs the middleware. `rate_limit.client_ip()` is the only place
+      that decides the visitor's address: the entry `TRUSTED_PROXY_HOPS` from the right of
+      `X-Forwarded-For` (each trusted proxy appends one), falling back to the peer address when
+      the setting is `0`, the header is too short, or the entry isn't an IP.
+    - `POST /account/login` also allows only 5 failed attempts per email per 15 minutes, and
+      `POST /profile/forgot-password` 3 requests per email per hour, both 429 past that. They
+      count unregistered addresses too, so the 429 isn't an account-existence oracle.
+    - Tests: `tests/unit/test_rate_limit.py` (`client_ip` cases, the two per-email limits) and
+      `tests/unit/identity/test_auth_rate_limits.py`, which drives the real routers over HTTP with
+      the database mocked — 11 logins with a rotating fake entry and one real IP → the 11th is 429.
+      The `client_ip` and spoofing tests fail if the code reads the leftmost entry.
+    - Verified with the unit suite only (594 passing) and ruff; the integration suite wasn't run
+      locally for this change (no Postgres available) and is left to CI.
+    - **Still to do:** measure the hop count on Render and set `TRUSTED_PROXY_HOPS`
+      (`deployment.md` §7). Until it's set, the default `0` ignores the header and every visitor
+      shares the proxy's bucket — safe against spoofing, but one busy client can rate-limit
+      everyone.
+    - **Known limitations:** anyone who knows an email can lock its login for up to 15 minutes;
+      an IPv6 client can still rotate addresses inside its own prefix; with the middleware gone
+      `request.url.scheme` is `http` behind Render (nothing reads it today).
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.cache.rate_limit import ip_key, rate_limit, user_key
+from app.cache.rate_limit import forgot_password_limit_exceeded, ip_key, rate_limit, user_key
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user, require_admin
 from app.deps.db import get_db
@@ -34,6 +34,9 @@ def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_curren
 
 @router.post("/forgot-password", response_model=MessageResponse)
 def forgot_password(payload:ForgotPasswordRequest, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
+    # Per-email limit, counted the same for registered and unregistered addresses.
+    if forgot_password_limit_exceeded(payload.email):
+        raise ApiHTTPException(status_code=429, detail="Too many password reset requests. Please try again later.", code="too_many_reset_requests")
     # Same response whether or not the email exists, so accounts can't be enumerated.
     UserService.reset_password_process(db, payload.email)
     return MessageResponse(msg="If that email is registered, a password reset link has been sent")

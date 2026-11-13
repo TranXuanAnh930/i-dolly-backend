@@ -148,10 +148,25 @@ scheduler process.
 | `PAYPAL_MODE` | `sandbox` (or `live`) | |
 | `PAYPAL_WEBHOOK_ID` | the webhook's id from the PayPal dashboard | used to verify `POST /payment/paypal/webhook` signatures |
 | `CORS_ORIGINS` | your frontend's real origin(s), comma-separated | e.g. `https://your-frontend.vercel.app` |
+| `TRUSTED_PROXY_HOPS` | the measured number of proxy hops (see below) | default `0` ignores `X-Forwarded-For`, which behind Render puts every visitor in one rate-limit bucket |
 | `STORAGE_BACKEND` | `s3` | per the chosen option in §3 |
 | `S3_BUCKET_NAME` / `S3_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | from §3 | |
 | `S3_ENDPOINT_URL` | your provider's endpoint | **omit for real AWS S3**, required for R2/Spaces |
 | `S3_PUBLIC_URL_BASE` | optional CDN/custom domain | falls back to a computed bucket URL if unset |
+
+**Measuring `TRUSTED_PROXY_HOPS`.** Each proxy in front of the app appends the address it got the
+request from to `X-Forwarded-For`; the setting is how many of those trusted entries there are.
+Too high trusts an entry the client wrote (spoofable limits, `docs/bugs.md` #7); too low
+rate-limits visitors together. Measure it, don't assume:
+
+1. Temporarily log `request.headers.getlist("x-forwarded-for")` and `request.client.host` in the
+   `/` handler and deploy.
+2. `curl -H "X-Forwarded-For: 1.2.3.4" https://<your-api-domain>/` — through the public domain,
+   so any CDN or DNS proxy in front of Render is counted too.
+3. In the logged header, the number of entries after `1.2.3.4` is the value to set. The first of
+   them should be your own public IP.
+4. Remove the log line, set `TRUSTED_PROXY_HOPS`, redeploy. Measure again if the proxy setup
+   changes (for example switching a DNS record between proxied and DNS-only).
 
 ## 8. First deploy — migrations are the real risk here
 
@@ -190,6 +205,9 @@ so the secret needs to be re-added for this repo:
 4. If you seed data: `render shell` into the service (or a one-off Render job) and run
    `python scripts/seed.py` (or `python scripts/seed_ja.py` for the Japanese version) — it's
    idempotent, safe to run once against the fresh Supabase DB.
+5. Rate-limit check: send about 12 wrong-password `POST /account/login` requests, each with a
+   different fake `X-Forwarded-For` value and a different email — the 11th should be a 429. Then
+   confirm a request from a second network isn't already limited.
 
 ## 11. Known limitations carried into this deploy
 
@@ -198,8 +216,8 @@ so the secret needs to be re-added for this repo:
   draw never runs, and no email is ever delivered.
 - `app/cache/redis_client.py` has no password/TLS support (§4), so Redis has to be reachable over
   Render's internal network.
-- IP-based rate limits trust the leftmost `X-Forwarded-For` hop, which a client can spoof behind
-  Render's proxy (`docs/bugs.md` #7, fix plan in `docs/plans/rate-limit-client-ip.md`).
+- IP-based rate limits are only as good as `TRUSTED_PROXY_HOPS` (§7): it has to be measured on the
+  live deployment and re-measured when the proxy setup changes.
 - A Redis outage turns cached reads and post-commit cache invalidation into 500s
   (`docs/bugs.md` #11, fix plan in `docs/plans/redis-outage.md`).
 - The PayPal webhook path has never received a real delivery, and the decline path hasn't been

@@ -20,6 +20,9 @@ projects:
         sync: false
       - key: CORS_ORIGINS
         sync: false
+      # Proxy hops that append to X-Forwarded-For; measure before setting (docs/deployment.md).
+      - key: TRUSTED_PROXY_HOPS
+        sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
       - key: AWS_ACCESS_KEY_ID
