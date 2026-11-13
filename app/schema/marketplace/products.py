@@ -26,6 +26,8 @@ class ProductCreate(ProductBase):
 class ProductRead(ProductBase):
     id: uuid.UUID
     category : str
+    # False once the product is deactivated (soft-deleted). Only the manager pages list those.
+    is_active: bool = True
 
 # Product with its full CategoryRead (ProductRead has only the category name).
 class ProductWithCategoryRead(ProductBase):

@@ -7,6 +7,10 @@ class CartItemError(CodedError):
 class InsufficientStockError(CartItemError):
     code = "insufficient_stock"
 
+class ProductUnavailableError(CartItemError):
+    """A product in the cart has been deactivated (soft-deleted) since it was added."""
+    code = "product_unavailable"
+
 class PaymentAmountMismatch(CartItemError):
     code = "amount_mismatch"
 

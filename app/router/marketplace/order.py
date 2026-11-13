@@ -16,6 +16,7 @@ from app.exception.checkout import (
     CartItemError,
     InsufficientStockError,
     PaymentAmountMismatch,
+    ProductUnavailableError,
     UnsupportedGatewayError,
 )
 from app.exception.common import ServiceError
@@ -42,7 +43,7 @@ def checkout_order(data:PaymentCreate, user:Users=Depends(get_current_user), _:N
             celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.ORDER_PLACED.subject, email_body])
         return order
     # Specific errors first: several subclass CartItemError, which is caught later as a 404.
-    except (InsufficientStockError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
+    except (InsufficientStockError, ProductUnavailableError, PaymentAmountMismatch, UnsupportedGatewayError) as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e)) from e
     except (CartItemError, AddressIdError) as e:

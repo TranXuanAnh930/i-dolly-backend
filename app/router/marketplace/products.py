@@ -193,6 +193,7 @@ def upload_product_image(id:uuid.UUID, image: UploadFile = File(...), current_us
 
 @router.delete("/delete/{id}", response_model=MessageResponse)
 def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
+    # Soft delete; see product_service.delete_product.
     try:
         ProductService.delete_product(db, id, current_user)
     except ServiceError as e:
@@ -200,7 +201,20 @@ def delete_existing_product(id:uuid.UUID, current_user:Users=Depends(require_man
     CacheService.delete_cached_products()
     CacheService.delete_cached_manager_products_pages()
     CacheService.delete_cached_product_details()
+    CacheService.delete_cached_group_details()  # group detail pages list the group's products
     return MessageResponse(msg="Product Deleted successfully")
+
+@router.patch("/activate/{id}", response_model=MessageResponse)
+def activate_existing_product(id:uuid.UUID, current_user:Users=Depends(require_manager_or_admin), db:Session=Depends(get_db)) -> MessageResponse:
+    try:
+        ProductService.reactivate_product(db, id, current_user)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    CacheService.delete_cached_products()
+    CacheService.delete_cached_manager_products_pages()
+    CacheService.delete_cached_product_details()
+    CacheService.delete_cached_group_details()
+    return MessageResponse(msg="Product activated successfully")
 
 # Not used by the frontend.
 @router.post("/bulk_products", response_model=MessageResponse)

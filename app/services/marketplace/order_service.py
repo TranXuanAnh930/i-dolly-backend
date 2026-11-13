@@ -12,6 +12,7 @@ from app.exception.checkout import (
     CartItemError,
     InsufficientStockError,
     PaymentAmountMismatch,
+    ProductUnavailableError,
     UnsupportedGatewayError,
 )
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
@@ -67,6 +68,11 @@ class OrderService:
         # resale-cap and stock checks below read counts no concurrent checkout can still change.
         # populate_existing() makes the checks read the locked rows, not a stale identity-map copy.
         products = db.query(Product).filter(Product.id.in_(product_ids)).order_by(Product.id).with_for_update().populate_existing().all()
+
+        # Deactivating a product empties it from carts, so this only catches one deactivated
+        # between the cart read above and the lock.
+        if any(not product.is_active for product in products):
+            raise ProductUnavailableError("A product in your cart is no longer available")
 
         capped_product_ids = set(
             db.scalars(select(Product.id).filter(Product.id.in_(product_ids), Product.category.has(is_resale_capped=True)))

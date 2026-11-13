@@ -10,8 +10,11 @@ a known issue gets fixed, don't let it drift into aspirational state.
 
 ## 1. Current migration state
 
-**Chain head: `b8e2d4f6a1c3`** (`create_inquiries_table`) — 64 migrations,
-one linear chain, no branches. CI runs `alembic upgrade head` from empty against Postgres 16 on
+**Chain head: `c5e9a3b7d1f6`** (`restrict_products_category_fk`) — 68 migrations,
+one linear chain, no branches. The last three (`a1c5e7f9b3d2`, `b3d7f1a5c9e4`, `c5e9a3b7d1f6`,
+item 51 in §4) were applied to a local Postgres by the integration suite's `alembic upgrade head`
+from empty, and round-tripped once by hand (downgrade to `d4a7c9e2f1b5`, upgrade to head); not yet
+applied to Supabase. CI runs `alembic upgrade head` from empty against Postgres 16 on
 every push/PR, then the full test suite; the chain through `b8e2d4f6a1c3` passed there on
 `develop` (2026-09-29, CI run 131). Not yet re-applied to Supabase. Up through `a3f7c9e2b6d4` (`add_password_reset_to_notification_type`),
 applied and confirmed against a real Postgres instance: `alembic upgrade head` ran clean from
@@ -1143,6 +1146,41 @@ newly introduced.
       Until then the button returns the `order_not_paid` error on an unpaid order. Handover, also
       covering the two per-email 429 codes from item 49:
       `docs/frontend-tasks/auth-limits-and-unpaid-orders.md`.
+
+51. ~~**Deleting a product deleted its lines from past orders**~~ (`bugs.md` #2) — **FIXED**
+    with a soft delete, the same pattern as groups and idols (item 17).
+    - **Schema**, one migration per concern: `a1c5e7f9b3d2` adds `products.is_active` (not null,
+      default true); `b3d7f1a5c9e4` changes `orders_items.product_id` from `ON DELETE CASCADE` to
+      `RESTRICT`; `c5e9a3b7d1f6` does the same for `products.category_id`. The two `RESTRICT`s are
+      the backstop: the database now refuses to delete a product that has been ordered, or a
+      category that has products, whatever the code does.
+    - **Delete** (`DELETE /products/delete/{id}`) sets `is_active = false` and removes the product
+      from every cart. **Reactivate** is a new `PATCH /products/activate/{id}`, same company
+      scoping.
+    - **Reads:** fan-facing reads filter to active products — `/products/all`, `store-page`,
+      `search`, `filter`, `pagination`, a product's own detail page (404 once deactivated), the
+      recommendations on other detail pages, and the product list on a group detail page. The two
+      manager pages still list deactivated products, with a new `is_active` field on each row, so
+      they can be reactivated. Edit, image upload and the sales page work on a deactivated product.
+    - **Buying:** `add_to_cart` answers 404 for a deactivated product; checkout raises
+      `ProductUnavailableError` (`400 product_unavailable`) if the cart still holds one, which
+      can only happen in the window between reading the cart and locking the products.
+    - **Categories:** `delete_category` refuses with `400 category_in_use` while the category has
+      any product, active or not. Before, the cascade deleted the products and their order lines.
+    - **Tests:** unit tests for delete/reactivate, the cart guard and the category guard.
+      Integration tests in `test_product_management.py`: order lines and sales survive a delete;
+      the product disappears from every fan-facing read and stays on the manager pages; carts are
+      emptied; checkout rejects a deactivated product; reactivation and its scoping; a raw SQL
+      `DELETE` of an ordered product, and of a category with products, raises a foreign-key error.
+      `test_orders_concurrency.py`'s cleanup deleted a category and relied on the cascade; it now
+      deletes the category's products first.
+    - **Verified:** 611 unit and 402 integration tests pass against local Postgres and Redis, ruff
+      clean.
+    - **Known limitations:** a PayPal order still pending when its product is deactivated can be
+      captured (`bugs.md` #33). There is no way to hard-delete a product, even one that was never
+      ordered. Group detail pages are cached for up to five minutes and only invalidated on
+      product delete/reactivate, as before for other product edits.
+    - **Frontend follow-up:** `docs/frontend-tasks/product-soft-delete.md`.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

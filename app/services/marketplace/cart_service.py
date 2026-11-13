@@ -22,7 +22,7 @@ class CartService:
             # Primary check; trg_cart_fan_only is the backstop.
             raise FanOnlyPurchaseError("Only fan accounts can add items to a cart")
         product = db.query(Product).filter(Product.id==cart_item.product_id).with_for_update().first()
-        if not product:
+        if not product or not product.is_active:
             raise NotFoundError("Product not found")
         if product.quantity < cart_item.quantity:
             raise BadRequestError("Insufficient stock", code="insufficient_stock")

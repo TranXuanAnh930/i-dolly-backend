@@ -37,6 +37,7 @@ def make_mock_product(id=DEFAULT_ID, name="Phone", price=999.0, description="A p
     product.quantity = quantity
     product.category_id = category_id
     product.image_url = None
+    product.is_active = True
     cat = MagicMock()
     cat.id = category_id
     cat.name = "Electronics"
@@ -56,7 +57,7 @@ class TestProductService:
 
         db = MagicMock()
         mock_products = [make_mock_product(), make_mock_product(id=OTHER_ID)]
-        db.query().options().all.return_value = mock_products
+        db.query().options().filter().all.return_value = mock_products
 
         result = ProductService.list_of_products(db)
         assert len(result) == 2
@@ -65,7 +66,7 @@ class TestProductService:
         from app.services.marketplace.product_service import ProductService
 
         db = MagicMock()
-        db.query().options().all.return_value = []
+        db.query().options().filter().all.return_value = []
 
         result = ProductService.list_of_products(db)
         assert result == []
@@ -139,8 +140,54 @@ class TestProductService:
         admin = make_mock_user(role="admin")
 
         ProductService.delete_product(db, DEFAULT_ID, admin)
-        db.delete.assert_called_once_with(mock_prod)
+
+        # Soft delete (bugs.md #2): the row stays, so order history keeps its lines.
+        assert mock_prod.is_active is False
+        db.delete.assert_not_called()
         db.commit.assert_called_once()
+
+    def test_delete_product_empties_it_from_carts(self):
+        from app.db.models.marketplace import Cart
+        from app.services.marketplace.product_service import ProductService
+
+        db = MagicMock()
+        db.get.return_value = make_mock_product()
+
+        ProductService.delete_product(db, DEFAULT_ID, make_mock_user(role="admin"))
+
+        db.query.assert_called_once_with(Cart)
+        db.query.return_value.filter.return_value.delete.assert_called_once()
+
+    def test_reactivate_product(self):
+        from app.services.marketplace.product_service import ProductService
+
+        db = MagicMock()
+        mock_prod = make_mock_product()
+        mock_prod.is_active = False
+        db.get.return_value = mock_prod
+
+        ProductService.reactivate_product(db, DEFAULT_ID, make_mock_user(role="admin"))
+
+        assert mock_prod.is_active is True
+        db.commit.assert_called_once()
+
+    def test_reactivate_product_not_found(self):
+        from app.exception.common import NotFoundError
+        from app.services.marketplace.product_service import ProductService
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        with pytest.raises(NotFoundError):
+            ProductService.reactivate_product(db, MISSING_ID, make_mock_user(role="admin"))
+
+    def test_manager_page_row_carries_is_active(self):
+        from app.services.marketplace.product_service import ProductService
+
+        product = make_mock_product()
+        product.is_active = False
+
+        assert ProductService._product_read_dict(product).is_active is False
 
     def test_delete_product_not_found(self):
         from app.exception.common import NotFoundError
@@ -158,7 +205,7 @@ class TestProductService:
 
         db = MagicMock()
         mock_products = [make_mock_product()]
-        db.query().offset().limit().all.return_value = mock_products
+        db.query().filter().offset().limit().all.return_value = mock_products
 
         result = ProductService.pagination_process(db, page=1, limit=10)
         assert len(result) == 1
@@ -196,7 +243,7 @@ def make_products_query_db(products, albums=None, merch=None, album_genres=None,
             q.options.return_value.filter.return_value.first.return_value = (
                 products[0] if len(products) == 1 else None
             )
-            q.options.return_value.all.return_value = products
+            q.options.return_value.filter.return_value.all.return_value = products
         elif model is AlbumDetail:
             q.filter.return_value.all.return_value = albums or []
         elif model is MerchDetail:
@@ -223,7 +270,7 @@ class TestProductPages:
         from app.services.marketplace.product_service import ProductService
 
         db = MagicMock()
-        db.query().options().all.return_value = []
+        db.query().options().filter().all.return_value = []
 
         result = ProductService.get_store_page(db)
         assert result.products == []
@@ -278,7 +325,7 @@ class TestProductPages:
             q = MagicMock()
             if model is Product:
                 q.options.return_value.filter.return_value.first.return_value = target
-                q.options.return_value.all.return_value = [target, same_artist, unrelated]
+                q.options.return_value.filter.return_value.all.return_value = [target, same_artist, unrelated]
             elif model is AlbumDetail:
                 q.filter.return_value.all.return_value = albums
             elif model is MerchDetail:

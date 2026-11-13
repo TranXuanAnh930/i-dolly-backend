@@ -76,10 +76,27 @@ class TestCategoryService:
         db = MagicMock()
         mock_cat = MagicMock()
         db.get.return_value = mock_cat
+        db.query.return_value.filter.return_value.first.return_value = None  # no products in it
 
         result = CategoryService.delete_category(db, DEFAULT_ID)
         assert result is True
         db.delete.assert_called_once()
+
+    def test_delete_category_with_products_is_refused(self):
+        # bugs.md #2: deleting it would delete its products, and their order history with them.
+        from app.exception.common import BadRequestError
+        from app.services.marketplace.category_service import CategoryService
+
+        db = MagicMock()
+        db.get.return_value = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = (DEFAULT_ID,)
+
+        with pytest.raises(BadRequestError) as exc_info:
+            CategoryService.delete_category(db, DEFAULT_ID)
+
+        assert exc_info.value.code == "category_in_use"
+        db.delete.assert_not_called()
+        db.commit.assert_not_called()
 
     def test_delete_category_not_found(self):
         from app.services.marketplace.category_service import CategoryService

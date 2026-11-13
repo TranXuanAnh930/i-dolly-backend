@@ -66,6 +66,8 @@ additionally 403 when a manager acts outside their own company's resources (note
 | `internal_error` | 500 | Unexpected server error (logged server-side); safe to retry reads |
 | `invalid_image` | 400 | Image upload rejected: unsupported type, over 5 MB, or storage misconfigured |
 | `insufficient_stock` | 400 | Cart add or order checkout: not enough stock |
+| `product_unavailable` | 400 | Order checkout: a product in the cart was deactivated after it was added |
+| `category_in_use` | 400 | Deleting a category that still has products (admin) |
 | `cart_empty` | 404 | `POST /order/checkout` with an empty cart |
 | `address_not_found` | 404 | Checkout with an unknown shipping address |
 | `amount_mismatch` | 400 | Checkout `amount` doesn't match the current total (prices changed — refetch) |
@@ -807,10 +809,12 @@ Note: `id` is a query param here, not a path segment.
 
 ### `DELETE /categories/delete/{id}` 🔒 admin
 - Response: `{"msg": "Category deleted successfully"}`
+- Errors: `400` `category_in_use` while the category has any product, including deactivated ones
 
 ### `GET /products/all` 🔓
 - Response: `List[ProductRead]` (`id`, `name`, `price`, `description`, `quantity`, `image_url`,
-  `category` — the category *name* as a string, not the id)
+  `category` — the category *name* as a string, not the id; `is_active`, always `true` here).
+  Deactivated products are left out
 - UI: merch catalog grid
 
 ### `GET /products/store-page` 🔓
@@ -819,26 +823,29 @@ Note: `id` is a query param here, not a path segment.
   `image_url`, `category` (name), `album` (album details or `null`), `genres`, `artist` (the
   credited idol/group or `null`), `resale_cap_quantity` (per-fan lifetime cap, or `null` if the
   category isn't capped)
+- Deactivated products are left out
 - Errors: `404` if there are no products
 - UI: store page
 
 ### `GET /products/{id}/detail` 🔓
 - Response (`ProductDetailRead`): `product` (`ProductCard`), `recommendations`
   (`List[ProductCard]`)
-- Errors: `404` if the product doesn't exist
+- Errors: `404` if the product doesn't exist or has been deactivated. Deactivated products are
+  left out of `recommendations` too
 - UI: product detail page
 
 ### `GET /products/manager-products-page` 🔒 manager+ (company-scoped)
 - Request: query param `company_id` (uuid, optional, **admins only** — a manager always gets their
   own company and the param is ignored; an admin omitting it gets every product)
 - Response (`ManagerProductsPageRead`): `products` (`List[ProductRead]`) — the company's products
-  plus ownerless ones (no album/merch detail)
+  plus ownerless ones (no album/merch detail). Deactivated products are included; each row has
+  `is_active` (bool)
 - Errors: `401` without a token, `403` for a fan
 - UI: manager — products table
 
 ### `GET /products/manager-product-form-page` 🔒 manager+ (company-scoped)
 - Request: query param `company_id` (uuid, optional, **admins only** — as above)
-- Response (`ManagerProductFormPageRead`): `products` (scoped as above), `categories`, `idols`,
+- Response (`ManagerProductFormPageRead`): `products` (scoped as above, `is_active` included), `categories`, `idols`,
   `groups`, `colors` — everything the create/edit form's pickers need. For a manager, `idols` and
   `groups` are their own company's; an admin gets every company's. `categories`/`colors` are shared
 - Errors: `401` without a token, `403` for a fan
@@ -903,8 +910,16 @@ Replace a product's image only.
 - UI: manager — edit product, "change photo"
 
 ### `DELETE /products/delete/{id}` 🔒 manager+ (same company-scoping as update)
-- Response: `{"detail": "Product Deleted successfully"}` — note the key is `detail`, not `msg`,
-  unlike every other delete endpoint on this list
+Soft delete — sets `is_active = false`; the row and every order line that references it stay. The
+product disappears from the store and from every cart, and can no longer be bought.
+- Response: `{"msg": "Product Deleted successfully"}`
+- UI: manager — products table, "delete" (shown as "deactivate" is more accurate)
+
+### `PATCH /products/activate/{id}` 🔒 manager+ (same company-scoping as update)
+Reverses the delete above — sets `is_active = true`. Carts emptied by the delete are not refilled.
+- Response: `{"msg": "Product activated successfully"}`
+- Errors: `404` (no such product), `403` (another company's product)
+- UI: manager — products table, "reactivate" on a deactivated product
 
 ### `POST /products/bulk_products` 🔒 manager+
 - Request: `List[ProductCreate]` (JSON array; each item needs `category_id` — no image support
@@ -1007,6 +1022,7 @@ rename.)
 - Response: not schema-enforced; the raw `Cart` row (`id`, `product_id`, `quantity`, `user_id`,
   `price`, `total_price`) — adding an item already in the cart increments its quantity rather
   than creating a duplicate row
+- Errors: `404` if the product doesn't exist or has been deactivated, `400` `insufficient_stock`
 - UI: "Add to cart" button anywhere a product is shown
 
 ### `GET /cart/see_cart` 🔒 fan
@@ -1056,7 +1072,7 @@ follow up with `GET /payment/status/order/{order_id}` (below) to fetch the payme
   (always present — every order gets a `shipping_status` row at `"pending"` in the same checkout
   transaction, not created lazily later), `shippingaddress`
 - Errors: `404` (`cart_empty` / `address_not_found`), `400` (`insufficient_stock`,
-  `amount_mismatch`, `unsupported_gateway`, `resale_cap_exceeded`), `403` (`fan_only_purchase`),
+  `product_unavailable`, `amount_mismatch`, `unsupported_gateway`, `resale_cap_exceeded`), `403` (`fan_only_purchase`),
   `409` (`duplicate_idempotency_key`). A declined mock payment is **not** an error: `200` with
   `status: "cancelled"` — distinguish these in the UI rather than showing one generic "checkout failed"
 - UI: checkout page's final "place order" action

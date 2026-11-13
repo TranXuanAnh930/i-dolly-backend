@@ -31,7 +31,7 @@ class OrderItem(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
     quantity = Column(Integer, nullable=False)
     price = Column(Float, nullable=False)
 

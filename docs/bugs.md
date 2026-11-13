@@ -20,9 +20,14 @@ still hold. That pass corrected line references, added the **Review** notes belo
   No `UNIQUE(order_id)`; `Order.shippingstatus` is `uselist=False`, so which row loads is
   arbitrary — a declined order can read as `pending` and be shipped. `project_status.md` item 43's
   premise ("nothing inserted a shipping_status row") is wrong. Fix + add a unique constraint.
-- [ ] **2. Deleting a product deletes order history.** `order_items.product_id` is
+- [x] **2. Deleting a product deletes order history.** `order_items.product_id` is
   `ON DELETE CASCADE` (`models/marketplace/order.py:34`) and `delete_product` hard-deletes
   (`product_service.py:201`). Any manager can do this to ownerless merch. Same class as item 17.
+  **FIXED** (`project_status.md` §4 item 51): products are soft-deleted through a new
+  `products.is_active` flag, and `orders_items.product_id` is `ON DELETE RESTRICT`, so the
+  database refuses to drop a product that has been ordered. The same hole through categories is
+  closed too: `products.category_id` is `RESTRICT` and `delete_category` refuses a category that
+  still has products. Follow-up: #33.
 - [x] **3. Cart IDOR.** **FIXED**: the query now also filters by `Cart.user_id`. `CartService.remove_cart` (`cart_service.py:51`) filters only by
   `Cart.id`; `user_id` is accepted but unused — any user can delete anyone's cart row.
 - [x] **4. Lottery apply ignores entry window and campaign status.** `_stage_entry`
@@ -202,6 +207,13 @@ still hold. That pass corrected line references, added the **Review** notes belo
   (`purchase_units[].payments.captures[].status`), which can be `PENDING` or `DECLINED` on a
   completed order. Not reproduced against the sandbox. Check the capture status too.
   Found in the 2026-11-13 review.
+- [ ] **33. A pending PayPal order can still be captured after its product is deactivated.**
+  Applies once products are soft-deleted (#2). `finalize_paypal_payment` re-checks stock before
+  capturing but not whether the product is still on sale, so an order placed while the product was
+  active is captured and confirmed after a manager deactivates it. Left as is for now: the fan
+  ordered while it was on sale, and stock is still enforced. To fix later, with the other PayPal
+  pending-state items (#27, #31): treat an inactive product at capture like missing stock — fail
+  the payment and cancel the order instead of capturing. Noted 2026-11-14.
 - [x] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
   `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
   `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
@@ -239,7 +251,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
 
 ## Suggested order (updated 2026-11-13)
 
-Fixed so far: #1, #3, #4, #5, #6 (mitigated), #7, #9, #10, #14 (mitigated), #15, #16, #17, #21,
+Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #14 (mitigated), #15, #16, #17, #21,
 half of #22, #26, #28, #29, and eight code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
@@ -247,14 +259,14 @@ half of #22, #26, #28, #29, and eight code smells.
    route~~ (done).
 3. **Security:** ~~#28 broken/unguarded address lookup~~ (done); ~~#7 spoofable IP rate limits~~
    (done); ~~#29 unauthenticated manager pages~~ (done).
-4. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
-   soft delete or block).
+4. ~~Data integrity and money: #2 product delete wipes order history (migration to `RESTRICT` +
+   soft delete or block)~~ (done).
 5. **Planned:** #11 Redis outage handling (plan in `docs/plans/redis-outage.md`) together with
    #25 (plan in `docs/plans/lottery-draw-post-commit.md`) — the Redis fix removes one trigger of
    #25.
 6. **Auth:** #18, #19, then the plaintext-storage half of #20.
 7. **PayPal pending state:** #12 (abandoned ticket locks the fan out) and #27 (abandoned orders
-   never expire) with a scheduled sweep, plus #31 and #13 (the cap can only count `confirmed`
+   never expire) with a scheduled sweep, plus #31, #33 and #13 (the cap can only count `confirmed`
    orders once pending ones expire or are re-checked at capture).
 8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
    #32.

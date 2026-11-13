@@ -160,14 +160,16 @@ def get_product_quantity(product_id: uuid.UUID) -> int:
 # that's left behind is visible to every test that runs after it. A leftover
 # Category/Product/Users row already broke test_products.py's "list all
 # products" tests and test_management_companies.py's "list companies when
-# empty" test the first time this file ran without cleanup. Deletes cascade
-# (products.category_id, orders_items.{order_id,product_id}, orders.user_id,
-# cart.user_id, shipping_addresses.user_id, payments.user_id are all ON
-# DELETE CASCADE), so deleting the category and the racer users is enough to
-# remove everything a test here created.
+# empty" test the first time this file ran without cleanup. Deleting the racer
+# users cascades to their orders, order items, carts, addresses and payments
+# (all ON DELETE CASCADE from users/orders). Products and categories don't
+# cascade: orders_items.product_id and products.category_id are ON DELETE
+# RESTRICT, so call cleanup_fans first, then cleanup_category, which removes
+# the category's products before the category itself.
 
 def cleanup_category(category_id: uuid.UUID) -> None:
     with db_session() as db:
+        db.query(Product).filter(Product.category_id == category_id).delete()
         db.query(Category).filter(Category.id == category_id).delete()
         db.commit()
 

@@ -3,15 +3,18 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+import sqlalchemy
 from fastapi.testclient import TestClient
 
-from app.db.models.marketplace import AlbumDetail, MerchDetail, Product
+from app.db.models.marketplace import AlbumDetail, Cart, MerchDetail, OrderItem, Product
+from app.utils.tax import with_tax
 from main import app
 
 # ───────────────────────────────────────────────────────────────
 # Product management over real HTTP + Postgres: creating a product together with its
 # album/merch detail (company-scoped through the idol/group it's attached to), image upload,
-# delete, bulk add, the company-scoped manager pages, sales history, and the public read pages.
+# soft delete and reactivation, bulk add, the company-scoped manager pages, sales history, and the
+# public read pages.
 # Price-lock rules on update are covered in tests/integration/test_permissions.py.
 # ───────────────────────────────────────────────────────────────
 
@@ -281,8 +284,10 @@ def test_delete_scoping(world, owned_products):
     assert client.delete(f"/products/delete/{ownerless_id}", headers=manager_a).status_code == 200
     assert client.delete(f"/products/delete/{uuid.uuid4()}", headers=manager_a).status_code == 404
     seed.db.expire_all()
-    assert seed.db.get(Product, b_id) is not None
-    assert seed.db.get(Product, a_id) is None
+    assert seed.db.get(Product, b_id).is_active is True
+    # Soft delete: the rows are still there, deactivated.
+    assert seed.db.get(Product, a_id).is_active is False
+    assert seed.db.get(Product, ownerless_id).is_active is False
 
 
 # ───────────────────────────────────────────────────────────────
@@ -405,3 +410,145 @@ def test_search_all_pagination_and_filter(world, owned_products):
     })
     assert filtered.status_code == 200
     assert str(product_a.id) in {p["id"] for p in filtered.json()["data"]}
+
+
+# ───────────────────────────────────────────────────────────────
+# Soft delete (bugs.md #2): "delete" deactivates, order history survives
+# ───────────────────────────────────────────────────────────────
+
+def delete_product(world, product, user_key="admin"):
+    res = client.delete(f"/products/delete/{product.id}", headers=world["seed"].headers(world[user_key]))
+    assert res.status_code == 200
+    world["seed"].db.expire_all()
+
+
+def test_deleted_product_keeps_its_order_lines(world, owned_products):
+    product_a, _, _ = owned_products
+    seed = world["seed"]
+    order = seed.order(world["fan"].id, [(product_a, 2)])
+
+    delete_product(world, product_a, "manager_a")
+
+    assert seed.db.query(OrderItem).filter(OrderItem.order_id == order.id).count() == 1
+    [placed] = client.get("/order/fetch_placed_order", headers=seed.headers(world["fan"])).json()
+    assert [(i["product_id"], i["quantity"]) for i in placed["items"]] == [(str(product_a.id), 2)]
+    # The manager can still read its sales.
+    sales = client.get(f"/products/{product_a.id}/sales", headers=seed.headers(world["manager_a"]))
+    assert [s["order_id"] for s in sales.json()["data"]] == [str(order.id)]
+
+
+def test_deleted_product_is_hidden_from_fans_but_listed_for_managers(world, owned_products):
+    product_a, product_b, _ = owned_products
+    seed = world["seed"]
+
+    delete_product(world, product_a)
+
+    store_ids = {p["id"] for p in client.get("/products/store-page").json()["products"]}
+    assert str(product_a.id) not in store_ids
+    assert str(product_b.id) in store_ids
+    assert client.get(f"/products/{product_a.id}/detail").status_code == 404
+    assert client.get(f"/products/search/{product_a.id}").status_code == 404
+    assert str(product_a.id) not in {p["id"] for p in client.get("/products/all").json()}
+    filtered = client.get("/products/filter", params={"category": world["category"].name, "limit": 50})
+    assert str(product_a.id) not in {p["id"] for p in filtered.json()["data"]}
+    # Not recommended on another product's detail page either.
+    detail_b = client.get(f"/products/{product_b.id}/detail").json()
+    assert str(product_a.id) not in {r["id"] for r in detail_b["recommendations"]}
+
+    page = client.get("/products/manager-products-page", headers=seed.headers(world["manager_a"])).json()
+    active_by_id = {p["id"]: p["is_active"] for p in page["products"]}
+    assert active_by_id[str(product_a.id)] is False
+    form = client.get("/products/manager-product-form-page", headers=seed.headers(world["admin"])).json()
+    assert {p["id"]: p["is_active"] for p in form["products"]}[str(product_b.id)] is True
+
+
+def test_deleted_product_leaves_carts_and_cannot_be_added_again(world, owned_products):
+    product_a, product_b, _ = owned_products
+    seed = world["seed"]
+    fan = seed.headers(world["fan"])
+    for product in (product_a, product_b):
+        assert client.post("/cart/add_cart", json={"product_id": str(product.id), "quantity": 1}, headers=fan).status_code == 200
+
+    delete_product(world, product_a)
+
+    assert [i["product_id"] for i in client.get("/cart/see_cart", headers=fan).json()["items"]] == [str(product_b.id)]
+    again = client.post("/cart/add_cart", json={"product_id": str(product_a.id), "quantity": 1}, headers=fan)
+    assert again.status_code == 404
+
+
+def test_checkout_rejects_a_cart_holding_a_deactivated_product(world, owned_products):
+    # Deleting through the API empties carts, so deactivate behind its back: the window between
+    # checkout reading the cart and locking the products.
+    product_a, _, _ = owned_products
+    seed = world["seed"]
+    fan = seed.headers(world["fan"])
+    address = seed.address(world["fan"].id)
+    assert client.post("/cart/add_cart", json={"product_id": str(product_a.id), "quantity": 1}, headers=fan).status_code == 200
+    product_a.is_active = False
+    seed.db.commit()
+
+    res = client.post("/order/checkout", headers=fan, json={
+        "amount": with_tax(product_a.price), "shipping_address_id": str(address.id),
+        "gateway": "mock", "simulate_succ": True, "idempotency_key": str(uuid.uuid4()),
+    })
+
+    assert res.status_code == 400
+    assert res.json()["code"] == "product_unavailable"
+    assert seed.db.query(OrderItem).filter(OrderItem.product_id == product_a.id).count() == 0
+    seed.db.query(Cart).filter(Cart.product_id == product_a.id).delete()
+    seed.db.commit()
+
+
+def test_reactivate_scoping_and_effect(world, owned_products):
+    product_a, product_b, _ = owned_products
+    seed = world["seed"]
+    manager_a = seed.headers(world["manager_a"])
+    delete_product(world, product_a)
+    delete_product(world, product_b)
+
+    assert client.patch(f"/products/activate/{product_b.id}", headers=manager_a).status_code == 403
+    assert client.patch(f"/products/activate/{uuid.uuid4()}", headers=manager_a).status_code == 404
+    assert client.patch(f"/products/activate/{product_a.id}", headers=seed.headers(world["fan"])).status_code == 403
+    assert client.patch(f"/products/activate/{product_a.id}", headers=manager_a).status_code == 200
+
+    seed.db.expire_all()
+    assert seed.db.get(Product, product_a.id).is_active is True
+    assert seed.db.get(Product, product_b.id).is_active is False
+    assert str(product_a.id) in {p["id"] for p in client.get("/products/store-page").json()["products"]}
+    assert client.get(f"/products/{product_a.id}/detail").status_code == 200
+
+
+def test_database_refuses_to_hard_delete_an_ordered_product(world, owned_products):
+    # The backstop under the soft delete: orders_items.product_id is ON DELETE RESTRICT.
+    product_a, _, _ = owned_products
+    seed = world["seed"]
+    order = seed.order(world["fan"].id, [(product_a, 1)])
+
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
+        seed.db.execute(sqlalchemy.text("DELETE FROM products WHERE id = :id"), {"id": product_a.id})
+    seed.db.rollback()
+
+    assert seed.db.query(OrderItem).filter(OrderItem.order_id == order.id).count() == 1
+
+
+def test_category_with_products_cannot_be_deleted(world, owned_products):
+    seed = world["seed"]
+    admin = seed.headers(world["admin"])
+
+    res = client.delete(f"/categories/delete/{world['category'].id}", headers=admin)
+    assert res.status_code == 400
+    assert res.json()["code"] == "category_in_use"
+    seed.db.expire_all()
+    assert all(seed.db.get(Product, p.id) is not None for p in owned_products)
+
+    # The database refuses too, without the service check.
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
+        seed.db.execute(sqlalchemy.text("DELETE FROM categories WHERE id = :id"), {"id": world["category"].id})
+    seed.db.rollback()
+
+
+def test_empty_category_can_be_deleted(world):
+    seed = world["seed"]
+    empty = seed.category()
+
+    assert client.delete(f"/categories/delete/{empty.id}", headers=seed.headers(world["admin"])).status_code == 200

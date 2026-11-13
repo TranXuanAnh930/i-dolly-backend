@@ -130,6 +130,26 @@ class TestCartService:
         with pytest.raises(BadRequestError):
             CartService.add_to_cart(db, cart_data, DEFAULT_ID)
 
+    def test_add_to_cart_deactivated_product_is_not_found(self):
+        from app.db.models.marketplace import Product
+        from app.exception.common import NotFoundError
+        from app.schema.marketplace import CartItem
+        from app.services.marketplace.cart_service import CartService
+
+        db = MagicMock()
+        db.get.return_value = make_mock_user()
+        product = make_mock_product(quantity=10)
+        product.is_active = False  # soft-deleted
+        product_query = MagicMock()
+        product_query.filter.return_value.with_for_update.return_value.first.return_value = product
+        db.query.side_effect = lambda model: product_query if model is Product else MagicMock()
+
+        with pytest.raises(NotFoundError):
+            CartService.add_to_cart(db, CartItem(quantity=1, product_id=DEFAULT_ID), DEFAULT_ID)
+
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
+
     def test_add_to_cart_user_not_found(self):
         from app.exception.common import NotFoundError
         from app.schema.marketplace import CartItem
