@@ -1094,7 +1094,7 @@ newly introduced.
     `test_product_management.py` and `test_ticket_and_concert_endpoints.py`.
 
 49. ~~**IP rate limits could be bypassed with a forged `X-Forwarded-For`**~~ (`bugs.md` #7) —
-    **FIXED in code, one deployment step left.** `ProxyHeadersMiddleware(trusted_hosts="*")` set
+    **FIXED.** `ProxyHeadersMiddleware(trusted_hosts="*")` set
     `request.client.host` from the leftmost header entry, which the client writes, so rotating it
     gave every request a fresh bucket. Now:
     - `main.py` no longer installs the middleware. `rate_limit.client_ip()` is the only place
@@ -1110,10 +1110,11 @@ newly introduced.
       The `client_ip` and spoofing tests fail if the code reads the leftmost entry.
     - Verified with the unit suite only (594 passing) and ruff; the integration suite wasn't run
       locally for this change (no Postgres available) and is left to CI.
-    - **Still to do:** measure the hop count on Render and set `TRUSTED_PROXY_HOPS`
-      (`deployment.md` §7). Until it's set, the default `0` ignores the header and every visitor
-      shares the proxy's bucket — safe against spoofing, but one busy client can rate-limit
-      everyone.
+    - **Deployed and checked (2026-11-14):** the hop count measured on Render is 3 (visitor,
+      Cloudflare, Render's proxy; the same through the custom domain and the `onrender.com` address),
+      so `TRUSTED_PROXY_HOPS=3` there. Against production, 12 wrong-password logins with a
+      different fake `X-Forwarded-For` and email each returned ten 401s, then 429. Re-measure if
+      the proxy setup changes (`deployment.md` §7).
     - **Known limitations:** anyone who knows an email can lock its login for up to 15 minutes;
       an IPv6 client can still rotate addresses inside its own prefix; with the middleware gone
       `request.url.scheme` is `http` behind Render (nothing reads it today).

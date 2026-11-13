@@ -57,11 +57,11 @@ still hold. That pass corrected line references, added the **Review** notes belo
   **Fix planned:** `docs/plans/rate-limit-client-ip.md`.
   **Review:** closer to High than Critical — it defeats the login/register limits but exposes no
   data by itself.
-  **FIXED in code** (`project_status.md` §4 item 49): `ProxyHeadersMiddleware` is gone;
+  **FIXED** (`project_status.md` §4 item 49): `ProxyHeadersMiddleware` is gone;
   `rate_limit.client_ip()` reads the entry `TRUSTED_PROXY_HOPS` from the right of
-  `X-Forwarded-For`, and login and forgot-password also have a per-email limit. Still to do on
-  Render: measure the hop count and set `TRUSTED_PROXY_HOPS` (`deployment.md` §7) — until then the
-  default `0` puts every visitor in one bucket.
+  `X-Forwarded-For`, and login and forgot-password also have a per-email limit. On Render
+  `TRUSTED_PROXY_HOPS=3` (measured 2026-11-14: visitor, Cloudflare, Render's proxy), and 12
+  logins with a rotating fake header returned 429 from the 11th on.
 - [ ] **8. PayPal capture under row locks, no reconciliation.** `finalize_paypal_payment` calls
   `capture_order` (network, 10s timeout) while holding `FOR UPDATE` on payment/ticket_type/products
   (`payment_service.py:153`, `:182`). If PayPal captures but the response times out or our commit
@@ -246,7 +246,7 @@ half of #22, #26, #28, #29, and eight code smells.
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
    route~~ (done).
 3. **Security:** ~~#28 broken/unguarded address lookup~~ (done); ~~#7 spoofable IP rate limits~~
-   (done in code; set `TRUSTED_PROXY_HOPS` on Render); ~~#29 unauthenticated manager pages~~ (done).
+   (done); ~~#29 unauthenticated manager pages~~ (done).
 4. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
    soft delete or block).
 5. **Planned:** #11 Redis outage handling (plan in `docs/plans/redis-outage.md`) together with

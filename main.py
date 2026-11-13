@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -70,9 +70,7 @@ if settings.STORAGE_BACKEND == "local":
 
 
 @app.get("/")
-def root(request: Request) -> dict[str, str]:
-    # TEMPORARY: measures TRUSTED_PROXY_HOPS on Render (docs/deployment.md §7). Remove once it's set.
-    print(f"proxy-hops-check x-forwarded-for={request.headers.getlist('x-forwarded-for')} peer={request.client.host}", flush=True)
+def root() -> dict[str, str]:
     return {
         "message" : "i-dolly-backend is live",
         "docs" : "/docs"
