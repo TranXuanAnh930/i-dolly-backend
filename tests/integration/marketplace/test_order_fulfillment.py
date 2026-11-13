@@ -8,8 +8,8 @@ from app.db.models.shared import Notification
 from main import app
 
 # ───────────────────────────────────────────────────────────────
-# Post-checkout order lifecycle over real HTTP + Postgres: a fan cancelling, a manager shipping
-# (company-scoped through album_details/merch_details), the admin shipping-status override, and
+# Post-checkout order lifecycle over real HTTP + Postgres: a manager shipping (company-scoped
+# through album_details/merch_details, paid orders only), the admin shipping-status override, and
 # the company-scoped manager orders page. Orders are seeded directly; checkout itself is covered
 # by test_orders.py and test_orders_concurrency.py.
 # ───────────────────────────────────────────────────────────────
@@ -45,45 +45,19 @@ def shipping_status_of(seed, order_id):
 
 
 # ───────────────────────────────────────────────────────────────
-# Fan: cancel + read shipping status
+# Fan: read shipping status (the cancel route is not registered — bugs.md #14)
 # ───────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("status", ["pending", "processing"])
-def test_fan_cancels_unshipped_order(shop, status):
-    seed = shop["seed"]
-    order = seed.order(shop["fan"].id, [(shop["product_a"], 1)], shipping_status=status)
-
-    res = client.patch(f"/order/cancel/{order.id}", headers=seed.headers(shop["fan"]))
-
-    assert res.status_code == 200
-    assert res.json()["status"] == "cancelled"
-    assert shipping_status_of(seed, order.id) == "cancelled"
-
-
-@pytest.mark.parametrize("status", ["shipped", "delivered", "cancelled"])
-def test_fan_cannot_cancel_order_past_processing(shop, status):
-    seed = shop["seed"]
-    order = seed.order(shop["fan"].id, [(shop["product_a"], 1)], shipping_status=status)
-
-    res = client.patch(f"/order/cancel/{order.id}", headers=seed.headers(shop["fan"]))
-    assert res.status_code == 400
-    assert shipping_status_of(seed, order.id) == status
-
-
-def test_fan_cannot_cancel_order_without_shipping_status(shop):
-    seed = shop["seed"]
-    order = seed.order(shop["fan"].id, [(shop["product_a"], 1)], shipping_status=None)
-
-    assert client.patch(f"/order/cancel/{order.id}", headers=seed.headers(shop["fan"])).status_code == 400
-
-
-def test_fan_cannot_cancel_someone_elses_order(shop):
+def test_fan_cannot_cancel_a_paid_order(shop):
     seed = shop["seed"]
     order = seed.order(shop["fan"].id, [(shop["product_a"], 1)])
-    other_fan = seed.user("fan")
 
-    res = client.patch(f"/order/cancel/{order.id}", headers=seed.headers(other_fan))
-    assert res.status_code == 404
+    res = client.patch(f"/order/cancel/{order.id}", headers=seed.headers(shop["fan"]))
+
+    assert res.status_code in (404, 405)
+    seed.db.expire_all()
+    seed.db.refresh(order)
+    assert order.status.value == "confirmed"
     assert shipping_status_of(seed, order.id) == "pending"
 
 
@@ -164,6 +138,20 @@ def test_cannot_ship_order_without_shipping_status(shop):
     assert "unknown" in res.json()["detail"]
 
 
+@pytest.mark.parametrize("status", ["pending", "cancelled"])
+def test_cannot_ship_unpaid_order(shop, status):
+    # bugs.md #26: a PayPal order has a pending shipping status before it is captured.
+    seed = shop["seed"]
+    order = seed.order(shop["fan"].id, [(shop["product_a"], 1)], status=status)
+
+    res = client.patch(f"/order/{order.id}/ship", headers=seed.headers(shop["manager_a"]))
+
+    assert res.status_code == 400
+    assert res.json()["code"] == "order_not_paid"
+    assert shipping_status_of(seed, order.id) == "pending"
+    assert seed.db.query(Notification).filter(Notification.order_id == order.id).count() == 0
+
+
 def test_ship_missing_order_404(shop):
     seed = shop["seed"]
     assert client.patch(f"/order/{uuid.uuid4()}/ship", headers=seed.headers(shop["admin"])).status_code == 404
@@ -200,6 +188,31 @@ def test_admin_cannot_revive_cancelled_order(shop):
         headers=seed.headers(shop["admin"]),
     )
     assert res.status_code == 400
+    assert shipping_status_of(seed, order.id) == "cancelled"
+
+
+@pytest.mark.parametrize("new_status", ["processing", "shipped", "delivered"])
+def test_admin_cannot_advance_unpaid_order(shop, new_status):
+    seed = shop["seed"]
+    order = seed.order(shop["fan"].id, [(shop["product_a"], 1)], status="pending")
+
+    res = client.patch(
+        f"/order/update_shipping_status/{order.id}", params={"new_status": new_status},
+        headers=seed.headers(shop["admin"]),
+    )
+    assert res.status_code == 400
+    assert shipping_status_of(seed, order.id) == "pending"
+
+
+def test_admin_can_cancel_shipping_of_unpaid_order(shop):
+    seed = shop["seed"]
+    order = seed.order(shop["fan"].id, [(shop["product_a"], 1)], status="pending")
+
+    res = client.patch(
+        f"/order/update_shipping_status/{order.id}", params={"new_status": "cancelled"},
+        headers=seed.headers(shop["admin"]),
+    )
+    assert res.status_code == 200
     assert shipping_status_of(seed, order.id) == "cancelled"
 
 

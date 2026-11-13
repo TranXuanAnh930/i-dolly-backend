@@ -89,7 +89,8 @@
 | `lottery_preference_required` | 400 | ファンが順位を付けていないティアに応募した |
 | `lottery_entry_cap_exceeded` | 400 | このキャンペーンにはすでに応募済み |
 | `no_open_campaigns` / `entries_not_ended` | 400 | 抽選の実行が早すぎる、または抽選するものがない（マネージャー） |
-| `order_already_shipped` / `order_cancelled` / `invalid_shipping_transition` | 400 | 現在のステータスからは注文のキャンセル／発送ステータスの変更が許されない（マネージャー／管理者） |
+| `order_cancelled` / `invalid_shipping_transition` | 400 | 現在のステータスからは発送ステータスの変更が許されない（マネージャー／管理者） |
+| `order_not_paid` | 400 | `confirmed` でない注文の発送 — 例: まだキャプチャされていない PayPal の注文（マネージャー／管理者） |
 | `bad_request` / `conflict` / `rule_violation` | 400 / 409 / 400 | 汎用的なフォールバック。主にマネージャー／管理者のフォームのチェック — `detail` を表示する |
 | その他のトリガーのコード | 400 | `ticket_type_concert_mismatch`、`product_detail_kind_conflict`、`concert_capacity_exceeded`、`duplicate_ticket_type`（マネージャー／管理者のフォーム） |
 
@@ -151,7 +152,7 @@ Redis でキャッシュされている（TTL 5 分、書き込み時に無効�
 - マイプロフィール — §2 `Profile`
 - カート — §6 `Cart`
 - 購入手続き — §6 `Order`（`/checkout`）、`Shipping Addresses`、`Payment`
-- 注文履歴（一覧 + 詳細 + キャンセル + 発送ステータス）— §6 `Order`
+- 注文履歴（一覧 + 詳細 + 発送ステータス）— §6 `Order`
 - 支払い状況 — §6 `Payment`
 - マイチケット — §4 `Tickets`（`/mine`）
 - 抽選: キャンペーンへの応募、券種の希望の順位付け、自分の応募の確認、当選チケットの支払い — §4
@@ -1040,10 +1041,6 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 - レスポンス: `Order`
 - UI: 注文の詳細ページ
 
-### `PATCH /order/cancel/{order_id}` 🔒 fan
-- レスポンス: `Order`（更新後）— 注文がすでに発送されていれば `400`
-- UI: 注文の詳細ページ —「注文をキャンセル」ボタン
-
 ### `GET /order/shipping_status/{order_id}` 🔒 fan
 - レスポンス: スキーマで強制されていない（生の `shipping_status` の行）。`ShippingStatusResponse` の形 — `status`、
   `updated_at`（`status` が最後に変わった時刻）
@@ -1055,18 +1052,21 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 - リクエスト（`ShippingStatus` enum）: `"pending" | "processing" | "shipped" | "delivered" | "cancelled"`
 - レスポンス: スキーマで強制されていない（型ヒントには `Order` とあるが、上の `GET` と同じ形の生の `shipping_status`
   の行 — サービスは注文ではなく `shipping_status` の行を返す）
-- 注文がすでに `cancelled` なら `400`
+- 注文がすでに `cancelled` なら `400`。注文が `confirmed` でなく、新しいステータスが `"cancelled"` 以外の場合も
+  `400`（`order_not_paid`）
 - UI: 管理者 — 発送処理／配送のダッシュボード、手動の上書き
 
 ### `PATCH /order/{order_id}/ship` 🔒 manager+ (company-scoped)
 日常の「発送済みにする」操作 — ボタン 1 つで、ステータスの選択肢はない。`pending`/`processing` → `shipped` にだけ
-進める。マネージャーは、自分の事務所の商品を少なくとも 1 つ含む注文しか発送できない（管理者はスコープされない）。
+進め、対象は支払い済み（`confirmed`）の注文だけ。マネージャーは、自分の事務所の商品を少なくとも 1 つ含む注文しか発送できない（管理者はスコープされない）。
 ステータスの切り替えと同じコミットで、購入者に `order_shipped` のアプリ内通知を書き込む。
 - レスポンス（`Order`）: 更新された注文全体で、`POST /order/checkout` のレスポンスと同じ形 —
   `shippingstatus.status` は `"shipped"` になり、`updated_at` も新しくなる
 - エラー: `404`（注文が存在しない）、`403`（マネージャーの事務所の商品がこの注文にない）、`400`（注文が
-  `pending`/`processing` でない — すでに発送済み／配達済み、またはキャンセル済み）
-- UI: マネージャーの注文ページ — 注文の行ごと、または注文の詳細ページの「発送」ボタン
+  `pending`/`processing` でない — すでに発送済み／配達済み、またはキャンセル済み）、`400` `order_not_paid`（注文の
+  ステータスが `confirmed` でない: 未払いまたは放置された PayPal の注文、あるいはキャンセル済みの注文）
+- UI: マネージャーの注文ページ — 注文の行ごと、または注文の詳細ページの「発送」ボタン。注文の `status` が
+  `"confirmed"` のときだけ表示する
 
 ### `GET /order/manager-orders-page` 🔒 manager+ (company-scoped)
 - リクエスト: クエリパラメータ `page`（デフォルト 1）、`limit`（デフォルト 10、最大 50）、`company_id`（uuid、
