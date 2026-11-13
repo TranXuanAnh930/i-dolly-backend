@@ -2,10 +2,9 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.config.settings import settings
 from app.db.session import session as SessionLocal
@@ -64,11 +63,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Sets request.client.host from X-Forwarded-For so IP rate limits see the visitor, not Render's
-# proxy. With trusted_hosts="*" uvicorn takes the leftmost hop, which a client can spoof
-# (docs/bugs.md #7).
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
-
 # Serves uploaded images when STORAGE_BACKEND=local; S3 URLs point at the bucket directly.
 if settings.STORAGE_BACKEND == "local":
     Path(settings.LOCAL_UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -76,7 +70,9 @@ if settings.STORAGE_BACKEND == "local":
 
 
 @app.get("/")
-def root() -> dict[str, str]:
+def root(request: Request) -> dict[str, str]:
+    # TEMPORARY: measures TRUSTED_PROXY_HOPS on Render (docs/deployment.md §7). Remove once it's set.
+    print(f"proxy-hops-check x-forwarded-for={request.headers.getlist('x-forwarded-for')} peer={request.client.host}", flush=True)
     return {
         "message" : "i-dolly-backend is live",
         "docs" : "/docs"

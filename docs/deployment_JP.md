@@ -137,10 +137,25 @@ Supabase、キャッシュ／レートリミッターは Render 自身の Redis 
 | `PAYPAL_MODE` | `sandbox`（または `live`） | |
 | `PAYPAL_WEBHOOK_ID` | PayPal のダッシュボードにある Webhook の ID | `POST /payment/paypal/webhook` の署名検証に使う |
 | `CORS_ORIGINS` | フロントエンドの実際のオリジン（カンマ区切り） | 例: `https://your-frontend.vercel.app` |
+| `TRUSTED_PROXY_HOPS` | 計測したプロキシのホップ数（下記を参照） | デフォルトの `0` は `X-Forwarded-For` を無視する。Render の背後では、すべての訪問者が 1 つのレート制限バケットに入る |
 | `STORAGE_BACKEND` | `s3` | §3 で選択したとおり |
 | `S3_BUCKET_NAME` / `S3_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | §3 から | |
 | `S3_ENDPOINT_URL` | プロバイダーのエンドポイント | **本物の AWS S3 では省略**、R2/Spaces では必須 |
 | `S3_PUBLIC_URL_BASE` | 任意の CDN／カスタムドメイン | 未設定の場合は、計算で求めたバケットの URL にフォールバックする |
+
+**`TRUSTED_PROXY_HOPS` の計測。** アプリの前段にある各プロキシは、リクエストを受け取った相手のアドレスを
+`X-Forwarded-For` に追記する。この設定は、そうした信頼できるエントリがいくつあるかを表す。大きすぎると
+クライアントが書いたエントリを信頼してしまい（制限を偽装できる、`docs/bugs_JP.md` #7）、小さすぎると訪問者が
+まとめて制限される。推測せずに計測すること:
+
+1. 一時的に `/` のハンドラーで `request.headers.getlist("x-forwarded-for")` と `request.client.host` をログに出し、
+   デプロイする。
+2. `curl -H "X-Forwarded-For: 1.2.3.4" https://<API のドメイン>/` — 公開ドメインを経由させ、Render の前段にある
+   CDN や DNS プロキシも数に含める。
+3. ログに出たヘッダーで、`1.2.3.4` より後ろにあるエントリの数が設定する値。その最初のエントリは自分の
+   グローバル IP のはず。
+4. ログの行を削除し、`TRUSTED_PROXY_HOPS` を設定して再デプロイする。プロキシの構成が変わったら（例: DNS
+   レコードをプロキシありと DNS のみの間で切り替えた）、もう一度計測する。
 
 ## 8. 初回デプロイ — 本当のリスクはマイグレーション
 
@@ -178,6 +193,9 @@ Dockerfile が出力する `Running Alembic migrations...` の行について、
 4. データを投入する場合: `render shell` でサービスに入る（または Render の単発ジョブで）、`python scripts/seed.py`
    （日本語版なら `python scripts/seed_ja.py`）を実行する — 冪等なので、新しい Supabase の DB に対して一度実行しても
    安全。
+5. レート制限の確認: パスワードを間違えた `POST /account/login` を約 12 回、毎回違う偽の `X-Forwarded-For` と違う
+   メールアドレスで送る — 11 回目が 429 になるはず。その後、別のネットワークからのリクエストがすでに制限されて
+   いないことを確認する。
 
 ## 11. このデプロイに持ち越される既知の制限事項
 
@@ -186,8 +204,8 @@ Dockerfile が出力する `Running Alembic migrations...` の行について、
   されない。
 - `app/cache/redis_client.py` はパスワード／TLS に対応していない（§4）ので、Redis は Render の内部ネットワーク経由で
   到達できる必要がある。
-- IP ベースのレート制限は `X-Forwarded-For` の一番左のホップを信頼しており、Render のプロキシの背後ではクライアントが
-  これを偽装できる（`docs/bugs_JP.md` #7、修正計画は `docs/plans/rate-limit-client-ip_JP.md`）。
+- IP ベースのレート制限の正しさは `TRUSTED_PROXY_HOPS`（§7）に依存する: 稼働中のデプロイで計測し、プロキシの構成が
+  変わったら計測し直す必要がある。
 - Redis の障害により、キャッシュされた読み取りとコミット後のキャッシュ無効化が 500 になる（`docs/bugs_JP.md` #11、
   修正計画は `docs/plans/redis-outage_JP.md`）。
 - PayPal の Webhook の経路は実際の配信を一度も受け取ったことがなく、決済拒否の経路も実際に拒否された決済で試されて

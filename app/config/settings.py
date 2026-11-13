@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # Public URL of the frontend, used for PayPal return/cancel URLs.
     FRONTEND_BASE_URL: str = "http://localhost:8080"
 
+    # Reverse proxies in front of the app that append to X-Forwarded-For (app/cache/rate_limit.py
+    # client_ip). 0 = none: the header is ignored and the peer address is used. Too high trusts an
+    # entry the client wrote; too low puts every visitor in the proxy's bucket. Measure it per host
+    # (docs/deployment.md).
+    TRUSTED_PROXY_HOPS: int = 0
+
     # Comma-separated origins allowed by CORS, e.g. "https://app.example.com,https://staging.example.com".
     CORS_ORIGINS: str = "http://localhost:8080"
 

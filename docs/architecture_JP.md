@@ -193,10 +193,19 @@ FastAPI は `async def` のハンドラーをイベントループ上で直接�
   `user_or_ip_key` は、認証が任意のルート（`get_current_user_optional`）向け: トークンが送られていればユーザーを
   キーにし、ゲストの場合は `ip_key` のバケットにフォールバックする。`user_key`/`user_or_ip_key` は
   `request.state.user` を読むので、シグネチャ内で認証の依存性を `rate_limit` より前に置かなければならない。
-  Render のリバースプロキシの背後では、`main.py` がアプリを
-  `uvicorn.middleware.proxy_headers.ProxyHeadersMiddleware` で包み、`ip_key` がプロキシの IP ではなくクライアントの
-  IP を見るようにしている — ただし `trusted_hosts="*"` の場合、その IP は `X-Forwarded-For` の一番左のホップであり、
-  これはクライアントが制御できる（`docs/bugs_JP.md` #7。修正計画は `docs/plans/rate-limit-client-ip_JP.md`）。
+  `ip_key` は訪問者のアドレスを `client_ip()` から取る。これを決める関数はこの 1 つだけ。信頼できる各プロキシは、
+  リクエストを受け取った相手のアドレスを `X-Forwarded-For` に追記するので、前段に `TRUSTED_PROXY_HOPS` 個の
+  プロキシがあれば、訪問者は右からその個数目のエントリになる。それより左はクライアントが書いたものなので無視する。
+  設定が `0`（ローカル開発）の場合、ヘッダーが想定より短い場合、エントリが IP でない場合は、接続元のアドレスに
+  フォールバックする。`request.client` を書き換えるものはない: `main.py` は `ProxyHeadersMiddleware` を組み込まなく
+  なった。その `trusted_hosts="*"` は、クライアントが書いた一番左のエントリを採用していた（`docs/bugs_JP.md` #7）。
+
+  **アカウントごとの制限。** IP の制限では、多数の本物の IP を持つ攻撃者を止められないので、2 つのルートは
+  メールアドレスごとにも数える: `POST /account/login` は 15 分あたり 5 回の失敗まで（パスワードの確認より前に
+  チェックし、成功するとカウントを消す）、`POST /profile/forgot-password` は 1 時間あたり 3 回まで。どちらも登録済みの
+  アドレスと未登録のアドレスを同じように数えるので、429 からアカウントの有無は分からない。キーには小文字にした
+  メールアドレスの SHA-256 を使う。トレードオフ: アドレスを知っている人は誰でも、そのログインを最大 15 分間
+  ロックできる。
 
   **カバレッジのポリシー**:
 

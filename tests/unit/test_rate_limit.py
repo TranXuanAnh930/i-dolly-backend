@@ -2,14 +2,28 @@ import threading
 
 import pytest
 from fastapi import HTTPException
+from starlette.datastructures import Headers
 
-from app.cache.rate_limit import ip_key, rate_limit
+from app.cache.rate_limit import (
+    FORGOT_PASSWORD_LIMIT,
+    LOGIN_FAIL_LIMIT,
+    LOGIN_FAIL_WINDOW,
+    clear_login_failures,
+    client_ip,
+    forgot_password_limit_exceeded,
+    ip_key,
+    login_attempts_exceeded,
+    rate_limit,
+    record_login_failure,
+)
+from app.config.settings import settings
 from tests.conftest import fake_redis
 
 # ─────────────────────────────────────────────────────────────
 # Fake Request — rate_limit()'s closure only ever touches
-# request.scope["route"].path and request.client.host (via ip_key),
-# so a real Starlette Request isn't needed, just these two attributes.
+# request.scope["route"].path, request.client.host and (when proxies are
+# trusted) request.headers, via ip_key, so a real Starlette Request isn't
+# needed, just these attributes.
 # ─────────────────────────────────────────────────────────────
 
 
@@ -24,9 +38,11 @@ class _FakeClient:
 
 
 class _FakeRequest:
-    def __init__(self, path="/test-route", ip="1.2.3.4"):
+    def __init__(self, path="/test-route", ip="1.2.3.4", forwarded_for=()):
         self.scope = {"route": _FakeRoute(path)}
         self.client = _FakeClient(ip)
+        # One X-Forwarded-For header line per item.
+        self.headers = Headers(raw=[(b"x-forwarded-for", value.encode()) for value in forwarded_for])
 
 
 @pytest.fixture(autouse=True)
@@ -101,3 +117,92 @@ class TestRateLimit:
 
         assert allowed == limit
         assert blocked == request_count - limit
+
+
+PEER = "10.0.0.1"  # the proxy's address, as the app sees the connection
+
+
+class TestClientIp:
+    def test_no_trusted_proxy_ignores_the_header(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 0)
+        request = _FakeRequest(ip=PEER, forwarded_for=["6.6.6.6"])
+        assert client_ip(request) == PEER
+
+    def test_one_hop_takes_the_rightmost_entry(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 1)
+        request = _FakeRequest(ip=PEER, forwarded_for=["6.6.6.6, 203.0.113.7"])
+        assert client_ip(request) == "203.0.113.7"
+
+    def test_two_hops_skip_the_inner_proxy(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 2)
+        request = _FakeRequest(ip=PEER, forwarded_for=["6.6.6.6, 203.0.113.7, 172.16.0.9"])
+        assert client_ip(request) == "203.0.113.7"
+
+    def test_several_header_lines_are_combined(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 2)
+        request = _FakeRequest(ip=PEER, forwarded_for=["6.6.6.6, 203.0.113.7", "172.16.0.9"])
+        assert client_ip(request) == "203.0.113.7"
+
+    def test_header_shorter_than_hops_falls_back_to_the_peer(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 2)
+        request = _FakeRequest(ip=PEER, forwarded_for=["203.0.113.7"])
+        assert client_ip(request) == PEER
+
+    def test_missing_header_falls_back_to_the_peer(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 1)
+        assert client_ip(_FakeRequest(ip=PEER)) == PEER
+
+    def test_invalid_entry_falls_back_to_the_peer(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 1)
+        request = _FakeRequest(ip=PEER, forwarded_for=["6.6.6.6, not-an-ip"])
+        assert client_ip(request) == PEER
+
+    def test_rotating_the_spoofed_entry_does_not_change_the_bucket(self, monkeypatch):
+        # bugs.md #7: a different fake leftmost entry per request must not mint a new bucket.
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 1)
+        limiter = rate_limit(limit=3, window=60, key_func=ip_key)
+        for i in range(3):
+            limiter(_FakeRequest(path="/spoof-route", ip=PEER, forwarded_for=[f"6.6.6.{i}, 203.0.113.7"]))
+        with pytest.raises(HTTPException) as exc_info:
+            limiter(_FakeRequest(path="/spoof-route", ip=PEER, forwarded_for=["6.6.6.99, 203.0.113.7"]))
+        assert exc_info.value.status_code == 429
+
+
+class TestLoginFailureLimit:
+    def test_exceeded_after_limit_failures(self):
+        for _ in range(LOGIN_FAIL_LIMIT - 1):
+            record_login_failure("fan@example.com")
+        assert not login_attempts_exceeded("fan@example.com")
+        record_login_failure("fan@example.com")
+        assert login_attempts_exceeded("fan@example.com")
+
+    def test_other_emails_are_unaffected(self):
+        for _ in range(LOGIN_FAIL_LIMIT):
+            record_login_failure("fan@example.com")
+        assert not login_attempts_exceeded("other@example.com")
+
+    def test_email_is_matched_case_insensitively(self):
+        for _ in range(LOGIN_FAIL_LIMIT):
+            record_login_failure("Fan@Example.com")
+        assert login_attempts_exceeded(" fan@example.com ")
+
+    def test_clear_resets_the_count(self):
+        for _ in range(LOGIN_FAIL_LIMIT):
+            record_login_failure("fan@example.com")
+        clear_login_failures("fan@example.com")
+        assert not login_attempts_exceeded("fan@example.com")
+
+    def test_counter_has_a_ttl_and_no_email_in_the_key(self):
+        record_login_failure("fan@example.com")
+        keys = list(fake_redis.scan_iter("rate:login_fail:*"))
+        assert len(keys) == 1
+        assert b"fan@example.com" not in keys[0]
+        assert 0 < fake_redis.ttl(keys[0]) <= LOGIN_FAIL_WINDOW
+
+
+class TestForgotPasswordLimit:
+    def test_allows_limit_requests_then_reports_exceeded(self):
+        for _ in range(FORGOT_PASSWORD_LIMIT):
+            assert not forgot_password_limit_exceeded("fan@example.com")
+        assert forgot_password_limit_exceeded("fan@example.com")
+        assert not forgot_password_limit_exceeded("other@example.com")

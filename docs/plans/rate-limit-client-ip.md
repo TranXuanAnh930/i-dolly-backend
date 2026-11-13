@@ -2,7 +2,8 @@
 
 English | [日本語](rate-limit-client-ip_JP.md)
 
-**Status:** planned, not started (2026-09-26).
+**Status:** steps 1–6 implemented (2026-11-13). Steps 0 and 7 need the Render deployment and are
+still open: measure the hop count, set `TRUSTED_PROXY_HOPS`, then run the production check.
 
 ## Problem
 

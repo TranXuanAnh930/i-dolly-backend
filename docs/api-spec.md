@@ -50,6 +50,8 @@ additionally 403 when a manager acts outside their own company's resources (note
 |---|---|---|
 | `not_authenticated` | 401 | Missing, invalid or expired access token, or its user no longer exists |
 | `invalid_credentials` | 401 | `POST /account/login`: wrong email or password |
+| `too_many_login_attempts` | 429 | `POST /account/login`: 5 failed attempts for this email in 15 minutes |
+| `too_many_reset_requests` | 429 | `POST /profile/forgot-password`: more than 3 requests for this email in an hour |
 | `invalid_refresh_token` | 401 | `POST /account/refresh`: cookie missing, expired or revoked |
 | `invalid_token` | 400 / 401 | Email-verification link (400) or password-reset token (401) invalid or expired |
 | `incorrect_password` | 400 | `PUT /profile/change-password`: old password wrong |
@@ -200,7 +202,9 @@ OAuth2 password grant — the token source for every 🔒 endpoint.
 - Request: `application/x-www-form-urlencoded` (OAuth2 form, not JSON) — `username` (send the
   user's **email** in this field), `password`
 - Response: not schema-enforced; standard token pair (`access_token`, `refresh_token`, `token_type`)
-- UI: Login page. Rate-limited (10/min/IP).
+- UI: Login page. Rate-limited (10/min/IP). Also 5 failed attempts per email per 15 minutes: after
+  that every login for the email returns 429 `too_many_login_attempts`, even with the right
+  password, until the window ends. Show a "try again later" message.
 
 ### `POST /account/refresh` 🔓
 Exchange a refresh token for a new access token.
@@ -236,7 +240,8 @@ Confirm an email via the token from the verification link.
 ### `POST /profile/forgot-password` 🔓
 - Request (`ForgotPasswordRequest`): `email`
 - Response: `{"msg": "reset link sent successfully"}`
-- UI: "Forgot password?" flow, step 1
+- UI: "Forgot password?" flow, step 1. Limited to 3 requests per email per hour, then 429
+  `too_many_reset_requests`.
 
 ### `POST /profile/set-password` 🔓
 Complete a password reset using the token from the emailed link.
