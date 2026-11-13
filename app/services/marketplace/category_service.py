@@ -2,8 +2,8 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from app.db.models.marketplace import Category
-from app.exception.common import NotFoundError
+from app.db.models.marketplace import Category, Product
+from app.exception.common import BadRequestError, NotFoundError
 from app.schema.marketplace import CategoryBase, CategoryUpdate
 
 
@@ -38,6 +38,10 @@ class CategoryService:
         db_category = db.get(Category, id)
         if not db_category:
             return False
+        # Deleting the category would delete its products, and their order history with them.
+        # Deactivated products count too: their rows are still there.
+        if db.query(Product.id).filter(Product.category_id == id).first():
+            raise BadRequestError("Category still has products and cannot be deleted", code="category_in_use")
         db.delete(db_category)
         db.commit()
         return True

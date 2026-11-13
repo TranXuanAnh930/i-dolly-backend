@@ -4,7 +4,7 @@ from typing import List, Literal
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db.models.identity import Users
-from app.db.models.marketplace import AlbumDetail, AlbumGenre, Category, MerchDetail, Order, OrderItem, Product
+from app.db.models.marketplace import AlbumDetail, AlbumGenre, Cart, Category, MerchDetail, Order, OrderItem, Product
 from app.db.models.talent import Group, Idol, IdolColor
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
 from app.exception.db_triggers import commit_or_raise, flush_or_raise
@@ -64,13 +64,19 @@ class ProductService:
             return False  # ownerless product - any manager may manage it
         return current_user.company_id != company_id
 
+    # --- fan-facing reads: deactivated (soft-deleted) products are hidden. The manager pages
+    # further down list them too.
+
     @staticmethod
     def list_of_products(db:Session) -> list[Product]:
-        return db.query(Product).options(selectinload(Product.category)).all()
+        return db.query(Product).options(selectinload(Product.category)).filter(Product.is_active.is_(True)).all()
 
     @staticmethod
     def search_product(db:Session, id:uuid.UUID) -> ProductWithCategoryRead | None:
-        db_product = db.query(Product).options(selectinload(Product.category)).filter(Product.id==id).first()
+        db_product = (
+            db.query(Product).options(selectinload(Product.category))
+            .filter(Product.id==id, Product.is_active.is_(True)).first()
+        )
         if not db_product:
             return None
         return ProductWithCategoryRead(
@@ -198,8 +204,23 @@ class ProductService:
             raise NotFoundError("Product not found")
         if ProductService._manager_scope_violation(db, current_user, id):
             raise ForbiddenError("Managers can only manage products belonging to their own company's idols/groups")
-        db.delete(db_product)
+        # Soft delete: order history references the product. It also leaves every cart, since it
+        # can no longer be bought.
+        db_product.is_active = False
+        db.query(Cart).filter(Cart.product_id == id).delete(synchronize_session=False)
         db.commit()
+        return db_product
+
+    @staticmethod
+    def reactivate_product(db:Session, id: uuid.UUID, current_user: Users) -> Product:
+        db_product = db.get(Product, id)
+        if not db_product:
+            raise NotFoundError("Product not found")
+        if ProductService._manager_scope_violation(db, current_user, id):
+            raise ForbiddenError("Managers can only manage products belonging to their own company's idols/groups")
+        db_product.is_active = True
+        db.commit()
+        db.refresh(db_product)
         return db_product
 
     @staticmethod
@@ -219,7 +240,7 @@ class ProductService:
     @staticmethod
     def pagination_process(db:Session, page:int=1, limit:int=10) -> list[Product]:
         offset = (page-1)*limit
-        products = db.query(Product).offset(offset).limit(limit).all()
+        products = db.query(Product).filter(Product.is_active.is_(True)).offset(offset).limit(limit).all()
         return products
 
     @staticmethod
@@ -232,7 +253,7 @@ class ProductService:
             limit:int=5, page:int=1
         ) -> list[Product]:
         stmt = db.query(Product).options(selectinload(Product.category))
-        filters=[]
+        filters=[Product.is_active.is_(True)]
         if category:
             stmt = stmt.join(Product.category)
             filters.append(Category.name.ilike(f"%{category}%"))
@@ -242,8 +263,7 @@ class ProductService:
             filters.append(Product.price>=min_price)
         if max_price is not None:
             filters.append(Product.price<=max_price)
-        if filters:
-            stmt = stmt.filter(*filters).distinct()
+        stmt = stmt.filter(*filters).distinct()
         offset=(page-1)*limit
         products=stmt.offset(offset).limit(limit).all()
         return products
@@ -322,16 +342,19 @@ class ProductService:
 
     @staticmethod
     def get_store_page(db: Session) -> StorePageRead:
-        products = db.query(Product).options(joinedload(Product.category)).all()
+        products = db.query(Product).options(joinedload(Product.category)).filter(Product.is_active.is_(True)).all()
         groups = db.query(Group).all()
         return StorePageRead(products=ProductService._build_product_cards(db, products), groups=groups)
 
     @staticmethod
     def get_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | None:
-        product = db.query(Product).options(joinedload(Product.category)).filter(Product.id == id).first()
+        product = (
+            db.query(Product).options(joinedload(Product.category))
+            .filter(Product.id == id, Product.is_active.is_(True)).first()
+        )
         if not product:
             return None
-        all_products = db.query(Product).options(joinedload(Product.category)).all()
+        all_products = db.query(Product).options(joinedload(Product.category)).filter(Product.is_active.is_(True)).all()
         cards_by_id = {c.id: c for c in ProductService._build_product_cards(db, all_products)}
         card = cards_by_id[product.id]
 
@@ -370,6 +393,7 @@ class ProductService:
             quantity=product.quantity,
             image_url=product.image_url,
             category=product.category.name if product.category else None,
+            is_active=product.is_active,
         )
 
     # Batch version of _resolve_product_company_id: one query per detail table. Also used by
@@ -404,7 +428,8 @@ class ProductService:
         return company_by_product
 
     # company_id=None (admin) returns every product; a manager's company_id returns that
-    # company's products plus ownerless ones.
+    # company's products plus ownerless ones. Deactivated products are included (is_active=False)
+    # so they can be reactivated.
     @staticmethod
     def get_manager_products_page(db: Session, company_id: uuid.UUID | None = None) -> ManagerProductsPageRead:
         products = db.query(Product).options(joinedload(Product.category)).all()

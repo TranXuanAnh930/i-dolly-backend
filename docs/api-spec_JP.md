@@ -63,6 +63,8 @@
 | `internal_error` | 500 | 予期しないサーバーエラー（サーバー側でログに出力）。読み取りは再試行しても安全 |
 | `invalid_image` | 400 | 画像のアップロードが拒否された: 未対応の形式、5 MB 超過、またはストレージの設定ミス |
 | `insufficient_stock` | 400 | カートへの追加または注文の購入手続き: 在庫が足りない |
+| `product_unavailable` | 400 | 注文の購入手続き: カートに入れた後で無効化された商品がある |
+| `category_in_use` | 400 | 商品が残っているカテゴリの削除（管理者） |
 | `cart_empty` | 404 | 空のカートでの `POST /order/checkout` |
 | `address_not_found` | 404 | 存在しない配送先住所での購入手続き |
 | `amount_mismatch` | 400 | 購入手続きの `amount` が現在の合計と一致しない（価格が変わった — 再取得すること） |
@@ -783,10 +785,11 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 
 ### `DELETE /categories/delete/{id}` 🔒 admin
 - レスポンス: `{"msg": "Category deleted successfully"}`
+- エラー: 無効化されたものを含め、カテゴリに商品がある間は `400` `category_in_use`
 
 ### `GET /products/all` 🔓
 - レスポンス: `List[ProductRead]`（`id`、`name`、`price`、`description`、`quantity`、`image_url`、`category` — ID では
-  なく、カテゴリの *名前* の文字列）
+  なく、カテゴリの *名前* の文字列。`is_active` はここでは常に `true`）。無効化された商品は含まれない
 - UI: グッズのカタログのグリッド
 
 ### `GET /products/store-page` 🔓
@@ -794,25 +797,26 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
   `ProductCard` は `id`、`name`、`price`、`description`、`quantity`、`image_url`、`category`（名前）、`album`（アルバムの
   詳細または `null`）、`genres`、`artist`（クレジットされているアイドル／グループまたは `null`）、`resale_cap_quantity`
   （ファンごとの生涯の上限。カテゴリに上限がなければ `null`）
+- 無効化された商品は含まれない
 - エラー: 商品がなければ `404`
 - UI: ストアページ
 
 ### `GET /products/{id}/detail` 🔓
 - レスポンス（`ProductDetailRead`）: `product`（`ProductCard`）、`recommendations`（`List[ProductCard]`）
-- エラー: 商品が存在しなければ `404`
+- エラー: 商品が存在しない、または無効化されていれば `404`。無効化された商品は `recommendations` にも含まれない
 - UI: 商品の詳細ページ
 
 ### `GET /products/manager-products-page` 🔒 manager+ (company-scoped)
 - リクエスト: クエリパラメータ `company_id`（uuid、任意、**管理者のみ** — マネージャーは常に自分の事務所のものを
   受け取り、パラメータは無視される。管理者が省略するとすべての商品を受け取る）
 - レスポンス（`ManagerProductsPageRead`）: `products`（`List[ProductRead]`）— その事務所の商品と、所有者のない商品
-  （アルバム／グッズの詳細なし）
+  （アルバム／グッズの詳細なし）。無効化された商品も含まれ、各行に `is_active`（bool）がある
 - エラー: トークンなしなら `401`、ファンなら `403`
 - UI: マネージャー — 商品のテーブル
 
 ### `GET /products/manager-product-form-page` 🔒 manager+ (company-scoped)
 - リクエスト: クエリパラメータ `company_id`（uuid、任意、**管理者のみ** — 上と同じ）
-- レスポンス（`ManagerProductFormPageRead`）: `products`（上と同じスコープ）、`categories`、`idols`、`groups`、`colors` —
+- レスポンス（`ManagerProductFormPageRead`）: `products`（上と同じスコープ、`is_active` を含む）、`categories`、`idols`、`groups`、`colors` —
   作成／編集フォームの選択肢に必要なものすべて。マネージャーの場合、`idols` と `groups` は自分の事務所のもの。
   管理者はすべての事務所のものを受け取る。`categories`/`colors` は共有
 - エラー: トークンなしなら `401`、ファンなら `403`
@@ -879,8 +883,17 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 
 ### `DELETE /products/delete/{id}` 🔒 manager+ (same company-scoping as update)
 （更新と同じ事務所スコープ）
-- レスポンス: `{"detail": "Product Deleted successfully"}` — この一覧の他のすべての削除のエンドポイントと違い、キーが
-  `msg` ではなく `detail` であることに注意
+論理削除 — `is_active = false` を設定する。行と、それを参照するすべての注文の明細は残る。商品はストアとすべての
+カートから消え、購入できなくなる。
+- レスポンス: `{"msg": "Product Deleted successfully"}`
+- UI: マネージャー — 商品のテーブルの「削除」（表示は「無効化」のほうが正確）
+
+### `PATCH /products/activate/{id}` 🔒 manager+ (same company-scoping as update)
+（更新と同じ事務所スコープ）
+上の削除を取り消す — `is_active = true` を設定する。削除で空になったカートは元に戻らない。
+- レスポンス: `{"msg": "Product activated successfully"}`
+- エラー: `404`（その商品がない）、`403`（他の事務所の商品）
+- UI: マネージャー — 商品のテーブルで、無効化された商品の「再有効化」
 
 ### `POST /products/bulk_products` 🔒 manager+
 - リクエスト: `List[ProductCreate]`（JSON の配列。各項目に `category_id` が必要 — 一括では画像をサポートしない）
@@ -978,6 +991,7 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 - リクエスト（`CartItem`）: `product_id`（uuid）、`quantity`（int、≥1）
 - レスポンス: スキーマで強制されていない。生の `Cart` の行（`id`、`product_id`、`quantity`、`user_id`、`price`、
   `total_price`）— すでにカートにある商品を追加すると、重複した行を作るのではなく数量が増える
+- エラー: 商品が存在しない、または無効化されていれば `404`。`400` `insufficient_stock`
 - UI: 商品が表示されるあらゆる場所の「カートに追加」ボタン
 
 ### `GET /cart/see_cart` 🔒 fan
@@ -1026,7 +1040,7 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
   `"pending"` で返ってくる）、`created_at`、`items`、`shippingstatus`（常に存在する — すべての注文は、後から遅延して
   作成されるのではなく、同じ購入手続きのトランザクションで `"pending"` の `shipping_status` 行を得る）、
   `shippingaddress`
-- エラー: `404`（`cart_empty` / `address_not_found`）、`400`（`insufficient_stock`、`amount_mismatch`、
+- エラー: `404`（`cart_empty` / `address_not_found`）、`400`（`insufficient_stock`、`product_unavailable`、`amount_mismatch`、
   `unsupported_gateway`、`resale_cap_exceeded`）、`403`（`fan_only_purchase`）、`409`（`duplicate_idempotency_key`）。
   拒否されたモック決済はエラーでは **ない**: `status: "cancelled"` とともに `200` — 汎用的な「購入に失敗しました」を
   1 つ表示するのではなく、UI でこれらを区別すること

@@ -127,7 +127,7 @@ class GroupService:
 
         # Products whose resolved artist is this group, including plain merch matched by name
         # (see _build_product_cards).
-        all_products = db.query(Product).options(joinedload(Product.category)).all()
+        all_products = db.query(Product).options(joinedload(Product.category)).filter(Product.is_active.is_(True)).all()
         products = [
             card for card in ProductService._build_product_cards(db, all_products)
             if card.artist and card.artist.type == "group" and card.artist.id == id

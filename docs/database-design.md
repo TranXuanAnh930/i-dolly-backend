@@ -801,6 +801,28 @@ Pydantic validator so a bad window is a `422`, not an `IntegrityError`.
 
 Migration `f8a3c1d9e4b2`, chained onto `c2d4e8f6a1b3`.
 
+### 3.22 `products` (altered, not new) — soft delete and the order-history foreign keys
+
+`is_active` (bool, not null, default `true`) is a soft-delete flag with the same rationale as
+`groups.is_active` (§3.3): `orders_items.product_id` references the product, so removing the row
+would remove lines from orders that have already been paid for. "Deleting" a product clears the
+flag; reactivating sets it again. Fan-facing reads filter on it; manager reads don't.
+
+Two foreign keys changed from `ON DELETE CASCADE` to `RESTRICT` alongside it, so the guarantee
+doesn't depend on every code path remembering to soft-delete:
+
+| Foreign key | Before | After | Why |
+|---|---|---|---|
+| `orders_items.product_id → products.id` | `CASCADE` | `RESTRICT` | a product delete silently removed its lines from every past order |
+| `products.category_id → categories.id` | `CASCADE` (on update: `CASCADE`) | `RESTRICT` (on update unchanged) | a category delete removed its products, and through them their order lines |
+
+Left as `CASCADE` on purpose: `cart.product_id`, `album_details.product_id` and
+`merch_details.product_id`. A cart row or a detail row has no meaning without its product, and
+none of them is history. They can only fire for a product with no order lines, since `RESTRICT`
+blocks the rest.
+
+Migrations: `a1c5e7f9b3d2` (column), `b3d7f1a5c9e4` (order items FK), `c5e9a3b7d1f6` (category FK).
+
 ## 4. Role-based access
 
 | Action | admin | manager | fan |

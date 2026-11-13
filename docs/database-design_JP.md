@@ -723,6 +723,27 @@ create_notification()` が加わった。これは別個の書き込みとして
 
 マイグレーション `f8a3c1d9e4b2`、`c2d4e8f6a1b3` に連結。
 
+### 3.22 `products`（変更、新規ではない）— 論理削除と、注文履歴を守る外部キー
+
+`is_active`（bool、NOT NULL、デフォルト `true`）は論理削除のフラグで、理由は `groups.is_active`（§3.3）と同じ:
+`orders_items.product_id` が商品を参照しているので、行を消すと、すでに支払い済みの注文から明細が消えてしまう。
+商品の「削除」はこのフラグを下ろし、再有効化はもう一度立てる。ファン向けの読み取りはこのフラグで絞り込み、
+マネージャー向けの読み取りは絞り込まない。
+
+あわせて、2 つの外部キーを `ON DELETE CASCADE` から `RESTRICT` に変えた。すべてのコードパスが論理削除を忘れない
+ことに、この保証を依存させないため:
+
+| 外部キー | 変更前 | 変更後 | 理由 |
+|---|---|---|---|
+| `orders_items.product_id → products.id` | `CASCADE` | `RESTRICT` | 商品を削除すると、過去のすべての注文からその明細が黙って消えた |
+| `products.category_id → categories.id` | `CASCADE`（on update: `CASCADE`） | `RESTRICT`（on update は変更なし） | カテゴリを削除するとその商品が消え、それを通じて注文の明細も消えた |
+
+意図的に `CASCADE` のまま残したもの: `cart.product_id`、`album_details.product_id`、`merch_details.product_id`。
+カートの行や詳細の行は商品なしでは意味がなく、どれも履歴ではない。`RESTRICT` が残りを止めるので、これらが発動
+するのは注文の明細を持たない商品に対してだけ。
+
+マイグレーション: `a1c5e7f9b3d2`（列）、`b3d7f1a5c9e4`（注文明細の外部キー）、`c5e9a3b7d1f6`（カテゴリの外部キー）。
+
 ## 4. ロールベースのアクセス制御
 
 | 操作 | admin | manager | fan |

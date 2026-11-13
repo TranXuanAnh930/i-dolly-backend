@@ -40,7 +40,10 @@ def update_existing_category(new_category:CategoryUpdate, id:uuid.UUID, db:Sessi
 # Not used by the frontend.
 @router.delete("/delete/{id}", response_model=MessageResponse)
 def delete_existing_category(id:uuid.UUID, db:Session=Depends(get_db), current_user:Users=Depends(require_admin)) -> MessageResponse:
-    result = CategoryService.delete_category(db, id)
+    try:
+        result = CategoryService.delete_category(db, id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
     if not result:
         raise HTTPException(status_code=404, detail="Category not found")
     return MessageResponse(msg="Category deleted successfully")
