@@ -1118,6 +1118,31 @@ newly introduced.
       an IPv6 client can still rotate addresses inside its own prefix; with the middleware gone
       `request.url.scheme` is `http` behind Render (nothing reads it today).
 
+50. ~~**Unpaid orders could be marked shipped**~~ (`bugs.md` #26) — **FIXED**; and the fan
+    cancel route (`bugs.md` #14) — **unregistered**.
+    - A PayPal checkout creates the order's `shipping_status` row as `pending` before the payment
+      is captured, and `ship_order` checked only that row. An abandoned or not-yet-captured order
+      could be shipped, and the buyer notified, without paying. `OrderService._require_paid` now
+      rejects any order whose status isn't `confirmed` with `400 order_not_paid`. It runs in
+      `ship_order` (after the company-scope check) and in the admin `update_shipping_status` for
+      every target status except `cancelled`, so an admin can still close out an unpaid order.
+    - `PATCH /order/cancel/{order_id}` is removed from the router. It let a fan cancel their own
+      paid order with no refund or restock, had no rate limit, and the frontend never called it.
+      `OrderService.cancel_placed_order` is kept, unchanged and unreachable, for when cancellation
+      is built properly.
+    - Tests: new `tests/unit/marketplace/test_order_service.py` (both shipping paths for
+      pending/cancelled/confirmed orders, and that no cancel route is registered; the guard tests
+      fail if the check is removed). In `tests/integration/marketplace/test_order_fulfillment.py`
+      the seeded order is now `confirmed` by default, with new cases for unpaid orders on both
+      routes; the cancel-route tests are replaced by one asserting the route is gone.
+    - Verified with the unit suite (604 passing) and ruff. The integration suite wasn't run
+      locally for this change (no Postgres available) and is left to CI.
+    - **Frontend follow-up:** the manager orders page still shows "Ship" for any order with a
+      `pending`/`processing` shipping status; it should also require `status == "confirmed"`.
+      Until then the button returns the `order_not_paid` error on an unpaid order. Handover, also
+      covering the two per-email 429 codes from item 49:
+      `docs/frontend-tasks/auth-limits-and-unpaid-orders.md`.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:

@@ -97,11 +97,12 @@ class Seed:
             state="Tokyo", country="Japan",
         ))
 
-    def order(self, user_id, items: list[tuple[Product, int]], shipping_status: str | None = "pending") -> Order:
-        """An already-placed order, bypassing checkout. shipping_status=None leaves no status row."""
+    def order(self, user_id, items: list[tuple[Product, int]], shipping_status: str | None = "pending", status: str = "confirmed") -> Order:
+        """An already-placed order, bypassing checkout: paid (confirmed) unless `status` says
+        otherwise. shipping_status=None leaves no status row."""
         address = self.address(user_id)
         order = Order(
-            user_id=user_id, shipping_address_id=address.id,
+            user_id=user_id, shipping_address_id=address.id, status=status,
             total_price=sum(p.price * qty for p, qty in items),
         )
         self.db.add(order)

@@ -92,7 +92,8 @@ additionally 403 when a manager acts outside their own company's resources (note
 | `lottery_preference_required` | 400 | Applying to a tier the fan hasn't ranked |
 | `lottery_entry_cap_exceeded` | 400 | Already applied to this campaign |
 | `no_open_campaigns` / `entries_not_ended` | 400 | Lottery draw triggered too early, or with nothing to draw (manager) |
-| `order_already_shipped` / `order_cancelled` / `invalid_shipping_transition` | 400 | Order cancel / shipping-status changes not allowed from the current status (manager/admin) |
+| `order_cancelled` / `invalid_shipping_transition` | 400 | Shipping-status change not allowed from the current status (manager/admin) |
+| `order_not_paid` | 400 | Shipping an order that isn't `confirmed` — e.g. a PayPal order not captured yet (manager/admin) |
 | `bad_request` / `conflict` / `rule_violation` | 400 / 409 / 400 | Generic fallbacks, mostly manager/admin form checks — show `detail` |
 | other trigger codes | 400 | `ticket_type_concert_mismatch`, `product_detail_kind_conflict`, `concert_capacity_exceeded`, `duplicate_ticket_type` (manager/admin forms) |
 
@@ -155,7 +156,7 @@ so a UI can be scaffolded before every endpoint is wired in.
 - My profile — §2 `Profile`
 - Cart — §6 `Cart`
 - Checkout — §6 `Order` (`/checkout`), `Shipping Addresses`, `Payment`
-- My orders (list + detail + cancel + shipping status) — §6 `Order`
+- My orders (list + detail + shipping status) — §6 `Order`
 - My payment status — §6 `Payment`
 - My tickets — §4 `Tickets` (`/mine`)
 - Lottery: apply to a campaign, rank ticket-type preferences, see my entries, pay for a won
@@ -1069,10 +1070,6 @@ follow up with `GET /payment/status/order/{order_id}` (below) to fetch the payme
 - Response: `Order`
 - UI: order detail page
 
-### `PATCH /order/cancel/{order_id}` 🔒 fan
-- Response: `Order` (updated) — `400` if the order has already shipped
-- UI: order detail page — "cancel order" button
-
 ### `GET /order/shipping_status/{order_id}` 🔒 fan
 - Response: not schema-enforced (raw `shipping_status` row); `ShippingStatusResponse`-shaped —
   `status`, `updated_at` (when `status` last changed)
@@ -1085,19 +1082,23 @@ everyday fulfillment path; see `PATCH /order/{order_id}/ship` below for that.
   "cancelled"`
 - Response: not schema-enforced (raw `shipping_status` row, same shape as the `GET` above, despite
   the type hint saying `Order` — the service returns the `shipping_status` row, not the order)
-- `400` if the order is already `cancelled`
+- `400` if the order is already `cancelled`, or (`order_not_paid`) if the order isn't `confirmed`
+  and the new status is anything other than `"cancelled"`
 - UI: admin — fulfillment/shipping dashboard, manual override
 
 ### `PATCH /order/{order_id}/ship` 🔒 manager+ (company-scoped)
 The everyday "mark shipped" action — one button, no status picker. Only moves `pending`/`processing`
-→ `shipped`; a manager may only ship an order containing at least one of their own company's
+→ `shipped`, and only for a paid (`confirmed`) order; a manager may only ship an order containing at least one of their own company's
 products (an admin isn't scoped). Writes an `order_shipped` in-app notification to the buyer in the
 same commit as the status flip.
 - Response (`Order`): the full updated order, same shape as `POST /order/checkout`'s response —
   `shippingstatus.status` is now `"shipped"` with a fresh `updated_at`
 - Errors: `404` (order doesn't exist), `403` (manager's company has no product in this order), `400`
-  (order isn't in `pending`/`processing` — already shipped/delivered, or cancelled)
-- UI: manager orders page — a "Ship" button per order row, or on the order detail page
+  (order isn't in `pending`/`processing` — already shipped/delivered, or cancelled), `400`
+  `order_not_paid` (order status isn't `confirmed`: an unpaid or abandoned PayPal order, or a
+  cancelled one)
+- UI: manager orders page — a "Ship" button per order row, or on the order detail page. Show it
+  only when the order's `status` is `"confirmed"`
 
 ### `GET /order/manager-orders-page` 🔒 manager+ (company-scoped)
 - Request: query params `page` (default 1), `limit` (default 10, max 50), `company_id` (uuid,

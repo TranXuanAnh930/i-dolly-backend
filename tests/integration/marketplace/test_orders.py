@@ -83,11 +83,6 @@ def test_fetch_placed_orders_empty():
     assert response.status_code == 200
     assert response.json() == []
 
-def test_cancel_nonexistent_order():
-    headers = auth_headers()
-    response = client.patch(f"/order/cancel/{FAKE_ID}", headers=headers)
-    assert response.status_code == 404
-
 def test_shipping_status_not_found():
     headers = auth_headers()
     response = client.get(f"/order/shipping_status/{FAKE_ID}", headers=headers)

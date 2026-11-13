@@ -141,7 +141,8 @@ class OrderService:
             .first()
         )
 
-    # Out of scope: not used by the frontend. Doesn't restock, refund, or bust the product cache.
+    # Not reachable: no route calls it. It doesn't restock, refund, or bust the product cache, so
+    # it stays unregistered until it does.
     @staticmethod
     def cancel_placed_order(db:Session, user_id:uuid.UUID, order_id:uuid.UUID) -> Order:
         order = OrderService.fetch_single_placed_order(db, user_id, order_id)
@@ -161,12 +162,22 @@ class OrderService:
         return order.shippingstatus if order else None
 
     @staticmethod
+    def _require_paid(order: Order) -> None:
+        # A PayPal order has a pending shipping status from checkout on, before it is captured;
+        # only a confirmed order has been paid for.
+        if order.status != OrderStatus.confirmed:
+            raise BadRequestError("Order has not been paid and cannot be shipped", code="order_not_paid")
+
+    @staticmethod
     def update_shipping_status(db:Session, new_status:SchemaShippingStatus, order_id:uuid.UUID) -> ShippingStatus:
         order_shippingstatus = db.query(ShippingStatus).filter(ShippingStatus.order_id==order_id).first()
         if not order_shippingstatus:
             raise NotFoundError("Order not found")
         if order_shippingstatus.status == SchemaShippingStatus.cancelled:
             raise BadRequestError("Order is cancelled and its shipping status can no longer be updated", code="order_cancelled")
+        # Cancelling is allowed for an unpaid order; every other status moves it toward delivery.
+        if new_status != SchemaShippingStatus.cancelled:
+            OrderService._require_paid(order_shippingstatus.orderid)
         order_shippingstatus.status = new_status
         # Set explicitly; server_onupdate isn't backed by a DB trigger.
         order_shippingstatus.updated_at = datetime.now(timezone.utc)
@@ -199,6 +210,7 @@ class OrderService:
             raise NotFoundError("Order not found")
         if OrderService._manager_order_scope_violation(db, order, current_user):
             raise ForbiddenError("Managers can only ship orders containing their own company's products")
+        OrderService._require_paid(order)
         if not order.shippingstatus or order.shippingstatus.status not in (SchemaShippingStatus.pending, SchemaShippingStatus.processing):
             current = order.shippingstatus.status.value if order.shippingstatus else "unknown"
             raise BadRequestError(f"Order cannot be marked shipped from its current status ({current})", code="invalid_shipping_transition")

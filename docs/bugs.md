@@ -105,11 +105,14 @@ still hold. That pass corrected line references, added the **Review** notes belo
   with no status filter either, so it needs its own migration. And once only `confirmed` orders
   count, a fan can open several `pending` PayPal orders that each pass the cap and capture them
   all — `finalize_paypal_payment` has to re-check the cap before capturing.
-- [ ] **14. `cancel_placed_order` doesn't restock, refund, or bust the product cache.**
+- [x] **14. `cancel_placed_order` doesn't restock, refund, or bust the product cache.**
   **OUT OF SCOPE**: the frontend doesn't use this endpoint; not in current scope.
   **Review:** the route is still live. `PATCH /order/cancel/{order_id}` (`router/marketplace/order.py:80`)
   has no rate limit and lets a fan cancel their own paid, unshipped order with no refund or
   restock. Remove or disable the route until the service is finished.
+  **MITIGATED** (`project_status.md` §4 item 50): the route is no longer registered, so nothing
+  can call the function. The function itself is unchanged; finish it (refund, restock, cache)
+  before registering a route for it again.
 - [x] **15. Cart price drift.** Re-adding an item updates `total_price` from the current price but
   leaves `Cart.price` stale (`cart_service.py` add_to_cart); checkout uses `total_price` for the
   order total and `price` for line items → they don't reconcile.
@@ -122,13 +125,16 @@ still hold. That pass corrected line references, added the **Review** notes belo
   **FIXED**: `paypal_client.order_id_from_webhook` reads the order id from `CHECKOUT.ORDER.*` (`resource.id`)
   or `PAYMENT.CAPTURE.*` (`supplementary_data`) events; anything else gets a 200 and is ignored.
   What happens after an order id is found is unchanged (#8).
-- [ ] **26. Unpaid PayPal orders can be shipped.** The PayPal path creates the order's
+- [x] **26. Unpaid PayPal orders can be shipped.** The PayPal path creates the order's
   `shipping_status` row as `pending` before payment (`payment_service.py:51`), and `ship_order`
   checks only the shipping status, not `order.status` (`order_service.py:202`). An abandoned or
   not-yet-captured order shows up on the manager orders page and can be marked shipped. Require
   `order.status == confirmed` in `ship_order`.
   **Review:** no longer deferred — the guard doesn't depend on #12 or #27 (one check plus a test).
   `update_shipping_status` (`order_service.py:164`) needs the same check.
+  **FIXED** (`project_status.md` §4 item 50): `ship_order` rejects any order that isn't
+  `confirmed` with `400 order_not_paid`, and so does the admin `update_shipping_status` for every
+  target status except `cancelled`.
 - [ ] **30. PayPal `create_order` runs under row locks.** Same class as #8, at checkout rather than
   capture. `OrderService.checkout` locks the cart's products `FOR UPDATE` (`order_service.py:69`)
   and `checkout_ticket` locks the user and the ticket type (`ticket_service.py:91`, `:99`); both
@@ -233,12 +239,12 @@ still hold. That pass corrected line references, added the **Review** notes belo
 
 ## Suggested order (updated 2026-11-13)
 
-Fixed so far: #1, #3, #4, #5, #6 (mitigated), #7, #9, #10, #15, #16, #17, #21, half of #22,
-#28, #29, and eight code smells.
+Fixed so far: #1, #3, #4, #5, #6 (mitigated), #7, #9, #10, #14 (mitigated), #15, #16, #17, #21,
+half of #22, #26, #28, #29, and eight code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
-2. **New quick wins:** #26 require `confirmed` before shipping; #14 remove or disable the cancel
-   route.
+2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
+   route~~ (done).
 3. **Security:** ~~#28 broken/unguarded address lookup~~ (done); ~~#7 spoofable IP rate limits~~
    (done in code; set `TRUSTED_PROXY_HOPS` on Render); ~~#29 unauthenticated manager pages~~ (done).
 4. **Data integrity and money:** #2 product delete wipes order history (migration to `RESTRICT` +
