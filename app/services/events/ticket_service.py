@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session, selectinload
 
 from app.cache.invalidation import CacheInvalidation
-from app.celery_app import celery_app
 from app.db.models.events import Concert, DirectSaleCampaign, LotteryCampaign, LotteryEntry, Ticket, TicketType
 from app.db.models.identity import Users
 from app.db.models.marketplace import Payment
@@ -44,6 +43,7 @@ from app.schema.marketplace import PaymentGateway, PaymentStatus
 from app.schema.shared import NotificationType
 from app.services.marketplace.payment_service import PaymentService
 from app.services.shared.notification_service import NotificationService
+from app.utils.email_dispatch import dispatch_email
 from app.utils.email_templates import EmailTemplate
 from app.utils.tax import with_tax
 
@@ -190,7 +190,7 @@ class TicketService:
             email_body = EmailTemplate.TICKET_CONFIRMED.render(
                 email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=total_amount
             )
-            celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body])
+            dispatch_email(user.email, EmailTemplate.TICKET_CONFIRMED.subject, email_body)
         db.refresh(ticket)
         return ticket
 
@@ -238,9 +238,7 @@ class TicketService:
             email_body = EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.render(
                 email=user.email, ticket_id=ticket.id, tier=ticket_type.tier, price=total_amount
             )
-            celery_app.send_task(
-                "app.tasks.email.send_email", args=[user.email, EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.subject, email_body]
-            )
+            dispatch_email(user.email, EmailTemplate.LOTTERY_PAYMENT_CONFIRMED.subject, email_body)
         db.refresh(ticket)
         return ticket
 

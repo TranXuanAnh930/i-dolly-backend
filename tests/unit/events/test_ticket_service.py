@@ -70,15 +70,15 @@ class TestConfirmationEmailAfterCommit:
              patch(f"{SERVICE}.CacheInvalidation"), \
              patch(f"{SERVICE}.flush_or_raise"), \
              patch(f"{SERVICE}.commit_or_raise", side_effect=commit) as commit_mock, \
-             patch(f"{SERVICE}.celery_app") as celery:
+             patch(f"{SERVICE}.dispatch_email") as dispatch:
             calls = MagicMock()
             calls.attach_mock(commit_mock, "commit")
-            calls.attach_mock(celery.send_task, "send_email")
+            calls.attach_mock(dispatch, "send_email")
             try:
                 TicketService.checkout_ticket(db, DEFAULT_ID, data)
             finally:
                 self.order = [c[0] for c in calls.mock_calls]
-            return celery
+            return dispatch
 
     def test_direct_checkout_sends_email_after_commit(self):
         self._checkout_direct(make_db(make_ticket_type()), commit=None)
@@ -97,10 +97,10 @@ class TestConfirmationEmailAfterCommit:
         with patch(f"{SERVICE}.PaymentService.create_ticket_payment", side_effect=successful_payment), \
              patch(f"{SERVICE}.NotificationService.create_notification"), \
              patch(f"{SERVICE}.commit_or_raise", side_effect=commit) as commit_mock, \
-             patch(f"{SERVICE}.celery_app") as celery:
+             patch(f"{SERVICE}.dispatch_email") as dispatch:
             calls = MagicMock()
             calls.attach_mock(commit_mock, "commit")
-            calls.attach_mock(celery.send_task, "send_email")
+            calls.attach_mock(dispatch, "send_email")
             try:
                 TicketService.checkout_won_ticket(db, DEFAULT_ID, DEFAULT_ID, data)
             finally:

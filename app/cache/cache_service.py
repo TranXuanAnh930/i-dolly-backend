@@ -4,6 +4,7 @@ from typing import Any
 import msgpack
 from sqlalchemy.orm import Session
 
+from app.cache.guards import cache_get, cache_set
 from app.cache.invalidation import (
     EVENTS_PAGE_KEY,
     GROUPS_PAGE_KEY,
@@ -26,7 +27,6 @@ from app.cache.invalidation import (
     manager_products_page_key,
     product_detail_key,
 )
-from app.cache.redis_client import redis_client
 from app.schema.events import ConcertDetailRead, EventsPageRead, ManagerEventsPageRead, VenueRead
 from app.schema.marketplace import (
     ManagerProductFormPageRead,
@@ -62,7 +62,7 @@ class CacheService(CacheInvalidation):
     @staticmethod
     def get_cached_products(db: Session) -> list[dict[str, Any]]:
         cache_key = PRODUCTS_LIST_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
         products = ProductService.list_of_products(db)
@@ -80,13 +80,13 @@ class CacheService(CacheInvalidation):
             }).model_dump(mode="json")
             for p in products
         ]
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
     @staticmethod
     def get_cached_store_page(db: Session) -> StorePageRead:
         cache_key = STORE_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return StorePageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
@@ -94,93 +94,93 @@ class CacheService(CacheInvalidation):
         result = ProductService.get_store_page(db)
 
         payload = result.model_dump(mode="json")
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return result
 
     @staticmethod
     def get_cached_product_detail(db: Session, id: uuid.UUID) -> ProductDetailRead | None:
         cache_key = product_detail_key(id)
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ProductDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ProductService.get_product_detail(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_events_page(db: Session) -> EventsPageRead:
         cache_key = EVENTS_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return EventsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ConcertService.get_events_page(db)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     # Caches only the viewer-independent concert detail; per-viewer fields are never stored.
     @staticmethod
     def get_cached_concert_detail(db: Session, id: uuid.UUID) -> ConcertDetailRead | None:
         cache_key = concert_detail_key(id)
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ConcertDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ConcertService.get_concert_detail_public(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_members_page(db: Session) -> MembersPageRead:
         cache_key = MEMBERS_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return MembersPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = IdolService.get_members_page(db)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_idol_detail(db: Session, id: uuid.UUID) -> IdolDetailRead | None:
         cache_key = idol_detail_key(id)
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return IdolDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = IdolService.get_idol_detail(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_groups_page(db: Session) -> GroupsPageRead:
         cache_key = GROUPS_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return GroupsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = GroupService.get_groups_page(db)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_group_detail(db: Session, id: uuid.UUID) -> GroupDetailRead | None:
         cache_key = group_detail_key(id)
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return GroupDetailRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = GroupService.get_group_detail(db, id)
         if not result:
             return None
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     # Venues and idol colors: small lookup tables, cached with the same TTL + invalidate-on-write.
@@ -188,25 +188,25 @@ class CacheService(CacheInvalidation):
     @staticmethod
     def get_cached_venues(db: Session) -> list[dict[str, Any]]:
         cache_key = VENUES_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
 
         venues = VenueService.get_venues(db)
         payload = [VenueRead.model_validate(v).model_dump(mode="json") for v in venues]
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
     @staticmethod
     def get_cached_idol_colors(db: Session) -> list[dict[str, Any]]:
         cache_key = IDOL_COLORS_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
 
         colors = IdolColorService.get_idol_colors(db)
         payload = [IdolColorRead.model_validate(c).model_dump(mode="json") for c in colors]
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 
     # --- Manager/admin settings pages. These always return a page object (possibly empty), never None.
@@ -214,45 +214,45 @@ class CacheService(CacheInvalidation):
     @staticmethod
     def get_cached_manager_idols_page(db: Session) -> ManagerIdolsPageRead:
         cache_key = MANAGER_IDOLS_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ManagerIdolsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = IdolService.get_manager_idols_page(db)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_manager_idol_form_page(db: Session) -> ManagerIdolFormPageRead:
         cache_key = MANAGER_IDOL_FORM_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ManagerIdolFormPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = IdolService.get_manager_idol_form_page(db)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_manager_groups_page(db: Session) -> ManagerGroupsPageRead:
         cache_key = MANAGER_GROUPS_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ManagerGroupsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = GroupService.get_manager_groups_page(db)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_manager_events_page(db: Session) -> ManagerEventsPageRead:
         cache_key = MANAGER_EVENTS_PAGE_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ManagerEventsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ConcertService.get_manager_events_page(db)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     # Manager product pages are cached per company_id (None = admin, all companies). Product has no
@@ -262,34 +262,34 @@ class CacheService(CacheInvalidation):
     @staticmethod
     def get_cached_manager_products_page(db: Session, company_id: uuid.UUID | None) -> ManagerProductsPageRead:
         cache_key = manager_products_page_key(company_id)
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ManagerProductsPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ProductService.get_manager_products_page(db, company_id)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_manager_product_form_page(db: Session, company_id: uuid.UUID | None) -> ManagerProductFormPageRead:
         cache_key = manager_product_form_page_key(company_id)
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return ManagerProductFormPageRead.model_validate(msgpack.unpackb(cached, raw=False))
 
         result = ProductService.get_manager_product_form_page(db, company_id)
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(result.model_dump(mode="json")))
         return result
 
     @staticmethod
     def get_cached_management_companies(db: Session) -> list[dict[str, Any]]:
         cache_key = MANAGEMENT_COMPANIES_KEY
-        cached = redis_client.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             return msgpack.unpackb(cached, raw=False)
 
         companies = ManagementCompanyService.get_companies(db)
         payload = [ManagementCompanyRead.model_validate(c).model_dump(mode="json") for c in companies]
-        redis_client.setex(cache_key, TTL_SECONDS, msgpack.packb(payload))
+        cache_set(cache_key, TTL_SECONDS, msgpack.packb(payload))
         return payload
 

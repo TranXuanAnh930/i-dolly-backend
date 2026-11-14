@@ -41,6 +41,10 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   PayPal checkout is cancelled when they check out again (same concert for tickets, any pending
   order for the marketplace), or through the new `POST /payment/paypal/cancel/{pg_order_id}` when
   they back out on PayPal. Lottery wins keep their seat until their deadline.
+- **Fixed — a Redis outage no longer takes the site down (#11).** Cached pages are built from
+  Postgres, a write that committed reports success, transactional emails are best-effort (logged
+  and dropped when the broker is down), and triggering the lottery draw answers 503. Redis calls
+  time out after 1 s (`REDIS_SOCKET_TIMEOUT`), with one retry instead of redis-py's three.
 
 ## 1.4.2 — 2026-11-14
 

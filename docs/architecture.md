@@ -93,6 +93,19 @@ on `payment_service` crosses that boundary on purpose.
 
    A service must never import `cache_service`, since that would recreate the cycle.
 
+   **A Redis outage is not a site outage.** Every read goes through `app/cache/guards.py`:
+   `cache_get` treats a Redis error as a miss (the page is built from Postgres) and `cache_set`
+   skips the write. Every `delete_cached_*` carries `@best_effort`: a Redis error is logged and
+   skipped, because it runs after a commit that can't be undone, and the response must report the
+   committed write. The cost is a page up to 5 minutes stale (`TTL_SECONDS`) after Redis
+   recovers; none at all when Redis restarts empty, as Render Key Value does. Transactional emails
+   go through `app/utils/email_dispatch.py::dispatch_email`, which logs and drops an email the
+   broker can't take. The lottery draw is the exception: queueing it is the whole operation, so
+   `PUT /concerts/lottery-draw/{id}` answers 503. The Redis client (`app/cache/redis_client.py`)
+   times out after `REDIS_SOCKET_TIMEOUT` (1 s) with one immediate retry, so a dead Redis costs
+   about 2 s per call rather than a hung request. Only Redis errors are caught; any other
+   exception still surfaces.
+
 Cross-service calls go through the class too (`PaymentService.create_ticket_payment(...)`, never a
 bare function). Two same-named functions in different service files (e.g. both
 `direct_sale_campaign_service.add_campaign` and `lottery_campaign_service.add_campaign`) are

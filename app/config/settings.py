@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     REDIS_PORT : int
     REDIS_DB : int
 
+    # Seconds before a cache/rate-limiter Redis call gives up (connect and each read/write). Not used
+    # by Celery's broker connection.
+    REDIS_SOCKET_TIMEOUT: float = 1.0
+
     # Celery uses the same Redis instance on a separate DB index from the cache/rate limiter.
     CELERY_BROKER_DB: int = 1
     DATABASE_NAME : str

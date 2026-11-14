@@ -2,10 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from app.celery_app import celery_app
 from app.db.models.identity import Users
 from app.db.models.shared import Inquiry
 from app.schema.shared import InquiryCreate
+from app.utils.email_dispatch import dispatch_email
 from app.utils.email_templates import EmailTemplate
 
 # The email goes to whatever address was typed, so cap how many one address can receive.
@@ -41,8 +41,5 @@ class InquiryService:
             email_body = EmailTemplate.INQUIRY_RECEIVED.render(
                 email=email, inquiry_id=inquiry.id, topic=data.topic.label
             )
-            celery_app.send_task(
-                "app.tasks.email.send_email",
-                args=[email, EmailTemplate.INQUIRY_RECEIVED.subject, email_body],
-            )
+            dispatch_email(email, EmailTemplate.INQUIRY_RECEIVED.subject, email_body)
         return inquiry
