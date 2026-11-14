@@ -30,6 +30,10 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   (`app/config/log_config.py`), at the new `LOG_LEVEL` setting (default `INFO`), in the same
   format under the API and, via Celery's handler, in the worker. A failed email is now logged with
   its traceback; it is still not retried.
+- **Fixed — abandoned PayPal checkouts no longer lock fans out (#12, #27).** A fan's own pending
+  PayPal checkout is cancelled when they check out again (same concert for tickets, any pending
+  order for the marketplace), or through the new `POST /payment/paypal/cancel/{pg_order_id}` when
+  they back out on PayPal. Lottery wins keep their seat until their deadline.
 
 ## 1.4.2 — 2026-11-14
 

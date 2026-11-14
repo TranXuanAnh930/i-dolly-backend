@@ -40,7 +40,7 @@ from app.schema.events.lottery_entry import LotteryEntryStatus
 from app.schema.events.ticket import TicketStatus
 from app.schema.events.ticket_type import SaleMethod
 from app.schema.identity import UserRole
-from app.schema.marketplace import PaymentStatus
+from app.schema.marketplace import PaymentGateway, PaymentStatus
 from app.schema.shared import NotificationType
 from app.services.marketplace.payment_service import PaymentService
 from app.services.shared.notification_service import NotificationService
@@ -84,6 +84,37 @@ class TicketService:
             .first()
         )
 
+    @staticmethod
+    def _release_stale_paypal_ticket(db: Session, user_id: uuid.UUID, concert_id: uuid.UUID) -> None:
+        """Cancel this fan's own unfinished PayPal checkout for a direct-sale ticket to this concert,
+        so it stops counting as their one live ticket. Doesn't commit: checkout_ticket commits once
+        at the end.
+
+        Leaves everything else alone: paid tickets, mock-gateway tickets, lottery tickets (those
+        have their own payment deadline), and other fans' tickets.
+        """
+        payment = (
+            db.query(Payment)
+            .filter(
+                Payment.user_id == user_id,
+                Payment.payment_gateway == PaymentGateway.paypal,
+                Payment.status == PaymentStatus.pending,
+            )
+            .join(Ticket, Payment.ticket_id == Ticket.id)
+            .join(TicketType, Ticket.ticket_type_id == TicketType.id)
+            .filter(
+                Ticket.status == TicketStatus.pending_payment,
+                TicketType.sale_method == SaleMethod.direct,
+                TicketType.concert_id == concert_id,
+            )
+            .with_for_update(of=Payment)
+            .first()
+        )
+
+        if payment:
+            PaymentService.cancel_pending_paypal_payment(db, payment)
+        return None
+
     # Direct-sale purchase. Holds a row lock on the ticket type until the single commit at the end,
     # so two fans can't both buy the last seat.
     @staticmethod
@@ -95,6 +126,14 @@ class TicketService:
 
         if db.query(Payment).filter(Payment.idempotency_key == data.idempotency_key).first():
             raise DuplicateIdempotencyKeyError() 
+
+        # Release this fan's own abandoned PayPal checkout for the concert, which would otherwise
+        # count as their one live ticket. Done before locking the ticket type: finalize_paypal_payment
+        # locks payment -> ticket -> ticket type, so taking the ticket type first could deadlock with
+        # a capture in flight.
+        concert_id = db.query(TicketType.concert_id).filter(TicketType.id == data.ticket_type_id).scalar()
+        if concert_id:
+            TicketService._release_stale_paypal_ticket(db, user_id, concert_id)
 
         ticket_type = db.query(TicketType).filter(TicketType.id == data.ticket_type_id).with_for_update().first()
         if not ticket_type:

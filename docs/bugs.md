@@ -90,9 +90,12 @@ still hold. That pass corrected line references, added the **Review** notes belo
   after commit, so checkout/payment 500 on an order that actually succeeded.
   **Fix planned:** `docs/plans/redis-outage.md` (fail-open reads, best-effort invalidation and
   email dispatch, client timeouts).
-- [ ] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
+- [x] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
   live (`ticket_service.py:54`) but direct tickets have no deadline/sweep.
-  **DEFERRED**: to be fixed later, with #26 and #27.
+  **FIXED without a sweep** (`project_status.md` §4 item 55): the fan's next `checkout_ticket` for
+  the same concert cancels their own pending direct-sale PayPal checkout, and the new
+  `POST /payment/paypal/cancel/{pg_order_id}` cancels it when they back out on PayPal. A pending
+  direct-sale ticket holds no seat, so nothing else needs one.
 - [ ] **13. Resale cap counts cancelled/declined orders** (`order_service.py`, no status
   filter). ~~Computed before the lock (concurrent checkouts can both pass)~~ — **race FIXED**:
   `checkout` now runs the cap check after the `FOR UPDATE` on the cart's products, and
@@ -198,7 +201,10 @@ still hold. That pass corrected line references, added the **Review** notes belo
   can re-checkout, but the stale orders clutter order history and the manager orders page, feed the
   resale cap (#13), and look shippable (#26). Same root cause as #12 (no expiry for PayPal pending
   state); fix them together.
-  **DEFERRED**: to be fixed later, with #12 and #26.
+  **FIXED without a sweep** (`project_status.md` §4 item 55): the fan's next checkout cancels
+  their own pending PayPal orders, and the cancel endpoint cancels one when they back out on
+  PayPal. Orders left by a fan who never returns still stay `pending`; they block nothing. They
+  still count toward the resale cap (#13), which counts every order regardless of status.
 - [ ] **31. Stock gone between PayPal approval and capture leaves everything pending.** When the
   tier is sold out or a product is short at capture time, `finalize_paypal_payment` returns `None`
   without changing anything (`payment_service.py:142`, `:180`): the fan, who already approved on
@@ -257,8 +263,8 @@ still hold. That pass corrected line references, added the **Review** notes belo
 
 ## Suggested order (updated 2026-11-13)
 
-Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #14 (mitigated), #15, #16, #17, #21,
-#22, #26, #28, #29, and nine code smells.
+Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #12, #14 (mitigated), #15, #16, #17,
+#21, #22, #26, #27, #28, #29, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -271,9 +277,10 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #14 (mitigated), 
    #25 (plan in `docs/plans/lottery-draw-post-commit.md`) — the Redis fix removes one trigger of
    #25.
 6. **Auth:** #18, #19, then the plaintext-storage half of #20.
-7. **PayPal pending state:** #12 (abandoned ticket locks the fan out) and #27 (abandoned orders
-   never expire) with a scheduled sweep, plus #31, #33 and #13 (the cap can only count `confirmed`
-   orders once pending ones expire or are re-checked at capture).
+7. **PayPal pending state:** ~~#12, #27~~ (done without a sweep: released on the fan's next
+   checkout or on PayPal cancel). Left: #31, #33, and #13 (the cap can only count `confirmed`
+   orders once a pending one is re-checked at capture). A scheduled sweep is still needed for
+   unpaid lottery wins, which do hold seats (`project_status.md` §8).
 8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
    #32.
 9. **Whenever convenient:** ~~#22~~ (done), #23, #24.

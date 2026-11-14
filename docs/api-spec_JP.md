@@ -1128,9 +1128,23 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
    - ここでの `404` の意味: 見つからない、すでに決着済み（例: 下の Webhook がこの呼び出しより先に処理した — これは
      表に出すべきエラーではなく、普通の競合として扱う）、または決済が呼び出し元のものではない。
 6. **キャンセル**: ファンが PayPal 側で取りやめた場合、PayPal は `token` とともに
-   `{FRONTEND_BASE_URL}/payment/paypal/cancel` にリダイレクトする — キャプチャの呼び出しは不要で、注文／チケットは
-   単に `"pending"` のまま残る（自動ではキャンセルされない。放置された PayPal の購入手続きを掃除する処理は現在ない。
-   `project_status_JP.md` を参照）。
+   `{FRONTEND_BASE_URL}/payment/paypal/cancel` にリダイレクトする。フロントエンドはその `token` で
+   `POST /payment/paypal/cancel/{pg_order_id}`（下記）を呼ぶ。
+7. **放置された購入手続き** — ファンが PayPal のタブを閉じただけの場合、どちらのエンドポイントも呼ばれない。その
+   購入手続きは、そのファンが次に購入手続きをしたときにキャンセルされる: `POST /tickets/checkout` は、同じ公演の
+   一般販売のチケットについての、本人の pending の PayPal の購入手続きをキャンセルし、`POST /order/checkout` は本人の
+   pending の PayPal の注文をキャンセルする。二度と戻らないファンの場合は `"pending"` の行が残るが、在庫も席も確保
+   しない。抽選の当選はこの方法ではキャンセルされない: 自身の支払い期限まで席を保つ。
+
+### `POST /payment/paypal/cancel/{pg_order_id}` 🔒 fan
+呼び出し元の pending の PayPal の決済と、それが支払おうとしていたものをキャンセルする。
+- リクエスト: パスの `pg_order_id` — PayPal がキャンセル URL に付ける `token` クエリパラメータ
+- レスポンス: `status: "cancelled"` の `PaymentResponse`。一般販売のチケットは `"cancelled"` になる（ファンは再び
+  購入できる）。注文は `"cancelled"` になり、発送ステータスも `"cancelled"` になる。抽選の当選のチケットは期限まで
+  `"pending_payment"` のままなので、ファンは新しい支払いを始められる
+- エラー: 決済が存在しない、呼び出し元のものでない、PayPal のものでない、またはもう pending でない（キャプチャ済み
+  またはキャンセル済み）ときは `404`（キャプチャと同じ）。1 分に 5 回を超えると `429`
+- UI: `/payment/paypal/cancel` ページの読み込み時
 
 ### `POST /payment/paypal/webhook` 🔓 (PayPal signature-verified)
 （PayPal の署名で検証）

@@ -127,6 +127,81 @@ class PaymentService:
     def fetch_all_payments(db:Session, user_id:uuid.UUID) -> list[Payment]:
         return db.query(Payment).filter(Payment.user_id==user_id).all()
 
+    # --- Abandoned PayPal checkouts: a fan who closes PayPal's page leaves a pending payment that
+    # nothing would ever finish. It's cancelled when the fan clicks "Cancel" on PayPal
+    # (cancel_paypal_payment) or when they check out again (TicketService/OrderService release
+    # helpers). A pending checkout holds no stock or seat, so cancelling only changes statuses.
+
+    @staticmethod
+    def cancel_pending_paypal_payment(db: Session, payment: Payment) -> None:
+        """Cancel a PayPal payment that is still pending, together with what it was paying for: a
+        direct-sale ticket, or an order and its shipping status. The caller has already locked
+        `payment` and checked that it's a pending PayPal payment. Doesn't commit.
+
+        Nothing else needs undoing: stock and sold_quantity only change when a payment is captured,
+        and a cancelled payment can't be captured later, because finalize_paypal_payment only
+        captures a pending one.
+        """
+        if payment.status != PaymentStatus.pending or payment.payment_gateway != PaymentGateway.paypal:
+            return None
+
+        if payment.ticket_id:
+            ticket = (
+                db.query(Ticket)
+                .join(TicketType, Ticket.ticket_type_id == TicketType.id)
+                .filter(
+                    Ticket.id == payment.ticket_id,
+                    Ticket.status == TicketStatus.pending_payment,
+                    TicketType.sale_method == SaleMethod.direct,
+                )
+                .with_for_update(of=Ticket)
+                .first()
+            )
+            # A lottery win isn't matched: it keeps its seat until its own payment deadline, and the
+            # fan can start a new payment for it.
+            if ticket:
+                ticket.status = TicketStatus.cancelled
+        elif payment.order_id:
+            order = db.query(Order).filter(Order.id == payment.order_id).with_for_update().first()
+            if order and order.status == OrderStatus.pending:
+                order.status = OrderStatus.cancelled
+                shipstatus = (
+                    db.query(ModelShipStatus)
+                    .filter(ModelShipStatus.order_id == order.id)
+                    .with_for_update()
+                    .first()
+                )
+                if shipstatus:
+                    shipstatus.status = SchemaShipStatus.cancelled
+                    shipstatus.updated_at = datetime.now(timezone.utc)
+        payment.status = PaymentStatus.cancelled
+        db.flush()  # caller commits
+        return None
+
+    @staticmethod
+    def cancel_paypal_payment(db: Session, pg_order_id: str, user_id: uuid.UUID) -> Payment | None:
+        """The fan backed out on PayPal's approval page: cancel their pending payment for
+        `pg_order_id` and what it was paying for, then commit. None when there's no such payment,
+        it isn't theirs, or it's no longer pending (already captured or cancelled); the router
+        answers 404 for all three, like capture does.
+        """
+        payment = (
+            db.query(Payment)
+            .filter(
+                Payment.pg_order_id == pg_order_id,
+                Payment.user_id == user_id,
+                Payment.status == PaymentStatus.pending,
+                Payment.payment_gateway == PaymentGateway.paypal,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not payment:
+            return None
+        PaymentService.cancel_pending_paypal_payment(db, payment)
+        commit_or_raise(db)
+        return payment
+
     @staticmethod
     def finalize_paypal_payment(db:Session, pg_order_id:str, user_id: uuid.UUID | None = None) -> Payment | None:
         payment = db.query(Payment).filter(Payment.pg_order_id==pg_order_id).with_for_update().first()

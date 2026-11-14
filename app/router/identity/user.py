@@ -30,7 +30,7 @@ def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_curren
     result = UserService.change_password_process(db, user, payload.old_password, payload.new_password)
     if not result:
         raise ApiHTTPException(status_code=400, detail="Incorrect old password", code="incorrect_password")
-    return MessageResponse(msg="Password changed succesfully")
+    return MessageResponse(msg="Password changed successfully")
 
 @router.post("/forgot-password", response_model=MessageResponse)
 def forgot_password(payload:ForgotPasswordRequest, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
