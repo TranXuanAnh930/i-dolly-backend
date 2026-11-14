@@ -26,6 +26,10 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   restock; the service function is kept, unregistered.
 - **Fixed — user-keyed rate limits no longer depend on dependency order (#22).**
 - Removed the temporary proxy-hops log line used to measure `TRUSTED_PROXY_HOPS`.
+- **Added — logging.** The app logs through Python's `logging` instead of `print()`
+  (`app/config/log_config.py`), at the new `LOG_LEVEL` setting (default `INFO`), in the same
+  format under the API and, via Celery's handler, in the worker. A failed email is now logged with
+  its traceback; it is still not retried.
 
 ## 1.4.2 — 2026-11-14
 
