@@ -1,6 +1,9 @@
+import logging
 import threading
+from unittest.mock import patch
 
 import pytest
+import redis
 from fastapi import HTTPException
 from starlette.datastructures import Headers
 
@@ -206,3 +209,23 @@ class TestForgotPasswordLimit:
             assert not forgot_password_limit_exceeded("fan@example.com")
         assert forgot_password_limit_exceeded("fan@example.com")
         assert not forgot_password_limit_exceeded("other@example.com")
+
+
+class TestRedisErrorsAreLogged:
+    def test_limiter_fails_open_and_logs_a_warning(self, caplog):
+        limiter = rate_limit(limit=1, window=60, key_func=ip_key)
+        with caplog.at_level(logging.WARNING, logger="app.cache.rate_limit"), \
+             patch("app.cache.rate_limit.redis_client.pipeline", side_effect=redis.ConnectionError("refused")):
+            limiter(_FakeRequest(path="/redis-down"))  # must not raise
+            limiter(_FakeRequest(path="/redis-down"))  # over the limit, but Redis is down: allowed
+
+        assert [r.levelno for r in caplog.records] == [logging.WARNING, logging.WARNING]
+        assert "refused" in caplog.records[0].getMessage()
+        # One line per request, not a stack trace each.
+        assert caplog.records[0].exc_info is None
+
+    def test_per_email_limits_fail_open_and_log(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.cache.rate_limit"), \
+             patch("app.cache.rate_limit.redis_client.get", side_effect=redis.ConnectionError("refused")):
+            assert login_attempts_exceeded("fan@example.com") is False
+        assert len(caplog.records) == 1

@@ -29,10 +29,10 @@
   ないので、リクエストスコープ外の呼び出し元（同じく Celery タスクである `lottery_draw_service.draw_lottery`）からも
   メールを送れる。各メールの件名／本文は呼び出し箇所に直接書かず、`app/utils/email_templates.py` の `EmailTemplate`
   enum に置く。`settings.DEBUG=true` の場合、`.env.example` の `RESEND_API_KEY` がプレースホルダーであるため、メール本文
-  （認証／リセットトークンを含む）は送信されずコンソールに出力される — 本番では必ず `false` にすること。
+  （認証／リセットトークンを含む）は送信されず INFO レベルでログに出力される — 本番では必ず `false` にすること。
 - お問い合わせページの FAQ 即時回答に **anthropic** SDK（`app/services/shared/faq_answer_service.py`、モデルは
   `claude-haiku-4-5`、`messages.parse` による構造化出力）。`app/content/faq.md` / `faq.ja.md` の内容だけから回答する。
-  `ANTHROPIC_API_KEY` が未設定なら無効で、`DEBUG=true` の場合は API を呼ばずに出力する。
+  `ANTHROPIC_API_KEY` が未設定なら無効で、`DEBUG=true` の場合は API を呼ばずに質問をログに出力する。
 - S3 互換の画像ストレージに **boto3**（`STORAGE_BACKEND=s3` のときだけインポートされる）— §3 を参照。
 - ローカル開発に Docker Compose（`app` + `postgres:16` + `redis`）。Dockerfile は `uvicorn` の前に
   `alembic upgrade head` を実行する。`PYTHONDONTWRITEBYTECODE=1` は、Docker Desktop for Windows のバインドマウントで
@@ -172,6 +172,13 @@ FastAPI は `async def` のハンドラーをイベントループ上で直接�
 
 ## 3. 横断的な要素
 
+- **ロギング**（`app/config/log_config.py`）: すべてのモジュールは `logging.getLogger(__name__)` でログを出すので、
+  アプリのロガーはすべて `app` の下にある。`configure_logging()` はこの枝を `LOG_LEVEL`（デフォルト `INFO`）に設定し、
+  ルートロガーにまだハンドラーがなければ、`時刻 レベル ロガー名: メッセージ` を標準出力に書くハンドラーを 1 つ追加する。
+  `main.py` と `app/celery_app.py` で実行される。uvicorn の下ではこの標準出力のハンドラーがレコードを出力する。Celery の
+  ワーカーでは、Celery が起動時にルートのハンドラーを置き換えるので、レコードは Celery の形式で、その `--loglevel` で
+  出力される。ライブラリのロガー（SQLAlchemy、httpx など）はルートのデフォルトの `WARNING` のまま。`app/` に
+  `print()` はない。送信に失敗したメールはトレースバック付きでログに出し、リトライはしない。
 - **`app/deps/auth.py::get_current_user`** — Bearer JWT をデコードし、`Users` 行を読み込み、`request.state.user` を
   設定する（レートリミッターの `user_key` が読む）。`require_admin`/`require_manager_or_admin` は、非推奨の
   `is_admin` bool ではなく `current_user.role` をチェックする。
@@ -189,7 +196,8 @@ FastAPI は `async def` のハンドラーをイベントループ上で直接�
   クラッシュによって有効期限のないカウンターが残る（そのクライアントが永久にレート制限される）こともない。
   どちらのコマンドも他方の結果に依存しないのでトランザクションで十分であり、途中で読んだ値によって分岐する必要が
   あるロジックなら代わりに Lua スクリプトが必要になる。上限を超えた場合は `TTL` を読む（別の呼び出しで、429 の
-  メッセージのためだけ）。Redis のエラー時には警告を出力してリクエストを通す（フェイルオープン）。3 つ目のキー関数
+  メッセージのためだけ）。Redis のエラー時には 1 行の警告をログに出し（障害時にログがあふれないよう、トレースバックは付けない）、リクエストを
+  通す（フェイルオープン）。3 つ目のキー関数
   `user_or_ip_key` は、認証が任意のルート（`get_current_user_optional`）向け: トークンが送られていればユーザーを
   キーにし、ゲストの場合は `ip_key` のバケットにフォールバックする。`user_key`/`user_or_ip_key` は
   認証の依存性が設定する `request.state.user` を読むので、`rate_limit()` は、リミッター自体を `get_current_user`
@@ -250,6 +258,9 @@ Postgres の enum にキャストできない（キャスト関数が `IMMUTABLE
 
 ## 5. 新しいコードの規約
 
+- ログは `print()` ではなく `logger = logging.getLogger(__name__)` で出す。トレースバックが重要なときは `except` ブロック
+  内で `logger.exception(...)` を使い、予想される繰り返しの失敗（例: リクエストごとに Redis が落ちている）には 1 行の
+  `logger.warning` を使う。
 - ルートのプレフィックスは、既存のすべてのルーターに合わせて小文字にする（`/cart`、`/categories`、`/order`、
   `/payment`、...）。
 - 更新系／ユーザースコープのクエリはすべて、`get_current_user` だけでなくクエリのレベルで `user_id` または

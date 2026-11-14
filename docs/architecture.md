@@ -32,13 +32,13 @@ How the codebase is organized and the conventions new code should follow. For th
   not `BackgroundTasks`, so a non-request-scoped caller (`lottery_draw_service.draw_lottery`, also
   a Celery task) can send mail too. Subject/body text for each email lives in
   `app/utils/email_templates.py`'s `EmailTemplate` enum, not inlined at the call site. With
-  `settings.DEBUG=true`, email bodies (including verification/reset tokens) print to the console
-  instead of sending, since `.env.example`'s `RESEND_API_KEY` is a placeholder — must stay
+  `settings.DEBUG=true`, email bodies (including verification/reset tokens) are logged at INFO
+  instead of sent, since `.env.example`'s `RESEND_API_KEY` is a placeholder — must stay
   `false` in production.
 - **anthropic** SDK for FAQ instant answers on the contact page
   (`app/services/shared/faq_answer_service.py`, model `claude-haiku-4-5`, structured output via
   `messages.parse`). Answers only from `app/content/faq.md` / `faq.ja.md`; off when
-  `ANTHROPIC_API_KEY` is unset, and with `DEBUG=true` it prints instead of calling the API.
+  `ANTHROPIC_API_KEY` is unset, and with `DEBUG=true` it logs the question instead of calling the API.
 - **boto3** (only imported when `STORAGE_BACKEND=s3`) for S3-compatible image storage — see §3.
 - Docker Compose (`app` + `postgres:16` + `redis`) for local dev; the Dockerfile runs
   `alembic upgrade head` before `uvicorn`. `PYTHONDONTWRITEBYTECODE=1` avoids a stale-bytecode
@@ -189,6 +189,14 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
 
 ## 3. Cross-cutting pieces
 
+- **Logging** (`app/config/log_config.py`): every module logs through
+  `logging.getLogger(__name__)`, so the app's loggers all sit under `app`. `configure_logging()`
+  sets that branch to `LOG_LEVEL` (default `INFO`) and, when the root logger has no handler yet,
+  adds one writing `time level logger: message` to stdout. It runs in `main.py` and in
+  `app/celery_app.py`. Under uvicorn that stdout handler prints the records; in the Celery worker,
+  Celery replaces the root handlers at startup and the records come out in Celery's format at its
+  `--loglevel`. Library loggers (SQLAlchemy, httpx, ...) stay at the root's default `WARNING`. No
+  `print()` in `app/`. Failed emails are logged with their traceback and not retried.
 - **`app/deps/auth.py::get_current_user`** — decodes the bearer JWT, loads the `Users` row, sets
   `request.state.user` (read by the rate limiter's `user_key`). `require_admin`/
   `require_manager_or_admin` check `current_user.role`, not the deprecated `is_admin` bool.
@@ -207,8 +215,9 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
   and no way for a crash to leave a counter without an expiry (which would rate-limit that client
   forever). A transaction is enough because neither command depends on the other's result; logic
   that has to branch on a value read mid-way would need a Lua script instead. Past the limit it
-  reads the `TTL` (a separate call, only for the 429 message). On a Redis error it prints a
-  warning and lets the request through (fail-open). A third key function, `user_or_ip_key`, is
+  reads the `TTL` (a separate call, only for the 429 message). On a Redis error it logs a
+  one-line warning (no traceback, so an outage doesn't flood the logs) and lets the request
+  through (fail-open). A third key function, `user_or_ip_key`, is
   for auth-optional routes (`get_current_user_optional`): it keys on the user when a token was
   sent and falls back to the `ip_key` bucket for guests. `user_key`/`user_or_ip_key` read
   `request.state.user`, which the auth dependencies set, so `rate_limit()` makes its limiter
@@ -272,6 +281,9 @@ to Render on `main`.
 
 ## 5. Conventions for new code
 
+- Log with `logger = logging.getLogger(__name__)`, never `print()`. Use `logger.exception(...)`
+  inside an `except` block when the traceback matters, and a one-line `logger.warning` for an
+  expected, repeated failure (for example, Redis down on every request).
 - Route prefixes are lowercase, matching every existing router (`/cart`, `/categories`,
   `/order`, `/payment`, ...).
 - Every mutating/user-scoped query filters by `user_id` or `company_id` at the query level, not

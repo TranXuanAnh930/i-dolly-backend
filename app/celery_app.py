@@ -1,6 +1,9 @@
 from celery import Celery
 
+from app.config.log_config import configure_logging
 from app.config.settings import settings
+
+configure_logging()
 
 # Same Redis instance as the cache, on a separate DB index (CELERY_BROKER_DB).
 _redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.CELERY_BROKER_DB}"

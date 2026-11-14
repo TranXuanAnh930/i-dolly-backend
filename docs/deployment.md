@@ -141,13 +141,14 @@ scheduler process.
 | `CELERY_BROKER_DB` | `1` (default, can be omitted) | only relevant if the Celery worker (§5) is deployed too |
 | `RESEND_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | sends every transactional email, including contact-form confirmations |
 | `ANTHROPIC_API_KEY` | Claude API key, or **omit** | turns on AI answers on the contact page (`POST /inquiries/instant-answer`). Omitted = the endpoint always answers "not answerable" and the frontend just shows the form. |
-| `DEBUG` | **omit, or `false`** | dev-only: prints verification/reset tokens to the console when a placeholder `RESEND_API_KEY` can't actually deliver (`architecture.md`'s Resend note). Leaving it unset defaults to `false`, which is what you want here — these token bodies have no business in Render's shared logs. |
+| `DEBUG` | **omit, or `false`** | dev-only: logs verification/reset tokens when a placeholder `RESEND_API_KEY` can't actually deliver (`architecture.md`'s Resend note). Leaving it unset defaults to `false`, which is what you want here — these token bodies have no business in Render's shared logs. |
 | `BASE_URL` | `https://<your-render-service>.onrender.com` | used to build the email verification link |
 | `FRONTEND_BASE_URL` | your frontend's real origin | builds PayPal's `return_url`/`cancel_url`; defaults to `http://localhost:8080` |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | from a PayPal Sandbox (or live) app | omit to run with the mock gateway only |
 | `PAYPAL_MODE` | `sandbox` (or `live`) | |
 | `PAYPAL_WEBHOOK_ID` | the webhook's id from the PayPal dashboard | used to verify `POST /payment/paypal/webhook` signatures |
 | `CORS_ORIGINS` | your frontend's real origin(s), comma-separated | e.g. `https://your-frontend.vercel.app` |
+| `LOG_LEVEL` | omit (`INFO`) | the app's own log level; `DEBUG`, `INFO`, `WARNING` or `ERROR`. Set it on the worker too if you change it |
 | `TRUSTED_PROXY_HOPS` | the measured number of proxy hops (see below) | default `0` ignores `X-Forwarded-For`, which behind Render puts every visitor in one rate-limit bucket |
 | `STORAGE_BACKEND` | `s3` | per the chosen option in §3 |
 | `S3_BUCKET_NAME` / `S3_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | from §3 | |
