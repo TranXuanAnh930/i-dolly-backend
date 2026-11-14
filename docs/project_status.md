@@ -1182,6 +1182,23 @@ newly introduced.
       product delete/reactivate, as before for other product edits.
     - **Frontend follow-up:** `docs/frontend-tasks/product-soft-delete.md`.
 
+52. ~~**A user-keyed rate limit depended on the order of a route's dependencies**~~ (`bugs.md`
+    #22) — **FIXED**.
+    - `user_key` and `user_or_ip_key` read `request.state.user`, which only `get_current_user` /
+      `get_current_user_optional` set. A route that listed `rate_limit(..., user_key)` before its
+      auth dependency failed with a 500 on every call (the cause of #28), and one that listed a
+      `user_or_ip_key` limiter first counted signed-in users in the guests' IP bucket.
+    - `rate_limit()` now returns a limiter that depends on the right auth dependency itself.
+      FastAPI resolves a dependency once per request, so routes that also declare it don't
+      authenticate twice. A `user_key` limiter on a route with no auth dependency makes the route
+      answer 401 without a token, instead of a 500. No route changed: all 54 routes using these
+      key functions already listed auth first.
+    - Tests: `tests/unit/test_rate_limit_auth_order.py` builds routes with the limiter listed
+      first (and one with no auth dependency at all) against the real auth dependencies; all six
+      tests fail against the old `rate_limit()`.
+    - Verified: 617 unit and 402 integration tests pass against local Postgres and Redis, ruff
+      clean.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:

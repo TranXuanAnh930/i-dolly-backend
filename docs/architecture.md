@@ -211,7 +211,12 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
   warning and lets the request through (fail-open). A third key function, `user_or_ip_key`, is
   for auth-optional routes (`get_current_user_optional`): it keys on the user when a token was
   sent and falls back to the `ip_key` bucket for guests. `user_key`/`user_or_ip_key` read
-  `request.state.user`, so the auth dependency must come before `rate_limit` in the signature. `ip_key` takes the visitor's address from `client_ip()`, the one function that decides it.
+  `request.state.user`, which the auth dependencies set, so `rate_limit()` makes its limiter
+  depend on `get_current_user` (for `user_key`) or `get_current_user_optional` (for
+  `user_or_ip_key`) itself. FastAPI resolves a dependency once per request, so a route that also
+  declares it doesn't authenticate twice, and the order of the dependencies in a route's
+  signature doesn't matter. A `user_key` limiter on a route with no auth dependency makes the
+  route require login (401). `ip_key` takes the visitor's address from `client_ip()`, the one function that decides it.
   Each trusted proxy appends the address it received the request from to `X-Forwarded-For`, so
   with `TRUSTED_PROXY_HOPS` proxies in front the visitor is that many entries from the right;
   everything further left was written by the client and is ignored. With the setting at `0`
