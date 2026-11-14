@@ -53,7 +53,7 @@ additionally 403 when a manager acts outside their own company's resources (note
 | `too_many_login_attempts` | 429 | `POST /account/login`: 5 failed attempts for this email in 15 minutes |
 | `too_many_reset_requests` | 429 | `POST /profile/forgot-password`: more than 3 requests for this email in an hour |
 | `invalid_refresh_token` | 401 | `POST /account/refresh`: cookie missing, expired or revoked |
-| `invalid_token` | 400 / 401 | Email-verification link (400) or password-reset token (401) invalid or expired |
+| `invalid_token` | 400 / 401 | Email-verification link (400) or password-reset token (401) invalid, expired, or already used |
 | `incorrect_password` | 400 | `PUT /profile/change-password`: old password wrong |
 | `email_taken` | 400 | Register / create manager with an existing email |
 | `already_verified` | 409 | `GET /account/verify` on a verified account |
@@ -237,7 +237,12 @@ Confirm an email via the token from the verification link.
 
 ### `PUT /profile/change-password` 🔒 fan
 - Request (`ChangePasswordRequest`): `old_password` (str), `new_password` (str, 6–128 chars)
-- Response: `{"msg": "Password changed succesfully"}`
+- Response: `{"msg": "Password changed successfully", "access_token": "..."}`, plus a new
+  `refresh_token` cookie — same as `POST /account/refresh`. Every refresh token issued before the
+  change is revoked, so the caller must send this request with credentials (to receive the
+  cookie) and switch to the returned access token, or they'll be logged out when the current
+  access token expires. Outstanding password-reset links stop working too
+- Errors: `400` `incorrect_password` (nothing changes, the session stays valid)
 - UI: account settings
 
 ### `POST /profile/forgot-password` 🔓
@@ -249,8 +254,11 @@ Confirm an email via the token from the verification link.
 ### `POST /profile/set-password` 🔓
 Complete a password reset using the token from the emailed link.
 - Request (`SetPasswordRequest`): `token` (str), `new_password` (str, 6–128 chars)
-- Response: `{"msg": "password changed successfully"}`
-- UI: "Forgot password?" flow, step 2 (the link target)
+- Response: `{"msg": "password changed successfully"}`. Every refresh token is revoked
+- Errors: `401` `invalid_token` when the token is invalid or expired, **or already used**: a link
+  only works while the password is still the one it was issued for. Links emailed before this
+  change are also rejected. `404` if the account no longer exists
+- UI: "Forgot password?" flow, step 2 (the link target). On `401`, offer to send a new link
 
 ### `POST /profile/make-admin` 🔒 admin
 - Request (`MakeAdminRequest`): `user_id` (uuid)

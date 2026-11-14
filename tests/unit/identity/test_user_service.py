@@ -45,6 +45,9 @@ class TestUserService:
             result = UserService.change_password_process(db, mock_user, "oldpass", "newpass")
 
         assert result is True
+        assert mock_user.hashed_password == "new_hashed"
+        # bugs.md #18: every refresh token is revoked, in the same commit as the new password.
+        db.query().filter().update.assert_called_once_with({"revoked": True})
         db.commit.assert_called_once()
 
     def test_change_password_wrong_old(self):
@@ -57,6 +60,28 @@ class TestUserService:
             result = UserService.change_password_process(db, mock_user, "wrong", "newpass")
 
         assert result is None
+        db.query().filter().update.assert_not_called()
+        db.commit.assert_not_called()
+
+    def test_verify_rtoken_rejects_a_link_for_an_older_password(self):
+        # bugs.md #19: a used link, or one issued before another password change, carries the
+        # fingerprint of a password the account no longer has.
+        from app.services.identity.user_service import UserService
+        from app.utils.jwt_manager import password_fingerprint
+
+        db = MagicMock()
+        mock_user = make_mock_user(id=DEFAULT_ID)
+        db.query().filter().first.return_value = mock_user
+        stale = password_fingerprint("$2b$12$someearlierhash")
+
+        with patch("app.services.identity.user_service.decode_password_reset_token", return_value=(DEFAULT_ID, stale)), \
+             patch("app.services.identity.user_service.hash_password") as mock_hash:
+            result = UserService.verify_rtoken(db, "used-token", "newpass")
+
+        assert result is False
+        mock_hash.assert_not_called()
+        assert mock_user.hashed_password == "$2b$12$hashedpassword"
+        db.commit.assert_not_called()
 
     def test_promote_admin_success(self):
         from app.services.identity.user_service import UserService
@@ -178,7 +203,7 @@ class TestUserService:
         mock_user = make_mock_user()
         db.query().filter().first.return_value = mock_user
 
-        with patch("app.services.identity.user_service.create_password_reset_token", return_value="reset_tok"), \
+        with patch("app.services.identity.user_service.create_password_reset_token", return_value="reset_tok") as mock_token, \
              patch("app.services.identity.user_service.settings") as mock_settings, \
              patch("app.services.identity.user_service.celery_app.send_task") as mock_send_task:
             mock_settings.FRONTEND_BASE_URL = "http://localhost:8080"
@@ -192,6 +217,8 @@ class TestUserService:
         # bare token the fan has to copy-paste in themselves.
         email_body = mock_send_task.call_args.kwargs["args"][2]
         assert "http://localhost:8080/reset-password?token=reset_tok" in email_body
+        # The token is bound to the current password hash (bugs.md #19).
+        mock_token.assert_called_once_with(mock_user.id, mock_user.hashed_password)
 
     def test_reset_password_process_email_not_found(self):
         from app.services.identity.user_service import UserService
@@ -213,7 +240,7 @@ class TestUserService:
 
         db = MagicMock()
 
-        with patch("app.services.identity.user_service.decode_email_token", return_value=None):
+        with patch("app.services.identity.user_service.decode_password_reset_token", return_value=None):
             result = UserService.verify_rtoken(db, "bad-token", "newpass")
 
         assert result is False
@@ -225,7 +252,7 @@ class TestUserService:
         db = MagicMock()
         db.query().filter().first.return_value = None
 
-        with patch("app.services.identity.user_service.decode_email_token", return_value=DEFAULT_ID):
+        with patch("app.services.identity.user_service.decode_password_reset_token", return_value=(DEFAULT_ID, "fp")):
             result = UserService.verify_rtoken(db, "good-token", "newpass")
 
         assert result is None
@@ -238,7 +265,10 @@ class TestUserService:
         mock_user = make_mock_user(id=DEFAULT_ID)
         db.query().filter().first.return_value = mock_user
 
-        with patch("app.services.identity.user_service.decode_email_token", return_value=DEFAULT_ID), \
+        from app.utils.jwt_manager import password_fingerprint
+
+        fingerprint = password_fingerprint(mock_user.hashed_password)
+        with patch("app.services.identity.user_service.decode_password_reset_token", return_value=(DEFAULT_ID, fingerprint)), \
              patch("app.services.identity.user_service.hash_password", return_value="new_hashed"), \
              patch("app.services.identity.user_service.NotificationService.create_notification") as mock_notify:
             result = UserService.verify_rtoken(db, "good-token", "newpass")

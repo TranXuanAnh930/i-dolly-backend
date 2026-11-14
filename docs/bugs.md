@@ -162,10 +162,16 @@ still hold. That pass corrected line references, added the **Review** notes belo
 
 ## 🟡 Medium
 
-- [ ] **18.** `change_password_process` doesn't revoke refresh tokens (reset does).
+- [x] **18.** `change_password_process` doesn't revoke refresh tokens (reset does).
   **Review:** low impact today — `create_tokens` already revokes every other token at login, so
   the only live token at that point is the one in use. It matters when that token is the stolen one.
-- [ ] **19.** Password-reset JWTs are reusable until expiry (no `jti` / password-hash binding).
+  **FIXED** (`project_status.md` §4 item 54): the change revokes every refresh token, and
+  `PUT /profile/change-password` then issues the caller a fresh session (new refresh cookie and
+  access token in the response), so a stolen copy dies and the user stays logged in.
+- [x] **19.** Password-reset JWTs are reusable until expiry (no `jti` / password-hash binding).
+  **FIXED** (`project_status.md` §4 item 54): the reset token carries a fingerprint of the
+  password hash it was issued against, and `set-password` rejects it once the hash has changed.
+  A link works once, and dies early if the password changes another way. No migration.
 - [ ] **20.** Refresh tokens stored plaintext; every login revokes all other sessions
   (`auth_service.py` `create_tokens`).
   **Review:** only the plaintext storage is a defect. One session per user is the documented
@@ -264,7 +270,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
 ## Suggested order (updated 2026-11-13)
 
 Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #12, #14 (mitigated), #15, #16, #17,
-#21, #22, #26, #27, #28, #29, and nine code smells.
+#18, #19, #21, #22, #26, #27, #28, #29, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -276,7 +282,7 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #12, #14 (mitigat
 5. **Planned:** #11 Redis outage handling (plan in `docs/plans/redis-outage.md`) together with
    #25 (plan in `docs/plans/lottery-draw-post-commit.md`) — the Redis fix removes one trigger of
    #25.
-6. **Auth:** #18, #19, then the plaintext-storage half of #20.
+6. **Auth:** ~~#18, #19~~ (done), then the plaintext-storage half of #20.
 7. **PayPal pending state:** ~~#12, #27~~ (done without a sweep: released on the fan's next
    checkout or on PayPal cancel). Left: #31, #33, and #13 (the cap can only count `confirmed`
    orders once a pending one is re-checked at capture). A scheduled sweep is still needed for

@@ -30,6 +30,13 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   (`app/config/log_config.py`), at the new `LOG_LEVEL` setting (default `INFO`), in the same
   format under the API and, via Celery's handler, in the worker. A failed email is now logged with
   its traceback; it is still not retried.
+- **Security — changing the password ends other sessions (#18).** Every refresh token is revoked,
+  and `PUT /profile/change-password` now answers like `POST /account/refresh` (`access_token` in
+  the body, new refresh cookie) so the caller stays logged in. The frontend must send it with
+  credentials (`docs/frontend-tasks/password-session-and-reset-links.md`).
+- **Security — password-reset links work once (#19).** The link carries a fingerprint of the
+  password hash it was issued for and is refused once the password has changed. Links emailed
+  before this release are refused too.
 - **Fixed — abandoned PayPal checkouts no longer lock fans out (#12, #27).** A fan's own pending
   PayPal checkout is cancelled when they check out again (same concert for tickets, any pending
   order for the marketplace), or through the new `POST /payment/paypal/cancel/{pg_order_id}` when

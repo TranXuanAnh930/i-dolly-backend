@@ -1222,6 +1222,30 @@ newly introduced.
       `send_email` to raise and the Celery task to retry, which risks duplicate emails if a send
       half-succeeds; left for the #11 work on post-commit email dispatch.
 
+54. ~~**Changing the password kept old sessions; reset links were reusable until expiry**~~
+    (`bugs.md` #18, #19) — **FIXED**, no migration.
+    - **#18:** `change_password_process` revokes every refresh token in the same commit as the new
+      password, and `PUT /profile/change-password` then calls `AuthService.create_tokens` and
+      answers like `POST /account/refresh` (`access_token` in the body, new `refresh_token`
+      cookie). A stolen refresh token dies; the caller stays logged in, provided the frontend
+      sends the request with credentials and uses the new access token (frontend task in
+      `docs/frontend-tasks/password-session-and-reset-links.md`). Until then the old behaviour
+      degrades safely: the user is logged out when their access token expires.
+    - **#19:** a reset token carries `pwd`, a truncated SHA-256 of the password hash it was issued
+      against (`jwt_manager.create_password_reset_token(user_id, hashed_password)`). `verify_rtoken`
+      compares it with the current hash (`hmac.compare_digest`) and rejects a mismatch as
+      `401 invalid_token`. Setting a password through the link changes the hash, so the link is
+      single-use; a change through `change-password` kills outstanding links too. The bcrypt hash
+      itself never appears in the token. Links emailed before this deploy have no `pwd` and are
+      rejected; they'd have expired within `EMAIL_TOKEN_EXPIRE_MINUTES` anyway.
+    - Tests: new `tests/unit/identity/test_jwt_manager.py` (round trip, hash not in the token, old
+      tokens without `pwd` rejected, token types not interchangeable, expiry); updated
+      `test_user_service.py` (revocation on change, mismatched fingerprint rejected). Integration
+      in `test_profile.py`: the old refresh token is refused after a change and the new one works;
+      a wrong old password leaves the session alone; a reset link works once; a link dies when the
+      password changes another way. The three behaviour tests fail against the old code.
+    - Verified: 629 unit and 406 integration tests pass against local Postgres and Redis, ruff
+      clean.
 55. ~~**Abandoned PayPal checkouts locked fans out of a concert and piled up as pending orders**~~
     (`bugs.md` #12, #27) — **FIXED without a scheduled job**.
     - A pending PayPal checkout holds no seat and no stock (both change only at capture), so a
