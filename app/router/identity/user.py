@@ -34,7 +34,7 @@ def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_curren
     # Every refresh token was just revoked; give the caller a fresh session, same shape as
     # POST /account/refresh, so they stay logged in and any other copy of the old token is dead.
     token = AuthService.create_tokens(db, user)
-    response = JSONResponse(content={"msg": "Password changed succesfully", "access_token": token["access_token"]})
+    response = JSONResponse(content={"msg": "Password changed successfully", "access_token": token["access_token"]})
     response.set_cookie("refresh_token", token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 

@@ -30,6 +30,7 @@ from app.schema.marketplace import (
     ManagerOrdersPageRead,
     OrderStatus,
     PaymentCreate,
+    PaymentGateway,
     PaymentStatus,
 )
 from app.schema.marketplace import ShippingStatus as SchemaShippingStatus
@@ -55,6 +56,9 @@ class OrderService:
 
         if db.query(Payment).filter(Payment.idempotency_key == payment_data.idempotency_key).first():
             raise DuplicateIdempotencyKeyError()  
+
+        # Before locking any product: finalize_paypal_payment locks payment -> order -> products.
+        OrderService._release_stale_paypal_orders(db, user_id)
 
         cart_items = db.query(Cart).filter(Cart.user_id==user_id).all()
         if not cart_items:
@@ -127,6 +131,28 @@ class OrderService:
             CacheInvalidation.delete_cached_product_details()
         db.refresh(order)
         return order
+
+    @staticmethod
+    def _release_stale_paypal_orders(db: Session, user_id: uuid.UUID) -> None:
+        """Cancel this fan's own unfinished PayPal orders when they check out again,
+        so abandoned attempts stop piling up in their order history and on the manager orders page.
+        Doesn't commit: checkout commits once at the end.
+        """
+        payments = (
+            db.query(Payment)
+            .filter(
+                Payment.user_id == user_id,
+                Payment.payment_gateway == PaymentGateway.paypal,
+                Payment.status == PaymentStatus.pending,
+            )
+            .join(Order, Payment.order_id == Order.id)
+            .filter(Order.status == OrderStatus.pending)
+            .with_for_update(of=Payment)
+            .all()
+        )
+        for payment in payments:
+            PaymentService.cancel_pending_paypal_payment(db, payment)
+        return None
 
     @staticmethod
     def fetch_placed_order(db:Session, user_id:uuid.UUID) -> list[Order]:

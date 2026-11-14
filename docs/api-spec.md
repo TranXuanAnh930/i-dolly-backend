@@ -237,7 +237,7 @@ Confirm an email via the token from the verification link.
 
 ### `PUT /profile/change-password` 🔒 fan
 - Request (`ChangePasswordRequest`): `old_password` (str), `new_password` (str, 6–128 chars)
-- Response: `{"msg": "Password changed succesfully", "access_token": "..."}`, plus a new
+- Response: `{"msg": "Password changed successfully", "access_token": "..."}`, plus a new
   `refresh_token` cookie — same as `POST /account/refresh`. Every refresh token issued before the
   change is revoked, so the caller must send this request with credentials (to receive the
   cookie) and switch to the returned access token, or they'll be logged out when the current
@@ -1173,9 +1173,25 @@ Everything below only applies when `gateway="paypal"` was passed to `POST /order
      treat that as a normal race, not an error to surface), or the payment doesn't belong to the
      caller.
 6. **Cancellation**: if the fan backs out on PayPal's side instead, PayPal redirects to
-   `{FRONTEND_BASE_URL}/payment/paypal/cancel` with `token` — no capture call needed, the order/ticket simply stays `"pending"` (it isn't
-   auto-cancelled; nothing currently sweeps up abandoned PayPal checkouts, see
-   `project_status.md`).
+   `{FRONTEND_BASE_URL}/payment/paypal/cancel` with `token`. The frontend calls
+   `POST /payment/paypal/cancel/{pg_order_id}` (below) with that `token`.
+7. **Abandoned checkouts** — if the fan just closes the PayPal tab, nothing calls either endpoint.
+   The checkout is cancelled the next time that fan checks out: `POST /tickets/checkout` cancels
+   their own pending PayPal checkout for a direct-sale ticket to the same concert, and
+   `POST /order/checkout` cancels their own pending PayPal orders. A fan who never comes back
+   leaves a `"pending"` row behind; it holds no stock or seat. A lottery win is never cancelled
+   this way: it keeps its seat until its own payment deadline.
+
+### `POST /payment/paypal/cancel/{pg_order_id}` 🔒 fan
+Cancel the caller's pending PayPal payment and what it was paying for.
+- Request: `pg_order_id` in the path — the `token` query param PayPal adds to the cancel URL
+- Response: `PaymentResponse` with `status: "cancelled"`. A direct-sale ticket becomes
+  `"cancelled"` (the fan can buy again); an order becomes `"cancelled"` with shipping status
+  `"cancelled"`. A lottery win's ticket stays `"pending_payment"` until its deadline, so the fan
+  can start a new payment for it
+- Errors: `404` when the payment doesn't exist, isn't the caller's, isn't PayPal, or is no longer
+  pending (already captured or cancelled), same as capture. `429` past 5 calls per minute
+- UI: the `/payment/paypal/cancel` page, on load
 
 ### `POST /payment/paypal/webhook` 🔓 (PayPal signature-verified)
 **The frontend never calls this directly** — the endpoint exists purely for

@@ -1246,6 +1246,39 @@ newly introduced.
       password changes another way. The three behaviour tests fail against the old code.
     - Verified: 629 unit and 406 integration tests pass against local Postgres and Redis, ruff
       clean.
+55. ~~**Abandoned PayPal checkouts locked fans out of a concert and piled up as pending orders**~~
+    (`bugs.md` #12, #27) — **FIXED without a scheduled job**.
+    - A pending PayPal checkout holds no seat and no stock (both change only at capture), so a
+      stale one only hurts the fan who left it, and only when they come back. It's cleaned up at
+      those two moments:
+      - **Next checkout:** `checkout_ticket` cancels the fan's own pending direct-sale PayPal
+        checkout for the same concert (`TicketService._release_stale_paypal_ticket`), and
+        `OrderService.checkout` cancels their own pending PayPal orders
+        (`_release_stale_paypal_orders`), both inside the checkout's single transaction.
+      - **PayPal "Cancel":** new `POST /payment/paypal/cancel/{pg_order_id}`
+        (`PaymentService.cancel_paypal_payment`), owner-only, 404 like capture otherwise.
+      - Both go through `PaymentService.cancel_pending_paypal_payment`: payment `cancelled`, plus a
+        direct-sale ticket `cancelled`, or an order and its shipping status `cancelled`.
+    - **Locking:** payments are locked first (`with_for_update(of=Payment)`), then the ticket or
+      order, the same order `finalize_paypal_payment` uses, so a cancel and a capture of the same
+      payment serialize instead of deadlocking. The pending status is part of the locking query,
+      so a payment captured while the cancel waited drops out and is never overwritten. The ticket
+      release runs before `checkout_ticket` locks the ticket type for the same reason. A cancelled
+      payment can't be captured afterwards: capture only accepts a pending one.
+    - **Lottery wins** are never released by a direct-sale checkout. Cancelling one at PayPal
+      cancels the payment but keeps the ticket `pending_payment`, so the win keeps its seat until
+      its deadline.
+    - Tests: `tests/integration/marketplace/test_abandoned_paypal.py`, 17 tests over real HTTP and
+      Postgres with PayPal mocked — release on the next checkout for tickets and orders, a released
+      payment refusing capture, the cancel endpoint for tickets, orders and lottery wins, and guards
+      for what must not change (paid tickets, other fans, lottery wins, confirmed orders, captured
+      payments).
+    - Verified: 626 unit and 419 integration tests pass against local Postgres and Redis, ruff
+      clean.
+    - **Still open:** rows left by a fan who never returns stay `pending` (they block nothing);
+      pending orders still count toward the resale cap (#13); unpaid lottery wins still need a
+      scheduled sweep, since they do hold seats (§8). Frontend task:
+      `docs/frontend-tasks/paypal-cancel-page.md`.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

@@ -51,6 +51,15 @@ def capture_paypal_payment(pg_order_id: str, user: Users = Depends(get_current_u
         raise HTTPException(status_code=404, detail="Payment not found, already resolved, or not yours")
     return payment
 
+# Called by the frontend's PayPal cancel page when the fan backs out on PayPal (PayPal appends
+# ?token=<PayPal order id> to the cancel URL). Verifies the payment belongs to the caller.
+@router.post("/paypal/cancel/{pg_order_id}", response_model=PaymentResponse)
+def cancel_paypal_payment(pg_order_id: str, user: Users = Depends(get_current_user), _: None = Depends(rate_limit(5, 60, user_key)), db: Session = Depends(get_db)) -> Payment:
+    payment = PaymentService.cancel_paypal_payment(db, pg_order_id, user.id)
+    if payment is None:
+        raise HTTPException(status_code=404, detail="Payment not found, already resolved, or not yours")
+    return payment
+
 # Called by PayPal. No user auth; trust comes from the signature check.
 @router.post("/paypal/webhook", response_model=MessageResponse)
 def paypal_webhook(request: Request, raw_body: bytes = Depends(_raw_body), db: Session = Depends(get_db)) -> MessageResponse:
