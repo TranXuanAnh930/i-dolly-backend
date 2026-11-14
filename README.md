@@ -26,6 +26,7 @@ The `docs/` folder is the source of truth for anything not obvious from the code
 | [`docs/api-spec.md`](docs/api-spec.md) | Every route the backend exposes, grouped by frontend use case |
 | [`docs/deployment.md`](docs/deployment.md) | How to deploy: Render (API + worker), Supabase (Postgres), S3-compatible storage, Render Key Value (Redis) |
 | [`docs/bugs.md`](docs/bugs.md) | Audit backlog of known bugs and code smells; fix plans in `docs/plans/` |
+| [`CHANGELOG.md`](CHANGELOG.md) | What each release contained, and what's on `develop` but not released yet. Current version: `__version__` in `app/__init__.py`, also returned by `GET /` |
 
 ---
 

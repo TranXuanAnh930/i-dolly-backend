@@ -25,6 +25,7 @@
 | [`docs/api-spec_JP.md`](docs/api-spec_JP.md) | バックエンドが公開するすべてのルート（フロントエンドのユースケース別） |
 | [`docs/deployment_JP.md`](docs/deployment_JP.md) | デプロイ方法: Render（API + ワーカー）、Supabase（Postgres）、S3 互換ストレージ、Render Key Value（Redis） |
 | [`docs/bugs_JP.md`](docs/bugs_JP.md) | 既知のバグとコードスメルの監査バックログ。修正計画は `docs/plans/` |
+| [`CHANGELOG_JP.md`](CHANGELOG_JP.md) | 各リリースの内容と、`develop` にあってまだリリースされていないもの。現在のバージョン: `app/__init__.py` の `__version__`。`GET /` も返す |
 
 ---
 

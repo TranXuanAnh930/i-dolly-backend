@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app import __version__
 from app.config.settings import settings
 from app.db.session import session as SessionLocal
 from app.exception.handlers import UnhandledErrorMiddleware, register_exception_handlers
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         db.close()
     yield
 
-app = FastAPI(title="i-dolly-backend", lifespan=lifespan)
+app = FastAPI(title="i-dolly-backend", version=__version__, lifespan=lifespan)
 register_exception_handlers(app)
 
 origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
@@ -73,6 +74,7 @@ if settings.STORAGE_BACKEND == "local":
 def root() -> dict[str, str]:
     return {
         "message" : "i-dolly-backend is live",
+        "version" : __version__,
         "docs" : "/docs"
     }
 
