@@ -128,7 +128,7 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
 - **FAQ instant answers on the contact page — implemented, not yet run against the real API**. Model: `claude-haiku-4-5`, the cheapest option, with no `effort`
   setting (Haiku 4.5 rejects it) and no prompt caching (Haiku 4.5 only caches prompts of 4,096+
   tokens, and on a low-traffic site cache writes would cost more than they save). With
-  `DEBUG=true` the service prints the question and never calls Claude, matching `send_email()`.
+  `DEBUG=true` the service logs the question and never calls Claude, matching `send_email()`.
   A cut-off (`max_tokens`) or refused answer returns "not answerable". Unit tests set `DEBUG`
   themselves and fake `_client` wherever the call path runs, so none can make a real request
   whatever `.env` says. Tone decided by the developer: cheerful and cute, with facts stated
@@ -1198,6 +1198,29 @@ newly introduced.
       tests fail against the old `rate_limit()`.
     - Verified: 617 unit and 402 integration tests pass against local Postgres and Redis, ruff
       clean.
+
+53. ~~**No logging: `print()` only, and failed emails left no trace**~~ (`bugs.md` code smell) —
+    **FIXED**.
+    - New `app/config/log_config.py::configure_logging()`, called from `main.py` and
+      `app/celery_app.py`: sets the `app` logger branch to the new `LOG_LEVEL` setting (default
+      `INFO`) and adds a stdout handler (`time level logger: message`) when the root logger has
+      none. In the Celery worker, Celery's own root handler takes over, so records appear once, in
+      Celery's format. Library loggers stay at `WARNING`.
+    - All 10 `print()` calls in `app/` are gone: the dev-mode email and FAQ question are logged at
+      INFO; a failed email is logged with `logger.exception` (traceback included); a failed or
+      cut-off FAQ answer is a warning; a Redis error in the rate limiter is a one-line warning
+      without a traceback.
+    - Tests: `tests/unit/test_log_config.py` (level from settings, one stdout handler, an existing
+      root handler is kept, libraries stay at WARNING); the email-sender, FAQ and rate-limiter
+      tests now assert on log records instead of printed output.
+    - Verified: 623 unit and 402 integration tests pass against local Postgres and Redis, ruff
+      clean. In the containers, an app record printed in the new format under the API, debug and
+      library INFO records stayed hidden, and with Celery's logging set up a record came out once
+      in Celery's format; the worker restarted cleanly. A real email task wasn't run, to avoid a
+      Resend send.
+    - **Still open:** failed emails are logged but not retried. Retrying would need
+      `send_email` to raise and the Celery task to retry, which risks duplicate emails if a send
+      half-succeeds; left for the #11 work on post-commit email dispatch.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

@@ -1,3 +1,4 @@
+import logging
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -8,6 +9,8 @@ from app.config.settings import settings
 from app.schema.shared import FaqAnswer, FaqLanguage, InquiryTopic, InstantAnswerRead, InstantAnswerRequest
 
 _client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=15.0, max_retries=1)
+
+logger = logging.getLogger(__name__)
 
 _CONTENT_DIR = Path(__file__).resolve().parents[2] / "content"
 
@@ -54,19 +57,18 @@ class FaqAnswerService:
         degrades to the form instead of an error page."""
         if not settings.ANTHROPIC_API_KEY:
             return NOT_ANSWERABLE
-        # Same convention as send_email(): with DEBUG on, print instead of calling out.
+        # Same convention as send_email(): with DEBUG on, log instead of calling out.
         if settings.DEBUG:
-            print(
-                "\n--- DEV FAQ QUESTION (Claude not called) ---\n"
-                f"lang={data.lang.value} topic={data.topic.value}\n{data.content}\n"
-                "--- END DEV FAQ QUESTION ---\n"
+            logger.info(
+                "DEV FAQ QUESTION (Claude not called)\nlang=%s topic=%s\n%s\n--- END DEV FAQ QUESTION ---",
+                data.lang.value, data.topic.value, data.content,
             )
             return NOT_ANSWERABLE
 
         try:
             result = _ask_claude(data.topic, data.content, load_faq(data.lang))
-        except Exception as e:  # deliberate catch-all, see docstring
-            print(f"FAQ instant answer failed: {type(e).__name__}: {e}")
+        except Exception:  # deliberate catch-all, see docstring
+            logger.warning("FAQ instant answer failed; showing the contact form instead", exc_info=True)
             return NOT_ANSWERABLE
 
         if result is None or not result.answerable_from_faq or not result.answer.strip():
@@ -96,6 +98,6 @@ def _ask_claude(topic: InquiryTopic, question: str, faq: str) -> FaqAnswer | Non
     if response.stop_reason == "refusal":
         return None
     if response.stop_reason == "max_tokens":
-        print("FAQ instant answer was cut off at max_tokens")
+        logger.warning("FAQ instant answer was cut off at max_tokens")
         return None
     return response.parsed_output

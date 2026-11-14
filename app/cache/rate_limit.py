@@ -1,5 +1,6 @@
 import hashlib
 import ipaddress
+import logging
 from collections.abc import Callable
 
 import redis
@@ -9,6 +10,8 @@ from app.cache.redis_client import redis_client
 from app.config.settings import settings
 from app.db.models.identity import Users
 from app.deps.auth import get_current_user, get_current_user_optional
+
+logger = logging.getLogger(__name__)
 
 # Per-account limits, on top of the IP limits: an attacker with many real IPs still gets only
 # this many tries per email.
@@ -82,8 +85,10 @@ def rate_limit(limit:int, window:int, key_func: Callable[[Request], str]) -> Cal
                 if ttl<0:
                     ttl = window
                 raise HTTPException(status_code=429, detail=f"Too many requests. Please try again after {ttl} seconds.")
-        except redis.RedisError:
-            print("Rate limiter Internal Error")
+        except redis.RedisError as e:
+            # Fail open: the request goes through. No traceback, so an outage logs one line per
+            # request rather than a stack trace each.
+            logger.warning("Rate limit skipped, Redis unavailable: %s", e)
         return
 
     # FastAPI runs a dependency once per request, so a route that also declares the same auth
@@ -113,26 +118,26 @@ def login_attempts_exceeded(email:str) -> bool:
     try:
         count = redis_client.get(_email_key("login_fail", email))
         return count is not None and int(count) >= LOGIN_FAIL_LIMIT
-    except redis.RedisError:
-        print("Rate limiter Internal Error")
+    except redis.RedisError as e:
+        logger.warning("Rate limit skipped, Redis unavailable: %s", e)
         return False
 
 def record_login_failure(email:str) -> None:
     try:
         _increment(_email_key("login_fail", email), LOGIN_FAIL_WINDOW)
-    except redis.RedisError:
-        print("Rate limiter Internal Error")
+    except redis.RedisError as e:
+        logger.warning("Rate limit skipped, Redis unavailable: %s", e)
 
 def clear_login_failures(email:str) -> None:
     try:
         redis_client.delete(_email_key("login_fail", email))
-    except redis.RedisError:
-        print("Rate limiter Internal Error")
+    except redis.RedisError as e:
+        logger.warning("Rate limit skipped, Redis unavailable: %s", e)
 
 def forgot_password_limit_exceeded(email:str) -> bool:
     """Count one reset request for this email; True once it is over the hourly limit."""
     try:
         return _increment(_email_key("forgot_password", email), FORGOT_PASSWORD_WINDOW) > FORGOT_PASSWORD_LIMIT
-    except redis.RedisError:
-        print("Rate limiter Internal Error")
+    except redis.RedisError as e:
+        logger.warning("Rate limit skipped, Redis unavailable: %s", e)
         return False

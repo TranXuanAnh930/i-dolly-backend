@@ -238,7 +238,9 @@ still hold. That pass corrected line references, added the **Review** notes belo
   empty page object (2026-09-29).
 - ~~`/account/verify` returns 401 for "already verified"~~ — fixed: `409` for already verified,
   `400` for a bad token or unknown user (`ConflictError` added to `app/exception/common.py`).
-- No `logging` anywhere in `app/` — `print()` only; email failures swallowed, never retried.
+- ~~No `logging` anywhere in `app/` — `print()` only; email failures swallowed~~ — fixed
+  (`project_status.md` §4 item 53): every module logs through `logging`, and a failed email is
+  logged with its traceback. Still not retried.
 - ~~`verify_token_and_get_user_id` / `verify_rtoken_and_get_user_id` near-duplicates~~ — fixed:
   merged into `jwt_manager.decode_email_token(token, expected_type)`.
 - ~~`CacheService` ↔ services import each other~~ — fixed: invalidation split into
@@ -256,7 +258,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
 ## Suggested order (updated 2026-11-13)
 
 Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #14 (mitigated), #15, #16, #17, #21,
-#22, #26, #28, #29, and eight code smells.
+#22, #26, #28, #29, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel

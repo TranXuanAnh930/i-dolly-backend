@@ -130,13 +130,14 @@ Supabase、キャッシュ／レートリミッターは Render 自身の Redis 
 | `CELERY_BROKER_DB` | `1`（デフォルト、省略可） | Celery ワーカー（§5）もデプロイする場合にのみ関係する |
 | `RESEND_API_KEY` / `FROM_EMAIL` | 本物のキー、またはプレースホルダー | お問い合わせの確認メールを含む、すべてのトランザクションメールを送信する |
 | `ANTHROPIC_API_KEY` | Claude API のキー、または **省略** | お問い合わせページの AI 回答（`POST /inquiries/instant-answer`）を有効にする。省略した場合、エンドポイントは常に「回答不可」を返し、フロントエンドはフォームだけを表示する。 |
-| `DEBUG` | **省略、または `false`** | 開発専用: プレースホルダーの `RESEND_API_KEY` では実際に配信できないとき、認証／リセットトークンをコンソールに出力する（`architecture_JP.md` の Resend に関する注記）。未設定の場合のデフォルトは `false` で、ここではそれが望ましい — これらのトークンの本文が Render の共有ログに出る理由はない。 |
+| `DEBUG` | **省略、または `false`** | 開発専用: プレースホルダーの `RESEND_API_KEY` では実際に配信できないとき、認証／リセットトークンをログに出力する（`architecture_JP.md` の Resend に関する注記）。未設定の場合のデフォルトは `false` で、ここではそれが望ましい — これらのトークンの本文が Render の共有ログに出る理由はない。 |
 | `BASE_URL` | `https://<your-render-service>.onrender.com` | メール認証のリンクを組み立てるのに使う |
 | `FRONTEND_BASE_URL` | フロントエンドの実際のオリジン | PayPal の `return_url`/`cancel_url` を組み立てる。デフォルトは `http://localhost:8080` |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | PayPal Sandbox（または本番）アプリから | 省略するとモックゲートウェイだけで動作する |
 | `PAYPAL_MODE` | `sandbox`（または `live`） | |
 | `PAYPAL_WEBHOOK_ID` | PayPal のダッシュボードにある Webhook の ID | `POST /payment/paypal/webhook` の署名検証に使う |
 | `CORS_ORIGINS` | フロントエンドの実際のオリジン（カンマ区切り） | 例: `https://your-frontend.vercel.app` |
+| `LOG_LEVEL` | 省略（`INFO`） | アプリ自身のログレベル。`DEBUG`、`INFO`、`WARNING`、`ERROR` のいずれか。変える場合はワーカーにも設定する |
 | `TRUSTED_PROXY_HOPS` | 計測したプロキシのホップ数（下記を参照） | デフォルトの `0` は `X-Forwarded-For` を無視する。Render の背後では、すべての訪問者が 1 つのレート制限バケットに入る |
 | `STORAGE_BACKEND` | `s3` | §3 で選択したとおり |
 | `S3_BUCKET_NAME` / `S3_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | §3 から | |

@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,15 +49,18 @@ class TestFaqAnswerGuards:
 
     @patch(f"{SERVICE}._ask_claude")
     @patch(f"{SERVICE}.settings")
-    def test_debug_mode_never_calls_the_model(self, mock_settings, mock_ask):
+    def test_debug_mode_never_calls_the_model(self, mock_settings, mock_ask, caplog):
         from app.services.shared.faq_answer_service import FaqAnswerService
 
         configure(mock_settings, debug=True)
 
-        result = FaqAnswerService.answer(make_request())
+        with caplog.at_level(logging.INFO, logger=SERVICE):
+            result = FaqAnswerService.answer(make_request())
 
         assert result.answerable is False
         mock_ask.assert_not_called()
+        # The question is logged instead, for local development.
+        assert QUESTION in caplog.text
 
 # ───────────────────────────────────────────────────────────────
 # Turning the model's result into the API response
@@ -112,13 +116,18 @@ class TestFaqAnswerService:
 
     @patch(f"{SERVICE}._client")
     @patch(f"{SERVICE}.settings")
-    def test_api_error_degrades_instead_of_raising(self, mock_settings, mock_client):
+    def test_api_error_degrades_instead_of_raising(self, mock_settings, mock_client, caplog):
         from app.services.shared.faq_answer_service import FaqAnswerService
 
         configure(mock_settings)
         mock_client.messages.parse.side_effect = TimeoutError("upstream timed out")
 
-        assert FaqAnswerService.answer(make_request()).answerable is False
+        with caplog.at_level(logging.WARNING, logger=SERVICE):
+            assert FaqAnswerService.answer(make_request()).answerable is False
+
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert isinstance(record.exc_info[1], TimeoutError)
 
 # ───────────────────────────────────────────────────────────────
 # The Claude call itself (fake client, no network)

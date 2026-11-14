@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Dev only; never enable in production. Defaults to off so a missing env var fails safe.
     DEBUG: bool = False
 
+    # Level for the app's own loggers (app/config/log_config.py): DEBUG, INFO, WARNING or ERROR.
+    LOG_LEVEL: str = "INFO"
+
     # Public URL of this API, used in links sent by email.
     BASE_URL: str = "http://localhost:8000"
 

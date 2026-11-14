@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.config.log_config import configure_logging
 from app.config.settings import settings
 from app.db.session import session as SessionLocal
 from app.exception.handlers import UnhandledErrorMiddleware, register_exception_handlers
@@ -37,6 +38,8 @@ from app.router.talent.idol_color import router as idol_color_router
 from app.router.talent.management_company import router as management_company_router
 from app.router.talent.position import router as position_router
 from app.services.identity.auth_service import AuthService
+
+configure_logging()
 
 
 @asynccontextmanager
