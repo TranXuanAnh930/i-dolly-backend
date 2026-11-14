@@ -171,11 +171,15 @@ still hold. That pass corrected line references, added the **Review** notes belo
   user returns 404 instead of 401.
   **FIXED**: a missing or malformed `sub` and an unknown user all return 401 (`None` for
   `get_current_user_optional`).
-- [ ] **22.** Rate limiter `INCR` + `EXPIRE` aren't atomic (crash between → key never expires);
+- [x] **22.** Rate limiter `INCR` + `EXPIRE` aren't atomic (crash between → key never expires);
   `user_key` implicitly depends on `get_current_user` running first.
   **Half fixed**: the counter is created with its TTL and incremented in one `MULTI` transaction
   (`SET key 0 EX window NX` + `INCR`), so it can't exist without an expiry. The `user_key`
   ordering dependency is still open.
+  **FIXED** (`project_status.md` §4 item 52): `rate_limit()` makes a `user_key` limiter depend on
+  `get_current_user`, and a `user_or_ip_key` limiter on `get_current_user_optional`, so the order
+  of a route's dependencies no longer matters. Listed the wrong way round, `user_key` used to 500
+  and `user_or_ip_key` put signed-in users in the guests' IP bucket.
 - [ ] **23.** Paginated pages return `count=len(data)` (page size, not total)
   (`order_service.py:267`, `ticket_service.py:281`, `product_service.py:477`); manager orders page
   loads every product and order id into memory.
@@ -252,7 +256,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
 ## Suggested order (updated 2026-11-13)
 
 Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #14 (mitigated), #15, #16, #17, #21,
-half of #22, #26, #28, #29, and eight code smells.
+#22, #26, #28, #29, and eight code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -270,4 +274,4 @@ half of #22, #26, #28, #29, and eight code smells.
    orders once pending ones expire or are re-checked at capture).
 8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
    #32.
-9. **Whenever convenient:** #22, #23, #24.
+9. **Whenever convenient:** ~~#22~~ (done), #23, #24.

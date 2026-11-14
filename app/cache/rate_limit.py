@@ -3,10 +3,12 @@ import ipaddress
 from collections.abc import Callable
 
 import redis
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from app.cache.redis_client import redis_client
 from app.config.settings import settings
+from app.db.models.identity import Users
+from app.deps.auth import get_current_user, get_current_user_optional
 
 # Per-account limits, on top of the IP limits: an attacker with many real IPs still gets only
 # this many tries per email.
@@ -45,14 +47,16 @@ def client_ip(request:Request) -> str:
 def ip_key(request:Request) -> str:
     return f"rate:ip:{_route_key(request)}:{client_ip(request)}"
 
+# user_key and user_or_ip_key read request.state.user, which the auth dependencies set.
+# rate_limit() makes its limiter depend on that auth dependency itself, so the user is there
+# whatever order a route lists its dependencies in.
+
 def user_key(request:Request) -> str:
     user = request.state.user
     return f"rate:user:{_route_key(request)}:{user.id}"
 
 def user_or_ip_key(request:Request) -> str:
-    # For auth-optional routes (get_current_user_optional), which only sets
-    # request.state.user when a token was actually presented — a guest has
-    # no user to key on, so falls back to ip_key's bucket instead of raising.
+    # For auth-optional routes: a guest has no user to key on, so falls back to ip_key's bucket.
     user = getattr(request.state, "user", None)
     if user is not None:
         return f"rate:user:{_route_key(request)}:{user.id}"
@@ -67,8 +71,8 @@ def _increment(key:str, window:int) -> int:
     _, count = pipe.execute()
     return int(count)
 
-def rate_limit(limit:int, window:int, key_func: Callable[[Request], str]) -> Callable[[Request], None]:
-    def limiter(request:Request) -> None:
+def rate_limit(limit:int, window:int, key_func: Callable[[Request], str]) -> Callable[..., None]:
+    def check(request:Request) -> None:
         try:
             key = key_func(request)
             count = _increment(key, window)
@@ -81,7 +85,19 @@ def rate_limit(limit:int, window:int, key_func: Callable[[Request], str]) -> Cal
         except redis.RedisError:
             print("Rate limiter Internal Error")
         return
-    return limiter
+
+    # FastAPI runs a dependency once per request, so a route that also declares the same auth
+    # dependency doesn't authenticate twice. A user-keyed limiter on a route with no auth
+    # dependency now answers 401 instead of failing with a 500.
+    if key_func is user_key:
+        def user_limiter(request:Request, _user:Users=Depends(get_current_user)) -> None:
+            check(request)
+        return user_limiter
+    if key_func is user_or_ip_key:
+        def user_or_ip_limiter(request:Request, _user:Users | None=Depends(get_current_user_optional)) -> None:
+            check(request)
+        return user_or_ip_limiter
+    return check
 
 
 # --- Per-account limits. Keyed by a hash of the email, so the key has a fixed size whatever the
