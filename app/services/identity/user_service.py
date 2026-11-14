@@ -13,7 +13,11 @@ from app.schema.shared import NotificationType
 from app.services.shared.notification_service import NotificationService
 from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
-from app.utils.jwt_manager import create_password_reset_token, decode_email_token
+from app.utils.jwt_manager import (
+    create_password_reset_token,
+    decode_password_reset_token,
+    password_fingerprint_matches,
+)
 
 
 class UserService:
@@ -24,6 +28,12 @@ class UserService:
         if not password_verification:
             return None
         user.hashed_password = hash_password(new_password)
+        # Revoke every refresh token, so a stolen one stops working too. The router then issues
+        # the caller a fresh session.
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == user.id,
+            RefreshToken.revoked == False
+        ).update({"revoked": True})
         db.commit()
         db.refresh(user)
         return True
@@ -33,7 +43,7 @@ class UserService:
         # Always returns True so the endpoint can't be used to discover registered emails.
         user = db.query(Users).filter(Users.email == email).first()
         if user:
-            token = create_password_reset_token(user.id)
+            token = create_password_reset_token(user.id, user.hashed_password)
             # Links to the frontend's reset page, which submits the token to POST /profile/set-password.
             link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
             email_body = EmailTemplate.RESET_PASSWORD.render(email=user.email, link=link)
@@ -42,12 +52,16 @@ class UserService:
 
     @staticmethod
     def verify_rtoken(db: Session, token: str, new_password: str) -> bool | None:
-        user_id = decode_email_token(token, "reset")
-        if not user_id:
+        decoded = decode_password_reset_token(token)
+        if not decoded:
             return False
+        user_id, fingerprint = decoded
         user = db.query(Users).filter(Users.id == user_id).first()
         if not user:
             return None
+        # Single use: the link only works while the password is still the one it was issued for.
+        if not password_fingerprint_matches(fingerprint, user.hashed_password):
+            return False
         user.hashed_password = hash_password(new_password)
         # Revoke all refresh tokens so existing sessions end with the reset.
         db.query(RefreshToken).filter(

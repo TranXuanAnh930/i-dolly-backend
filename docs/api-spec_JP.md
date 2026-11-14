@@ -50,7 +50,7 @@
 | `too_many_login_attempts` | 429 | `POST /account/login`: このメールアドレスで 15 分以内に 5 回失敗した |
 | `too_many_reset_requests` | 429 | `POST /profile/forgot-password`: このメールアドレスで 1 時間に 3 回を超えて依頼した |
 | `invalid_refresh_token` | 401 | `POST /account/refresh`: Cookie がない、期限切れ、または失効済み |
-| `invalid_token` | 400 / 401 | メール認証のリンク（400）またはパスワードリセットのトークン（401）が不正または期限切れ |
+| `invalid_token` | 400 / 401 | メール認証のリンク（400）またはパスワードリセットのトークン（401）が不正、期限切れ、または使用済み |
 | `incorrect_password` | 400 | `PUT /profile/change-password`: 現在のパスワードが違う |
 | `email_taken` | 400 | 既存のメールアドレスでの登録／マネージャーの作成 |
 | `already_verified` | 409 | 認証済みのアカウントでの `GET /account/verify` |
@@ -232,7 +232,12 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 
 ### `PUT /profile/change-password` 🔒 fan
 - リクエスト（`ChangePasswordRequest`）: `old_password`（str）、`new_password`（str、6〜128 文字）
-- レスポンス: `{"msg": "Password changed succesfully"}`
+- レスポンス: `{"msg": "Password changed succesfully", "access_token": "..."}` と新しい `refresh_token` の Cookie —
+  `POST /account/refresh` と同じ。変更前に発行されたリフレッシュトークンはすべて失効するので、呼び出し元はこの
+  リクエストを credentials 付きで送り（Cookie を受け取るため）、返されたアクセストークンに切り替える必要がある。
+  そうしないと、現在のアクセストークンの期限が切れた時点でログアウトされる。未使用のパスワードリセットのリンクも
+  無効になる
+- エラー: `400` `incorrect_password`（何も変わらず、セッションは有効なまま）
 - UI: アカウント設定
 
 ### `POST /profile/forgot-password` 🔓
@@ -244,8 +249,10 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 ### `POST /profile/set-password` 🔓
 メールで送られたリンクのトークンを使ってパスワードリセットを完了する。
 - リクエスト（`SetPasswordRequest`）: `token`（str）、`new_password`（str、6〜128 文字）
-- レスポンス: `{"msg": "password changed successfully"}`
-- UI:「パスワードをお忘れですか？」のフロー、ステップ 2（リンクの遷移先）
+- レスポンス: `{"msg": "password changed successfully"}`。すべてのリフレッシュトークンが失効する
+- エラー: トークンが不正、期限切れ、**または使用済み**のときは `401` `invalid_token`: リンクは、パスワードが発行時の
+  ままの間だけ使える。この変更より前にメールで送られたリンクも拒否される。アカウントがもう存在しなければ `404`
+- UI:「パスワードをお忘れですか？」のフロー、ステップ 2（リンクの遷移先）。`401` のときは新しいリンクの送信を促す
 
 ### `POST /profile/make-admin` 🔒 admin
 - リクエスト（`MakeAdminRequest`）: `user_id`（uuid）

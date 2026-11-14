@@ -66,6 +66,19 @@ def auth_headers(email="demo@example.com", password="demo123"):
     token = res.json().get("access_token")
     return {"Authorization": f"Bearer {token}"}
 
+def reset_token_for(email):
+    """A reset link token exactly as forgot-password would email it: bound to the current hash."""
+    db = db_session()
+    try:
+        user = db.query(Users).filter(Users.email == email).one()
+        return create_password_reset_token(user.id, user.hashed_password)
+    finally:
+        db.close()
+
+def refresh_with(refresh_token):
+    # The refresh cookie is Secure, which TestClient's plain-http jar won't replay, so pass it.
+    return client.post("/account/refresh", cookies={"refresh_token": refresh_token})
+
 # ───────────────────────────────────────────────────────────────
 # GET /profile/me
 # ───────────────────────────────────────────────────────────────
@@ -110,6 +123,44 @@ def test_change_password_success_then_old_creds_rejected():
     assert login_user(email, old_password).status_code in (400, 401)
     assert login_user(email, new_password).status_code == 200
 
+def test_change_password_ends_the_old_session_and_issues_a_new_one():
+    # bugs.md #18: a refresh token issued before the change (possibly a stolen copy) stops working,
+    # and the caller gets a fresh session in the response.
+    email, old_password, new_password = f"rotate-{uuid.uuid4()}@example.com", "oldpass123", "newpass456"
+    register_user(email=email, password=old_password)
+    login = login_user(email, old_password)
+    old_refresh = login.cookies.get("refresh_token")
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    response = client.put(
+        "/profile/change-password",
+        json={"old_password": old_password, "new_password": new_password},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["access_token"]
+    new_refresh = response.cookies.get("refresh_token")
+    assert new_refresh and new_refresh != old_refresh
+    assert refresh_with(old_refresh).status_code == 401
+    assert refresh_with(new_refresh).status_code == 200
+    me = client.get("/profile/me", headers={"Authorization": f"Bearer {response.json()['access_token']}"})
+    assert me.json()["email"] == email
+
+def test_wrong_old_password_keeps_the_session():
+    email, password = f"keep-{uuid.uuid4()}@example.com", "oldpass123"
+    register_user(email=email, password=password)
+    login = login_user(email, password)
+
+    response = client.put(
+        "/profile/change-password",
+        json={"old_password": "not-it", "new_password": "newpass456"},
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+
+    assert response.status_code == 400
+    assert refresh_with(login.cookies.get("refresh_token")).status_code == 200
+
 # ───────────────────────────────────────────────────────────────
 # POST /profile/forgot-password / /profile/set-password
 # ───────────────────────────────────────────────────────────────
@@ -128,20 +179,48 @@ def test_set_password_user_not_found():
     # A structurally valid reset token minted for an id no user has —
     # mirrors how AuthService.verify_email_token's own not-found path is
     # exercised, no way to reach it purely over HTTP.
-    token = create_password_reset_token(uuid.uuid4())
+    token = create_password_reset_token(uuid.uuid4(), "$2b$12$nouserhasthishash")
     response = client.post("/profile/set-password", json={"token": token, "new_password": "whatever123"})
     assert response.status_code == 404
 
 def test_set_password_success_then_login_with_new_password():
     email, old_password, new_password = f"resetpw-{uuid.uuid4()}@example.com", "oldpass123", "newpass789"
-    register_response = register_user(email=email, password=old_password)
-    user_id = register_response.json()["id"]
+    register_user(email=email, password=old_password)
 
-    token = create_password_reset_token(uuid.UUID(user_id))
+    token = reset_token_for(email)
     response = client.post("/profile/set-password", json={"token": token, "new_password": new_password})
     assert response.status_code == 200
 
     assert login_user(email, new_password).status_code == 200
+
+def test_reset_link_works_only_once():
+    # bugs.md #19
+    email = f"once-{uuid.uuid4()}@example.com"
+    register_user(email=email, password="oldpass123")
+    token = reset_token_for(email)
+
+    assert client.post("/profile/set-password", json={"token": token, "new_password": "first-new-1"}).status_code == 200
+    again = client.post("/profile/set-password", json={"token": token, "new_password": "second-new-2"})
+
+    assert again.status_code == 401
+    assert again.json()["code"] == "invalid_token"
+    assert login_user(email, "first-new-1").status_code == 200
+    assert login_user(email, "second-new-2").status_code in (400, 401)
+
+def test_reset_link_dies_when_the_password_changes_another_way():
+    email, password = f"stale-{uuid.uuid4()}@example.com", "oldpass123"
+    register_user(email=email, password=password)
+    token = reset_token_for(email)
+
+    changed = client.put(
+        "/profile/change-password",
+        json={"old_password": password, "new_password": "changed-456"},
+        headers=auth_headers(email, password),
+    )
+    assert changed.status_code == 200
+
+    assert client.post("/profile/set-password", json={"token": token, "new_password": "hijack-789"}).status_code == 401
+    assert login_user(email, "changed-456").status_code == 200
 
 # ───────────────────────────────────────────────────────────────
 # POST /profile/logout

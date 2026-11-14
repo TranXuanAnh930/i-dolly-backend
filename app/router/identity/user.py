@@ -17,6 +17,7 @@ from app.schema.identity import (
     SetPasswordRequest,
     UserOut,
 )
+from app.services.identity.auth_service import AuthService
 from app.services.identity.user_service import UserService
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
@@ -25,12 +26,17 @@ router = APIRouter(prefix="/profile", tags=["Profile"])
 def me(user:Users=Depends(get_current_user), _:None=Depends(rate_limit(60,60,user_key))) -> Users:
     return user
 
-@router.put("/change-password", response_model=MessageResponse)
-def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> MessageResponse:
+@router.put("/change-password")
+def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_current_user), _:None=Depends(rate_limit(5,60,user_key)), db:Session=Depends(get_db)) -> JSONResponse:
     result = UserService.change_password_process(db, user, payload.old_password, payload.new_password)
     if not result:
         raise ApiHTTPException(status_code=400, detail="Incorrect old password", code="incorrect_password")
-    return MessageResponse(msg="Password changed succesfully")
+    # Every refresh token was just revoked; give the caller a fresh session, same shape as
+    # POST /account/refresh, so they stay logged in and any other copy of the old token is dead.
+    token = AuthService.create_tokens(db, user)
+    response = JSONResponse(content={"msg": "Password changed succesfully", "access_token": token["access_token"]})
+    response.set_cookie("refresh_token", token["refresh_token"], httponly=True, secure=True, samesite="none")
+    return response
 
 @router.post("/forgot-password", response_model=MessageResponse)
 def forgot_password(payload:ForgotPasswordRequest, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
