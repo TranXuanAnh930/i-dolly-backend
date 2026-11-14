@@ -24,7 +24,10 @@ How the codebase is organized and the conventions new code should follow. For th
   `httponly/secure/samesite=none` cookie. `samesite=none` because the frontend and API are on
   different origins — a `Lax` cookie wouldn't survive the cross-site refresh call. A separate
   secret (`JWT_EMAIL_SECRET_KEY`) signs email-verification/password-reset tokens, discriminated by
-  a `type` claim so one can't be replayed as the other.
+  a `type` claim so one can't be replayed as the other. A reset token also carries `pwd`, a
+  truncated SHA-256 of the password hash it was issued against; `set-password` rejects it once
+  the hash differs, so a reset link works once. Changing the password (either way) revokes every
+  refresh token; `change-password` then issues the caller a fresh pair.
 - **bcrypt** via passlib for password hashing.
 - A `mock` payment gateway (`PaymentGateway.mock`, driven by `simulate_succ`) plus PayPal;
   `PaymentGateway` stays an enum so a future gateway has somewhere to slot in.
