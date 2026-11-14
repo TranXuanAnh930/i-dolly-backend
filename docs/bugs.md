@@ -201,7 +201,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
   treat post-commit steps as best-effort (log, don't re-raise) so only errors before the commit
   reach the task's failure path.
   **Fix planned:** `docs/plans/lottery-draw-post-commit.md` (move post-commit steps into the task).
-- [ ] **27. Abandoned PayPal marketplace orders stay `pending` forever.** If the fan never approves
+- [x] **27. Abandoned PayPal marketplace orders stay `pending` forever.** If the fan never approves
   on PayPal, `finalize_paypal_payment` never runs: the order, its payment and its shipping status
   stay `pending` with no deadline or sweep. No stock is held and the cart isn't cleared, so the fan
   can re-checkout, but the stale orders clutter order history and the manager orders page, feed the
