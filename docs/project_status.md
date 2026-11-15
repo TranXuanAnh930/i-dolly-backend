@@ -1220,7 +1220,7 @@ newly introduced.
       Resend send.
     - **Still open:** failed emails are logged but not retried. Retrying would need
       `send_email` to raise and the Celery task to retry, which risks duplicate emails if a send
-      half-succeeds; left for the #11 work on post-commit email dispatch.
+      half-succeeds. Item 56 made queueing an email best-effort too; neither step retries.
 
 54. ~~**Changing the password kept old sessions; reset links were reusable until expiry**~~
     (`bugs.md` #18, #19) — **FIXED**, no migration.
@@ -1279,6 +1279,38 @@ newly introduced.
       pending orders still count toward the resale cap (#13); unpaid lottery wins still need a
       scheduled sweep, since they do hold seats (§8). Frontend task:
       `docs/frontend-tasks/paypal-cancel-page.md`.
+
+56. ~~**A Redis outage turned cached pages and committed writes into 500s**~~ (`bugs.md` #11) —
+    **FIXED**.
+    - **Timeouts** (`app/cache/redis_client.py`): connect and socket timeouts of
+      `REDIS_SOCKET_TIMEOUT` (1 s), and one immediate retry instead of redis-py 7's default of
+      three with exponential backoff. Measured in the container against an unreachable host:
+      about 11 s per call before, about 2 s now; a healthy call stays around 1 ms. Celery's broker
+      connection keeps its own settings: the worker blocks on Redis by design.
+    - **Reads** (`app/cache/guards.py`): all 18 `get_cached_*` methods read and write through
+      `cache_get` / `cache_set`. A Redis error is a miss, answered from Postgres, and a failed write
+      is skipped; each logs one warning with the key.
+    - **Cache clears:** all 16 `delete_cached_*` methods carry `@best_effort` (`functools.wraps`,
+      so name and signature survive): a Redis error is logged with the method's name and the call
+      returns `None`. Any other exception still raises. They run after a commit, so the response
+      reports the committed write; a skipped clear can leave a page stale for up to `TTL_SECONDS`
+      (5 minutes), or not at all if Redis restarted empty.
+    - **Emails:** the 6 transactional emails go through `app/utils/email_dispatch.py::dispatch_email`,
+      which logs (recipient and subject) and drops an email the broker can't take.
+    - **Lottery draw:** `PUT /concerts/lottery-draw/{id}` answers 503 when the task can't be queued,
+      and only notifies the company's managers that a draw started after it was queued.
+    - Tests: `tests/unit/test_redis_client.py` (timeouts, one retry); `tests/unit/test_redis_outage.py`
+      (the three guards, every cache clear with Redis down, two cached reads falling back,
+      `dispatch_email`); `tests/integration/test_redis_outage.py` over real HTTP with Redis and the
+      broker down (store page, concert detail, order and ticket checkouts, a manager edit, the
+      lottery draw), each with a healthy-path guard. 11 existing unit tests that mocked
+      `celery_app.send_task` per module now mock `dispatch_email`.
+    - Verified: 663 unit and 431 integration tests pass against local Postgres and Redis, ruff
+      clean.
+    - **Known limitations:** emails sent during an outage are lost (an outbox would fix that);
+      Celery's publish retry policy is left at its default, so a broker outage can add a short
+      delay before `dispatch_email` gives up; the rate limiter fails open, so limits don't apply
+      while Redis is down.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

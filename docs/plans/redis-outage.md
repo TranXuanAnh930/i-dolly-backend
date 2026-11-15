@@ -2,7 +2,11 @@
 
 English | [日本語](redis-outage_JP.md)
 
-**Status:** planned, not started (2026-09-27).
+**Status:** done (2026-11-15), see `project_status.md` §4 item 56. Two changes from the plan
+below: the Redis client also limits redis-py 7's default retries (three, with backoff) to one
+immediate retry, which the 1 s timeout alone didn't cap; and the guards live in
+`app/cache/guards.py` (`cache_get`, `cache_set`, `best_effort`) rather than inside the cache
+modules. The Celery publish retry policy (step 4) was left at its default.
 
 ## Problem
 

@@ -104,9 +104,8 @@ staff-facing view of inquiries, and a verified PayPal decline/webhook path:
   tier a route belongs to, and its exact limit/window) is a portfolio-scoped judgment call, not a
   formally load-tested one.
 
-- Known open bugs (spoofable IP rate limits behind the proxy, no Redis-outage handling, PayPal
-  pending-state cleanup, and more) are tracked in `docs/bugs.md`, with fix plans in
-  `docs/plans/`.
+- Known open bugs (PayPal capture reconciliation, the resale cap counting cancelled orders, and
+  more) are tracked in `docs/bugs.md`, with fix plans in `docs/plans/`.
 
 Full list, ordered by how much each matters — including what's already been fixed (the checkout
 race, the rate-limiter key collision, webhook idempotency, and more): `docs/project_status.md` §4

@@ -3,11 +3,11 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from app.celery_app import celery_app
 from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
 from app.exception.common import BadRequestError, ConflictError
 from app.schema.identity import UserCreate
+from app.utils.email_dispatch import dispatch_email
 from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import create_access_token, create_email_verification_token, decode_email_token
@@ -78,7 +78,7 @@ class AuthService:
         token = create_email_verification_token(user.id)
         link = f"{settings.BASE_URL}/account/verify?token={token}"
         email_body = EmailTemplate.EMAIL_VERIFICATION.render(email=user.email, link=link)
-        celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.EMAIL_VERIFICATION.subject, email_body])
+        dispatch_email(user.email, EmailTemplate.EMAIL_VERIFICATION.subject, email_body)
 
     @staticmethod
     def verify_email_token(db: Session, token: str) -> None:

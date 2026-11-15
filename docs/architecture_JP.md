@@ -82,6 +82,18 @@
 
    サービスは決して `cache_service` をインポートしてはならない。循環が再発してしまうため。
 
+   **Redis の障害はサイトの障害にならない。** すべての読み取りは `app/cache/guards.py` を通る: `cache_get` は Redis の
+   エラーをキャッシュミスとして扱い（ページは Postgres から作る）、`cache_set` は書き込みをスキップする。すべての
+   `delete_cached_*` には `@best_effort` が付いている: Redis のエラーはログに出してスキップする。取り消せないコミットの
+   後に実行されるもので、レスポンスはコミットされた書き込みを報告しなければならないため。代償は、Redis の復旧後に
+   最大 5 分（`TTL_SECONDS`）古いページが出ること。Render Key Value のように Redis が空の状態で再起動した場合は、
+   まったく古くならない。トランザクションメールは `app/utils/email_dispatch.py::dispatch_email` を通り、ブローカーが
+   受け取れないメールはログに出して捨てる。抽選は例外: キューに入れることがその操作のすべてなので、
+   `PUT /concerts/lottery-draw/{id}` は 503 を返す。Redis のクライアント（`app/cache/redis_client.py`）は
+   `REDIS_SOCKET_TIMEOUT`（1 秒）でタイムアウトし、即時の再試行を 1 回だけ行うので、Redis が落ちていても 1 回の呼び出し
+   あたり約 2 秒で済み、リクエストが止まることはない。捕捉するのは Redis のエラーだけで、それ以外の例外はそのまま表に
+   出る。
+
 サービス間の呼び出しもクラスを経由する（`PaymentService.create_ticket_payment(...)`、素の関数としては呼ばない）。
 別々のサービスファイルにある同名の関数（例: `direct_sale_campaign_service.add_campaign` と
 `lottery_campaign_service.add_campaign`）は無関係であり、共存して問題ない。サービス間呼び出しに対する

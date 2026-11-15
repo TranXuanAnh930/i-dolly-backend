@@ -5,6 +5,7 @@ Depends only on Redis, so services can invalidate cache entries without importin
 """
 import uuid
 
+from app.cache.guards import best_effort
 from app.cache.redis_client import redis_client
 
 TTL_SECONDS = 60 * 5
@@ -58,6 +59,7 @@ def _delete_matching(pattern: str) -> None:
 class CacheInvalidation:
 
     @staticmethod
+    @best_effort
     def delete_cached_products() -> None:
         redis_client.delete(PRODUCTS_LIST_KEY)
         redis_client.delete(STORE_PAGE_KEY)
@@ -65,66 +67,81 @@ class CacheInvalidation:
     # Recommendations make each detail page depend on other products, so any product write clears
     # the whole detail-page namespace.
     @staticmethod
+    @best_effort
     def delete_cached_product_details() -> None:
         _delete_matching(product_detail_key("*"))
 
     @staticmethod
+    @best_effort
     def delete_cached_events_page() -> None:
         redis_client.delete(EVENTS_PAGE_KEY)
 
     # Every write that affects a concert detail knows its concert_id, so this deletes one key.
     @staticmethod
+    @best_effort
     def delete_cached_concert_detail(id: uuid.UUID) -> None:
         redis_client.delete(concert_detail_key(id))
 
     @staticmethod
+    @best_effort
     def delete_cached_members_page() -> None:
         redis_client.delete(MEMBERS_PAGE_KEY)
 
     # Idol and group detail pages embed each other's data, so any idol or group write clears both
     # namespaces.
     @staticmethod
+    @best_effort
     def delete_cached_idol_details() -> None:
         _delete_matching(idol_detail_key("*"))
 
     @staticmethod
+    @best_effort
     def delete_cached_groups_page() -> None:
         redis_client.delete(GROUPS_PAGE_KEY)
 
     @staticmethod
+    @best_effort
     def delete_cached_group_details() -> None:
         _delete_matching(group_detail_key("*"))
 
     @staticmethod
+    @best_effort
     def delete_cached_venues() -> None:
         redis_client.delete(VENUES_KEY)
 
     @staticmethod
+    @best_effort
     def delete_cached_idol_colors() -> None:
         redis_client.delete(IDOL_COLORS_KEY)
 
     @staticmethod
+    @best_effort
     def delete_cached_manager_idols_page() -> None:
         redis_client.delete(MANAGER_IDOLS_PAGE_KEY)
 
     @staticmethod
+    @best_effort
     def delete_cached_manager_idol_form_page() -> None:
         redis_client.delete(MANAGER_IDOL_FORM_PAGE_KEY)
 
     @staticmethod
+    @best_effort
     def delete_cached_manager_groups_page() -> None:
         redis_client.delete(MANAGER_GROUPS_PAGE_KEY)
 
     @staticmethod
+    @best_effort
     def delete_cached_manager_events_page() -> None:
         redis_client.delete(MANAGER_EVENTS_PAGE_KEY)
 
     # Product has no company_id column, so a product write clears every company's entry.
     @staticmethod
+    @best_effort
     def delete_cached_manager_products_pages() -> None:
         _delete_matching(manager_products_page_key("*"))
         _delete_matching(manager_product_form_page_key("*"))
 
     @staticmethod
+    @best_effort
     def delete_cached_management_companies() -> None:
         redis_client.delete(MANAGEMENT_COMPANIES_KEY)

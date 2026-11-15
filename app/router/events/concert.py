@@ -1,7 +1,10 @@
+import logging
 import uuid
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from kombu.exceptions import OperationalError
+from redis import RedisError
 from sqlalchemy.orm import Session
 
 from app.cache.cache_service import CacheService
@@ -24,6 +27,8 @@ from app.schema.events import (
     ManagerEventsPageRead,
 )
 from app.services.events.concert_service import ConcertService
+
+logger = logging.getLogger(__name__)
 
 # Managers can only create/edit/delete their own company's concerts; admins are unrestricted.
 router = APIRouter(prefix="/concerts", tags=["Concerts"])
@@ -144,9 +149,12 @@ def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(requir
     if ConcertService._manager_scope_violation(current_user, concert.company_id):
         raise HTTPException(status_code=403, detail="Managers can only manage concerts for their own company")
 
+    try:
+        celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)])
+    except (OperationalError, RedisError) as e:
+        logger.warning("Failed to schedule lottery draw: %s", e)
+        raise HTTPException(status_code=503, detail="Failed to schedule lottery draw") from e
+    
     # Notify the company's managers now; the draw itself runs later in Celery.
     ConcertService.notify_managers_of_draw_trigger(db, concert)
-
-    # The draw runs in a Celery worker (app/tasks/lottery.py); this only acknowledges the request.
-    celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)])
     return MessageResponse(msg="Lottery draw task has been scheduled. Results will be available once the task is complete.")

@@ -27,8 +27,8 @@ def make_payload(email="Fan@Example.com", topic=InquiryTopic.lottery, content=CO
 
 class TestInquiryService:
 
-    @patch("app.services.shared.inquiry_service.celery_app")
-    def test_guest_inquiry_is_saved_and_confirmed(self, mock_celery):
+    @patch("app.services.shared.inquiry_service.dispatch_email")
+    def test_guest_inquiry_is_saved_and_confirmed(self, mock_dispatch):
         from app.services.shared.inquiry_service import InquiryService
 
         db = make_mock_db(recent_count=0)
@@ -39,12 +39,12 @@ class TestInquiryService:
         db.commit.assert_called_once()
         assert inquiry.email == "fan@example.com"
         assert inquiry.user_id is None
-        mock_celery.send_task.assert_called_once()
-        to_address = mock_celery.send_task.call_args.kwargs["args"][0]
+        mock_dispatch.assert_called_once()
+        to_address = mock_dispatch.call_args.args[0]
         assert to_address == "fan@example.com"
 
-    @patch("app.services.shared.inquiry_service.celery_app")
-    def test_logged_in_inquiry_is_linked_to_user(self, mock_celery):
+    @patch("app.services.shared.inquiry_service.dispatch_email")
+    def test_logged_in_inquiry_is_linked_to_user(self, mock_dispatch):
         from app.services.shared.inquiry_service import InquiryService
 
         user = MagicMock()
@@ -54,8 +54,8 @@ class TestInquiryService:
 
         assert inquiry.user_id == DEFAULT_ID
 
-    @patch("app.services.shared.inquiry_service.celery_app")
-    def test_over_cap_saves_but_skips_email(self, mock_celery):
+    @patch("app.services.shared.inquiry_service.dispatch_email")
+    def test_over_cap_saves_but_skips_email(self, mock_dispatch):
         from app.services.shared.inquiry_service import CONFIRMATIONS_PER_ADDRESS, InquiryService
 
         db = make_mock_db(recent_count=CONFIRMATIONS_PER_ADDRESS)
@@ -63,15 +63,15 @@ class TestInquiryService:
         InquiryService.submit_inquiry(db, make_payload(), None)
 
         db.commit.assert_called_once()
-        mock_celery.send_task.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    @patch("app.services.shared.inquiry_service.celery_app")
-    def test_confirmation_does_not_echo_user_content(self, mock_celery):
+    @patch("app.services.shared.inquiry_service.dispatch_email")
+    def test_confirmation_does_not_echo_user_content(self, mock_dispatch):
         from app.services.shared.inquiry_service import InquiryService
 
         InquiryService.submit_inquiry(make_mock_db(), make_payload(), None)
 
-        email_body = mock_celery.send_task.call_args.kwargs["args"][2]
+        email_body = mock_dispatch.call_args.args[2]
         assert CONTENT not in email_body
         assert InquiryTopic.lottery.label in email_body
 

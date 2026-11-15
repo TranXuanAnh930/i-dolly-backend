@@ -3,7 +3,6 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
-from app.celery_app import celery_app
 from app.config.settings import settings
 from app.db.models.identity import RefreshToken, Users
 from app.db.models.talent import ManagementCompany
@@ -11,6 +10,7 @@ from app.exception.common import BadRequestError, NotFoundError
 from app.schema.identity import ManagerCreate, UserRole
 from app.schema.shared import NotificationType
 from app.services.shared.notification_service import NotificationService
+from app.utils.email_dispatch import dispatch_email
 from app.utils.email_templates import EmailTemplate
 from app.utils.hashing import hash_password, verify_password
 from app.utils.jwt_manager import (
@@ -47,7 +47,7 @@ class UserService:
             # Links to the frontend's reset page, which submits the token to POST /profile/set-password.
             link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
             email_body = EmailTemplate.RESET_PASSWORD.render(email=user.email, link=link)
-            celery_app.send_task("app.tasks.email.send_email", args=[user.email, EmailTemplate.RESET_PASSWORD.subject, email_body])
+            dispatch_email(user.email, EmailTemplate.RESET_PASSWORD.subject, email_body)
         return True
 
     @staticmethod

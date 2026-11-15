@@ -205,17 +205,17 @@ class TestUserService:
 
         with patch("app.services.identity.user_service.create_password_reset_token", return_value="reset_tok") as mock_token, \
              patch("app.services.identity.user_service.settings") as mock_settings, \
-             patch("app.services.identity.user_service.celery_app.send_task") as mock_send_task:
+             patch("app.services.identity.user_service.dispatch_email") as mock_send_task:
             mock_settings.FRONTEND_BASE_URL = "http://localhost:8080"
             result = UserService.reset_password_process(db, "test@example.com")
 
         assert result is True
         mock_send_task.assert_called_once()
-        assert mock_send_task.call_args[0][0] == "app.tasks.email.send_email"
+        assert mock_send_task.call_args.args[0] == mock_user.email
         # The email carries a clickable reset link (frontend's own
         # /reset-password page, token in the query string) rather than a
         # bare token the fan has to copy-paste in themselves.
-        email_body = mock_send_task.call_args.kwargs["args"][2]
+        email_body = mock_send_task.call_args.args[2]
         assert "http://localhost:8080/reset-password?token=reset_tok" in email_body
         # The token is bound to the current password hash (bugs.md #19).
         mock_token.assert_called_once_with(mock_user.id, mock_user.hashed_password)
@@ -229,7 +229,7 @@ class TestUserService:
         # Always returns True, matched user or not — the router gives the
         # same generic response either way so this can't be used to
         # enumerate registered emails (user_service.py's own comment).
-        with patch("app.services.identity.user_service.celery_app.send_task") as mock_send_task:
+        with patch("app.services.identity.user_service.dispatch_email") as mock_send_task:
             result = UserService.reset_password_process(db, "nope@example.com")
 
         assert result is True

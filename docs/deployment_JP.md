@@ -127,6 +127,7 @@ Supabase、キャッシュ／レートリミッターは Render 自身の Redis 
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | |
 | `EMAIL_TOKEN_EXPIRE_MINUTES` | `60` | |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | §4 から | 内部ホスト名、通常は `6379`、`0` |
+| `REDIS_SOCKET_TIMEOUT` | 省略（`1.0`） | キャッシュやレートリミッターの Redis の呼び出しを打ち切るまでの秒数 |
 | `CELERY_BROKER_DB` | `1`（デフォルト、省略可） | Celery ワーカー（§5）もデプロイする場合にのみ関係する |
 | `RESEND_API_KEY` / `FROM_EMAIL` | 本物のキー、またはプレースホルダー | お問い合わせの確認メールを含む、すべてのトランザクションメールを送信する |
 | `ANTHROPIC_API_KEY` | Claude API のキー、または **省略** | お問い合わせページの AI 回答（`POST /inquiries/instant-answer`）を有効にする。省略した場合、エンドポイントは常に「回答不可」を返し、フロントエンドはフォームだけを表示する。 |
@@ -207,8 +208,8 @@ Dockerfile が出力する `Running Alembic migrations...` の行について、
   到達できる必要がある。
 - IP ベースのレート制限の正しさは `TRUSTED_PROXY_HOPS`（§7）に依存する: 稼働中のデプロイで計測し、プロキシの構成が
   変わったら計測し直す必要がある。
-- Redis の障害により、キャッシュされた読み取りとコミット後のキャッシュ無効化が 500 になる（`docs/bugs_JP.md` #11、
-  修正計画は `docs/plans/redis-outage_JP.md`）。
+- Redis の障害中もサイトは Postgres で動き続けるが、その間に送られるトランザクションメールは失われ（ログには出るが、
+  リトライはされない）、抽選は開始できない（503）。
 - PayPal の Webhook の経路は実際の配信を一度も受け取ったことがなく、決済拒否の経路も実際に拒否された決済で試されて
   いない（`docs/project_status_JP.md` §7）。
 - Render の無料枠は非アクティブ後にコールドスタートする。デモでそれが問題になるなら、遅い初回読み込みがバグに

@@ -138,6 +138,7 @@ scheduler process.
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | |
 | `EMAIL_TOKEN_EXPIRE_MINUTES` | `60` | |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | from §4 | internal hostname, usually `6379`, `0` |
+| `REDIS_SOCKET_TIMEOUT` | omit (`1.0`) | seconds before a cache or rate-limiter Redis call gives up |
 | `CELERY_BROKER_DB` | `1` (default, can be omitted) | only relevant if the Celery worker (§5) is deployed too |
 | `RESEND_API_KEY` / `FROM_EMAIL` | real key, or a placeholder | sends every transactional email, including contact-form confirmations |
 | `ANTHROPIC_API_KEY` | Claude API key, or **omit** | turns on AI answers on the contact page (`POST /inquiries/instant-answer`). Omitted = the endpoint always answers "not answerable" and the frontend just shows the form. |
@@ -219,8 +220,8 @@ so the secret needs to be re-added for this repo:
   Render's internal network.
 - IP-based rate limits are only as good as `TRUSTED_PROXY_HOPS` (§7): it has to be measured on the
   live deployment and re-measured when the proxy setup changes.
-- A Redis outage turns cached reads and post-commit cache invalidation into 500s
-  (`docs/bugs.md` #11, fix plan in `docs/plans/redis-outage.md`).
+- During a Redis outage the site keeps working from Postgres, but transactional emails sent in
+  that window are lost (logged, not retried) and the lottery draw can't be triggered (503).
 - The PayPal webhook path has never received a real delivery, and the decline path hasn't been
   exercised against a real declined payment (`docs/project_status.md` §7).
 - Render's free tier cold-starts after inactivity; if that matters for a demo, mention it rather

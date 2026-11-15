@@ -86,10 +86,13 @@ still hold. That pass corrected line references, added the **Review** notes belo
 - [x] **10. `DEBUG` defaults to `True`** (`settings.py`), contradicting `deployment.md` and the
   `email_sender.py` comment. An env missing `DEBUG` prints reset tokens to logs and sends no email.
   **FIXED**: `DEBUG` now defaults to `False`, matching `deployment.md`.
-- [ ] **11. Redis outage → 500s.** `CacheService` has no `RedisError` handling. Invalidation runs
+- [x] **11. Redis outage → 500s.** `CacheService` has no `RedisError` handling. Invalidation runs
   after commit, so checkout/payment 500 on an order that actually succeeded.
   **Fix planned:** `docs/plans/redis-outage.md` (fail-open reads, best-effort invalidation and
   email dispatch, client timeouts).
+  **FIXED** (`project_status.md` §4 item 56): cache reads fall back to Postgres, cache clears after
+  a commit are logged and skipped, transactional emails are best-effort, the lottery draw answers
+  503 when it can't be queued, and Redis calls time out after 1 s (one retry, about 2 s at worst).
 - [x] **12. Abandoned direct-sale PayPal ticket locks the fan out.** `pending_payment` counts as
   live (`ticket_service.py:54`) but direct tickets have no deadline/sweep.
   **FIXED without a sweep** (`project_status.md` §4 item 55): the fan's next `checkout_ticket` for
@@ -269,8 +272,8 @@ still hold. That pass corrected line references, added the **Review** notes belo
 
 ## Suggested order (updated 2026-11-13)
 
-Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #12, #14 (mitigated), #15, #16, #17,
-#18, #19, #21, #22, #26, #27, #28, #29, and nine code smells.
+Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #14 (mitigated), #15, #16,
+#17, #18, #19, #21, #22, #26, #27, #28, #29, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -279,9 +282,9 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #12, #14 (mitigat
    (done); ~~#29 unauthenticated manager pages~~ (done).
 4. ~~Data integrity and money: #2 product delete wipes order history (migration to `RESTRICT` +
    soft delete or block)~~ (done).
-5. **Planned:** #11 Redis outage handling (plan in `docs/plans/redis-outage.md`) together with
-   #25 (plan in `docs/plans/lottery-draw-post-commit.md`) — the Redis fix removes one trigger of
-   #25.
+5. **Planned:** ~~#11 Redis outage handling~~ (done); #25 (plan in
+   `docs/plans/lottery-draw-post-commit.md`). The #11 fix removed one of its two triggers: the
+   draw's post-commit cache clear no longer raises.
 6. **Auth:** ~~#18, #19~~ (done), then the plaintext-storage half of #20.
 7. **PayPal pending state:** ~~#12, #27~~ (done without a sweep: released on the fan's next
    checkout or on PayPal cancel). Left: #31, #33, and #13 (the cap can only count `confirmed`

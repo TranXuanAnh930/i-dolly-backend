@@ -194,11 +194,11 @@ class TestAuthService:
         mock_user = make_mock_user()
 
         with patch("app.services.identity.auth_service.create_email_verification_token", return_value="tok123"), \
-             patch("app.services.identity.auth_service.celery_app.send_task") as mock_send_task:
+             patch("app.services.identity.auth_service.dispatch_email") as mock_send_task:
             result = AuthService.email_verification_process(mock_user)
 
         mock_send_task.assert_called_once()
-        assert mock_send_task.call_args[0][0] == "app.tasks.email.send_email"
+        assert mock_send_task.call_args.args[0] == mock_user.email
         assert result is None
 
     def test_cleanup_expired_tokens(self):
