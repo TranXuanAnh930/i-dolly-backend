@@ -49,6 +49,10 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   commit; the task clears the cache and notifies managers of completion afterwards, each step
   logged and skipped if it fails. A failing failure notification no longer replaces the original
   error.
+- **Fixed — cancelled orders no longer use up the resale cap (#13).** The 3-unit cap per product
+  counts confirmed and pending orders and ignores cancelled ones (a declined payment, an
+  abandoned PayPal checkout), in the checkout and in the database trigger. Migration
+  `e8b4d6f0a2c5`.
 
 ## 1.4.2 — 2026-11-14
 

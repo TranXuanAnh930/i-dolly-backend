@@ -82,12 +82,7 @@ class OrderService:
             db.scalars(select(Product.id).filter(Product.id.in_(product_ids), Product.category.has(is_resale_capped=True)))
         )
         if capped_product_ids:
-        # One grouped query for every resale-capped item in the cart.
-            past_qty = dict(
-                db.query(OrderItem.product_id, func.sum(OrderItem.quantity))
-                .join(Order).filter(Order.user_id == user_id, OrderItem.product_id.in_(capped_product_ids))
-                .group_by(OrderItem.product_id).all()
-            )
+            past_qty = OrderService._units_already_ordered(db, user_id, capped_product_ids)
             for item in cart_items:
                 if item.product_id in capped_product_ids and past_qty.get(item.product_id, 0) + item.quantity > RESALE_CAP_QUANTITY:
                     raise ResaleCapExceededError(f"product_id={item.product_id} would exceed the {RESALE_CAP_QUANTITY}-unit resale cap")
@@ -153,6 +148,27 @@ class OrderService:
         for payment in payments:
             PaymentService.cancel_pending_paypal_payment(db, payment)
         return None
+
+    @staticmethod
+    def _units_already_ordered(db: Session, user_id: uuid.UUID, product_ids: set[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """Units of each product in `product_ids` that this fan already has on order, for the resale
+        cap. Counts every order that still stands: confirmed, and pending (a pending PayPal order
+        reserves its units, so several of them can't all be captured past the cap). Doesn't count a
+        cancelled order: a declined payment, or a PayPal checkout the fan backed out of. A product
+        the fan never ordered is absent from the result.
+        """
+        # Mirrors fn_enforce_resale_cap, the DB backstop: the two must count the same orders.
+        return dict(
+            db.query(OrderItem.product_id, func.sum(OrderItem.quantity))
+            .join(Order)
+            .filter(
+                Order.user_id == user_id,
+                OrderItem.product_id.in_(product_ids),
+                Order.status != OrderStatus.cancelled,
+            )
+            .group_by(OrderItem.product_id)
+            .all()
+        )
 
     @staticmethod
     def fetch_placed_order(db:Session, user_id:uuid.UUID) -> list[Order]:
