@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session, selectinload
 
-from app.cache.invalidation import CacheInvalidation
 from app.db.models.events import Concert, LotteryCampaign, LotteryEntry, LotteryPreference, Ticket, TicketType
 from app.db.models.identity import Users
 from app.exception.common import BadRequestError, ForbiddenError, NotFoundError
@@ -15,7 +14,6 @@ from app.schema.events.lottery_result import LotteryResult
 from app.schema.events.ticket import TicketStatus
 from app.schema.identity import UserRole
 from app.schema.shared import NotificationType
-from app.services.events.concert_service import ConcertService
 from app.services.shared.notification_service import NotificationService
 
 
@@ -96,10 +94,6 @@ class LotteryDrawService:
             campaign.draw_at = datetime.now(timezone.utc)
 
         commit_or_raise(db)
-        # The draw changed campaign status, draw_at and sold_quantity in the cached concert detail.
-        CacheInvalidation.delete_cached_concert_detail(concert_id)
-        # Separate from the "draw triggered" notification sent when the draw was scheduled.
-        ConcertService.notify_managers_of_draw_completion(db, concert)
 
         return LotteryResult(
             concert_id=concert_id,

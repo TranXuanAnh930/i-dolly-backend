@@ -87,9 +87,9 @@ the original migration) since `ALTER TABLE ... RENAME TO` doesn't touch constrai
   `ticket_service.checkout_ticket()`/`checkout_won_ticket()`, `user_service.verify_rtoken()`,
   `lottery_draw_service.draw_lottery()` (`lottery_result` for every winner and loser, plus a
   payment reminder for winners, fired at draw time rather than on a schedule closer to the
-  deadline; also calls `concert_service.notify_managers_of_draw_completion()` for
-  `lottery_draw_completed` right after its own commit lands — every manager at the concert's
-  company, not just whoever triggered it),
+  deadline; `draw_lottery_task` then calls `concert_service.notify_managers_of_draw_completion()`
+  for `lottery_draw_completed` after the draw's commit, best-effort — every manager at the
+  concert's company, not just whoever triggered it),
   `lottery_entry_service._stage_entry()` (`lottery_registered`, fired the moment a fan's entry is
   staged — shared by the single and batch apply endpoints, same commit as the entry itself),
   `concert_service.notify_managers_of_draw_trigger()` (`lottery_draw_triggered`, fired from the
@@ -1312,6 +1312,35 @@ newly introduced.
       delay before `dispatch_email` gives up; the rate limiter fails open, so limits don't apply
       while Redis is down.
 
+57. ~~**A lottery draw that had committed was reported to managers as failed**~~ (`bugs.md` #25) —
+    **FIXED**, written by hand from `docs/plans/lottery-draw-post-commit.md`.
+    - The commit is the boundary. `LotteryDrawService.draw_lottery` now ends at `commit_or_raise` and
+      returns the `LotteryResult`; it no longer clears the cache or notifies managers of
+      completion. Before, anything after the commit (the cache clear when Redis was down, or the
+      completion notification's own commit) raised into the task's single `except`, which rolled
+      back, told managers the draw *failed*, and made Celery record a failure, even though winners
+      already had their tickets. A retry then answered "no open lottery campaigns".
+    - `draw_lottery_task` (`app/tasks/lottery.py`) has two levels. The inner `try` covers only the
+      draw: on an error it rolls back, then, in its own guard, notifies managers of the failure
+      (skipped if the concert no longer exists) and re-raises the original error, so a failing
+      notification (a dropped connection, say) is logged and can't replace it. After the draw
+      succeeds, `_after_draw` runs outside that `try`, with the cache clear and the completion
+      notification each in their own catch-all: a failure is logged with its traceback and nothing
+      reaches the failure path. The concert id is parsed before a session is opened, so a
+      malformed id can't leak one.
+    - **Tests:** `tests/unit/test_tasks.py` (a failing completion notification or cache clear
+      doesn't fail the draw, and a failing cache clear still sends the notification; the steps run
+      after the draw, for that concert, and not at all when the draw fails; a failing failure
+      notification or concert lookup doesn't mask the draw error; a malformed id opens no
+      session). `tests/unit/events/test_lottery_draw_service.py` now asserts the service commits and
+      leaves both steps to the task. Mutation-checked: with the steps moved back into the
+      failure path, three of the task tests fail.
+    - Verified: 670 unit and 431 integration tests pass against local Postgres and Redis, ruff
+      clean.
+    - **Known limitation:** the completion notification isn't retried. If it fails, managers get no
+      completion notice; the outcome is still on the results page
+      (`GET /lottery_entries/concert/{concert_id}/results`).
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:
@@ -1535,9 +1564,9 @@ looks the concert back up (the local `Concert` object from inside `draw_lottery`
 raised), and calls `ConcertService.notify_managers_of_draw_failure` for a `lottery_draw_failed`
 notification to the same audience, before re-raising the original exception unchanged — so the
 failure notification and Celery's own `FAILURE` task state both still happen, neither replaces the
-other. On the happy path, `draw_lottery` now also calls
-`ConcertService.notify_managers_of_draw_completion` (`lottery_draw_completed`) right after its own
-commit — so a manager who wasn't watching the concert's edit page when the draw finished has a
+other. On the happy path, `draw_lottery_task` also calls
+`ConcertService.notify_managers_of_draw_completion` (`lottery_draw_completed`) after the draw's
+commit, as a best-effort step (item 57) — so a manager who wasn't watching the concert's edit page when the draw finished has a
 persistent record it actually completed, not just that it started or failed. All three manager
 notifications (`lottery_draw_triggered`/`lottery_draw_failed`/`lottery_draw_completed`) carry
 `concert_id` only — no per-winner detail — the actual outcome is

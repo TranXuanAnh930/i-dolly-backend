@@ -78,9 +78,9 @@ Desktop のエンジンに接続できなかった。**その後、実際に実�
   する（cron／Beat のジョブはない）: `order_service.checkout()`、`ticket_service.checkout_ticket()`/
   `checkout_won_ticket()`、`user_service.verify_rtoken()`、`lottery_draw_service.draw_lottery()`（すべての当選者と
   落選者に `lottery_result`、加えて当選者には支払いのリマインダー。期限が近づいてから予定どおりにではなく、抽選時に
-  発火する。自身のコミットが入った直後に、`lottery_draw_completed` のために
-  `concert_service.notify_managers_of_draw_completion()` も呼ぶ — 実行した人だけでなく、公演の事務所のすべての
-  マネージャーに）、`lottery_entry_service._stage_entry()`（`lottery_registered`。ファンの応募がステージされた瞬間に
+  発火する。自身のコミットが入った直後に、`lottery_draw_completed` のために、
+  `draw_lottery_task` が抽選のコミットの後に `concert_service.notify_managers_of_draw_completion()` を、ベストエフォートで
+  呼ぶ — 実行した人だけでなく、公演の事務所のすべてのマネージャーに）、`lottery_entry_service._stage_entry()`（`lottery_registered`。ファンの応募がステージされた瞬間に
   発火する — 単一と一括の応募エンドポイントで共通で、応募自体と同じコミット）、
   `concert_service.notify_managers_of_draw_trigger()`（`lottery_draw_triggered`。マネージャー／管理者が抽選を押した
   瞬間に `PUT /concerts/lottery-draw/{id}` のルーターから発火する — クリックした人だけでなく、公演の事務所のすべての
@@ -1134,6 +1134,29 @@ HTTP で機能を動かし（登録 → パスワードリセットを要求 →
       ポリシーはデフォルトのままなので、ブローカーの障害時には `dispatch_email` があきらめるまでに少し遅れが出うる。
       レートリミッターはフェイルオープンなので、Redis が落ちている間は制限がかからない。
 
+57. ~~**コミット済みの抽選が、マネージャーに失敗として報告された**~~（`bugs_JP.md` #25）—
+    **修正済み**。`docs/plans/lottery-draw-post-commit_JP.md` から手作業で書かれた。
+    - コミットが境界になる。`LotteryDrawService.draw_lottery` は `commit_or_raise` で終わり、`LotteryResult` を返す。
+      キャッシュのクリアも、完了通知も、もう行わない。以前は、コミットの後にあるもの（Redis が落ちているときのキャッシュの
+      クリア、または完了通知自身のコミット）がタスクの唯一の `except` に送出され、そこでロールバックし、マネージャーに
+      抽選が *失敗した* と通知し、Celery に失敗を記録させていた。当選者がすでにチケットを持っていたにもかかわらず。
+      その後の再試行は「開いている抽選キャンペーンがない」と答えた。
+    - `draw_lottery_task`（`app/tasks/lottery.py`）は 2 段になっている。内側の `try` は抽選だけを囲む: エラーのときは
+      ロールバックし、その後、独自のガードの中でマネージャーに失敗を通知し（公演がもうなければスキップ）、元のエラーを
+      再送出するので、失敗通知が失敗しても（接続が切れたなど）ログに出るだけで、元のエラーを置き換えることはない。
+      抽選が成功した後、`_after_draw` がその `try` の外で実行され、キャッシュのクリアと完了通知がそれぞれ独自の
+      catch-all の中にある: 失敗はトレースバック付きでログに出て、失敗の経路には何も到達しない。公演の ID はセッションを
+      開く前に解析されるので、不正な ID でセッションが漏れることはない。
+    - **テスト:** `tests/unit/test_tasks.py`（完了通知やキャッシュのクリアが失敗しても抽選は失敗にならず、キャッシュの
+      クリアが失敗しても通知は送られる。これらの手順は、抽選の後に、その公演について実行され、抽選が失敗したときは
+      まったく実行されない。失敗通知や公演の検索が失敗しても、抽選のエラーは隠されない。不正な ID ではセッションが
+      開かれない）。`tests/unit/events/test_lottery_draw_service.py` は、サービスがコミットし、両方の手順をタスクに任せる
+      ことを確認するようにした。ミューテーションで確認済み: これらの手順を失敗の経路に戻すと、タスクのテスト 3 件が
+      失敗する。
+    - 確認: ローカルの Postgres と Redis に対して、ユニットテスト 670 件と結合テスト 431 件が成功、ruff も問題なし。
+    - **既知の制限:** 完了通知はリトライされない。失敗した場合、マネージャーには完了の通知が届かないが、結果は
+      引き続き結果ページ（`GET /lottery_entries/concert/{concert_id}/results`）で見られる。
+
 ## 5. 意図的に延期したもの — 次のフェーズで、忘れてはいない
 
 - ~~**グループ／アイドルの CRUD の成功の経路の結合テストのカバレッジ**~~ — **完了**:
@@ -1329,8 +1352,9 @@ Celery タスクが実行されるより前に。それは事務所のすべて�
 （`draw_lottery` の中のローカルな `Concert` オブジェクトは送出した時点でなくなっている）、同じ対象への
 `lottery_draw_failed` 通知のために `ConcertService.notify_managers_of_draw_failure` を呼び、その後元の例外をそのまま
 再送出する — そのため、失敗の通知と Celery 自身の `FAILURE` のタスクの状態は両方とも起き、どちらかがもう一方を
-置き換えることはない。正常な経路では、`draw_lottery` は今、自身のコミットの直後に
-`ConcertService.notify_managers_of_draw_completion`（`lottery_draw_completed`）も呼ぶ — そのため、抽選が終わったときに
+置き換えることはない。正常な経路では、`draw_lottery_task` が、抽選のコミットの後に
+`ConcertService.notify_managers_of_draw_completion`（`lottery_draw_completed`）も、ベストエフォートの手順として呼ぶ
+（項目 57）— そのため、抽選が終わったときに
 公演の編集ページを見ていなかったマネージャーも、抽選が始まったことや失敗したことだけでなく、実際に完了したという
 永続的な記録を持てる。3 つのマネージャー向けの通知（`lottery_draw_triggered`/`lottery_draw_failed`/
 `lottery_draw_completed`）はすべて `concert_id` だけを持ち — 当選者ごとの詳細は持たない — 実際の結果は

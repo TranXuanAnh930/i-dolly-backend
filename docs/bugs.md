@@ -196,7 +196,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
   (`order_service.py:267`, `ticket_service.py:281`, `product_service.py:477`); manager orders page
   loads every product and order id into memory.
 - [ ] **24.** Draw is O(entries × preferences) plus O(ranks × campaigns × entries).
-- [ ] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
+- [x] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
   `except` notifies managers the draw *failed*. Anything after `commit_or_raise` in `draw_lottery`
   triggers it: the completion notification's own commit, or `delete_cached_concert_detail` when
   Redis is down (#11). Managers see "failed" for a draw that committed, Celery records the task as
@@ -204,6 +204,10 @@ still hold. That pass corrected line references, added the **Review** notes belo
   treat post-commit steps as best-effort (log, don't re-raise) so only errors before the commit
   reach the task's failure path.
   **Fix planned:** `docs/plans/lottery-draw-post-commit.md` (move post-commit steps into the task).
+  **FIXED** (`project_status.md` §4 item 57): `draw_lottery` ends at its commit; `draw_lottery_task`
+  runs the cache clear and the completion notification afterwards, each in its own guard, outside
+  the `try` that leads to the failure notification. The failure notification is guarded too, so it
+  can't mask the original error.
 - [x] **27. Abandoned PayPal marketplace orders stay `pending` forever.** If the fan never approves
   on PayPal, `finalize_paypal_payment` never runs: the order, its payment and its shipping status
   stay `pending` with no deadline or sweep. No stock is held and the cart isn't cleared, so the fan
@@ -273,7 +277,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
 ## Suggested order (updated 2026-11-13)
 
 Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #14 (mitigated), #15, #16,
-#17, #18, #19, #21, #22, #26, #27, #28, #29, and nine code smells.
+#17, #18, #19, #21, #22, #25, #26, #27, #28, #29, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -282,9 +286,8 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #14 (mi
    (done); ~~#29 unauthenticated manager pages~~ (done).
 4. ~~Data integrity and money: #2 product delete wipes order history (migration to `RESTRICT` +
    soft delete or block)~~ (done).
-5. **Planned:** ~~#11 Redis outage handling~~ (done); #25 (plan in
-   `docs/plans/lottery-draw-post-commit.md`). The #11 fix removed one of its two triggers: the
-   draw's post-commit cache clear no longer raises.
+5. ~~**Planned:** #11 Redis outage handling and #25 committed draw reported as failed~~ (both
+   done).
 6. **Auth:** ~~#18, #19~~ (done), then the plaintext-storage half of #20.
 7. **PayPal pending state:** ~~#12, #27~~ (done without a sweep: released on the fan's next
    checkout or on PayPal cancel). Left: #31, #33, and #13 (the cap can only count `confirmed`

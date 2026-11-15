@@ -124,11 +124,10 @@ def _patched_random():
 
 class TestDrawLottery:
 
-    def test_successful_draw_notifies_managers_of_completion(self):
-        """See concert_service.notify_managers_of_draw_completion's own
-        docstring — this is the manager-facing persistent record that the
-        draw actually finished, distinct from lottery_draw_triggered (fired
-        back when it was only scheduled)."""
+    def test_draw_commits_and_leaves_post_commit_steps_to_the_task(self):
+        """bugs.md #25: the draw ends at its commit. Clearing the cache and notifying managers of
+        completion now run in draw_lottery_task, outside the draw's failure path, so a failure in
+        either can never report a committed draw as failed."""
         from app.services.events.lottery_draw_service import LotteryDrawService
 
         concert = make_mock_concert()
@@ -137,10 +136,14 @@ class TestDrawLottery:
         db = make_mock_db(concert=concert, ticket_types=[vip_tt], campaigns=[campaign], preferences=[], entries=[])
         manager = make_mock_user(role="manager", company_id=COMPANY_ID)
 
-        with _patched_random(), patch("app.services.events.lottery_draw_service.ConcertService") as mock_concert_service:
+        with _patched_random(), \
+             patch("app.services.events.concert_service.ConcertService.notify_managers_of_draw_completion") as notify, \
+             patch("app.cache.invalidation.CacheInvalidation.delete_cached_concert_detail") as invalidate:
             LotteryDrawService.draw_lottery(db, manager, CONCERT_ID)
 
-        mock_concert_service.notify_managers_of_draw_completion.assert_called_once_with(db, concert)
+        db.commit.assert_called_once()
+        notify.assert_not_called()
+        invalidate.assert_not_called()
 
     def test_single_preference_entries_under_capacity_all_win(self):
         from app.services.events.lottery_draw_service import LotteryDrawService
