@@ -2,8 +2,8 @@
 
 English | [日本語](lottery-draw-post-commit_JP.md)
 
-**Status:** planned, not started (2026-09-27). Lottery code: to be hand-written; this doc is the
-design only.
+**Status:** done (2026-11-15), see `project_status.md` §4 item 57. Written by hand from this
+design.
 
 ## Problem
 

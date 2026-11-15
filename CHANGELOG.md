@@ -45,6 +45,10 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   Postgres, a write that committed reports success, transactional emails are best-effort (logged
   and dropped when the broker is down), and triggering the lottery draw answers 503. Redis calls
   time out after 1 s (`REDIS_SOCKET_TIMEOUT`), with one retry instead of redis-py's three.
+- **Fixed — a committed lottery draw is no longer reported as failed (#25).** The draw ends at its
+  commit; the task clears the cache and notifies managers of completion afterwards, each step
+  logged and skipped if it fails. A failing failure notification no longer replaces the original
+  error.
 
 ## 1.4.2 — 2026-11-14
 
