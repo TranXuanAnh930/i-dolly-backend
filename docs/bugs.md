@@ -197,9 +197,11 @@ still hold. That pass corrected line references, added the **Review** notes belo
   `get_current_user`, and a `user_or_ip_key` limiter on `get_current_user_optional`, so the order
   of a route's dependencies no longer matters. Listed the wrong way round, `user_key` used to 500
   and `user_or_ip_key` put signed-in users in the guests' IP bucket.
-- [ ] **23.** ~~Paginated pages return `count=len(data)` (page size, not total)~~ — **count fixed**:
-  all five paginated endpoints now return the total across pages. Still open: the manager orders
-  page loads every product and order id into memory (`order_service.py`).
+- [x] **23.** Paginated pages return `count=len(data)` (page size, not total); the manager orders
+  page loaded every product and order id into memory. **FIXED** (`project_status.md` §4 items 60
+  and 62): all five endpoints return the total across pages, and the manager orders page filters,
+  counts and pages in SQL (one subquery for the company's products), loading only the page's orders
+  and their products.
 - [ ] **24.** Draw is O(entries × preferences) plus O(ranks × campaigns × entries).
 - [x] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
   `except` notifies managers the draw *failed*. Anything after `commit_or_raise` in `draw_lottery`

@@ -1,12 +1,23 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import case, func, or_, select, union_all
+from sqlalchemy.orm import Query, Session, selectinload
 
 from app.cache.invalidation import CacheInvalidation
 from app.db.models.identity import Users
-from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product, ShippingAddress, ShippingStatus
+from app.db.models.marketplace import (
+    AlbumDetail,
+    Cart,
+    MerchDetail,
+    Order,
+    OrderItem,
+    Payment,
+    Product,
+    ShippingAddress,
+    ShippingStatus,
+)
+from app.db.models.talent import Group, Idol
 from app.exception.checkout import (
     AddressIdError,
     CartItemError,
@@ -274,25 +285,39 @@ class OrderService:
     # every company).
 
     @staticmethod
-    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> ManagerOrdersPageRead:
-        products = db.query(Product).all()
+    def _company_products_query(db: Session, company_id: uuid.UUID | None) -> Query:
+        """(id, name) of the products a company's orders may show: its own and ownerless ones (all
+        of them when company_id is None). The owner is the detail row's idol, else its group."""
+        query = db.query(Product.id, Product.name)
         if company_id is None:
-            relevant_ids = {p.id for p in products}
-        else:
-            company_by_product = ProductService.resolve_product_company_ids(db, products)
-            relevant_ids = {pid for pid, cid in company_by_product.items() if cid in (None, company_id)}
+            return query
+        details = union_all(
+            select(AlbumDetail.product_id, AlbumDetail.idol_id, AlbumDetail.group_id),
+            select(MerchDetail.product_id, MerchDetail.idol_id, MerchDetail.group_id),
+        ).subquery()
+        owner = case(
+            (details.c.idol_id.isnot(None), Idol.company_id),
+            (details.c.group_id.isnot(None), Group.company_id),
+            else_=None,
+        )
+        return (
+            query.outerjoin(details, details.c.product_id == Product.id)
+            .outerjoin(Idol, Idol.id == details.c.idol_id)
+            .outerjoin(Group, Group.id == details.c.group_id)
+            .filter(or_(owner.is_(None), owner == company_id))
+        )
 
-        if not relevant_ids:
-            return ManagerOrdersPageRead(page=page, limit=limit, count=0, data=[])
-
-        order_ids = [
-            row[0] for row in
-            db.query(OrderItem.order_id).filter(OrderItem.product_id.in_(relevant_ids)).distinct().all()
-        ]
+    @staticmethod
+    def get_manager_orders_page(db: Session, company_id: uuid.UUID | None, page: int = 1, limit: int = 10) -> ManagerOrdersPageRead:
+        relevant = OrderService._company_products_query(db, company_id)
+        visible = db.query(Order.id).filter(
+            Order.id.in_(db.query(OrderItem.order_id).filter(OrderItem.product_id.in_(relevant.with_entities(Product.id).scalar_subquery())))
+        )
+        total = visible.count()
         offset = (page - 1) * limit
         orders = (
             db.query(Order)
-            .filter(Order.id.in_(order_ids))
+            .filter(Order.id.in_(visible.scalar_subquery()))
             .options(selectinload(Order.items), selectinload(Order.user_item), selectinload(Order.shippingstatus))
             .order_by(Order.created_at.desc())
             .offset(offset)
@@ -300,7 +325,10 @@ class OrderService:
             .all()
         )
 
-        products_by_id = {p.id: p for p in products}
+        # Only the products on this page's lines are loaded.
+        page_product_ids = {item.product_id for order in orders for item in order.items}
+        names = dict(relevant.filter(Product.id.in_(page_product_ids)).all()) if page_product_ids else {}
+        relevant_ids = set(names)
         data = []
         for order in orders:
             # Only this company's line items are shown.
@@ -314,7 +342,7 @@ class OrderService:
                 items=[
                     ManagerOrderItemRead(
                         product_id=item.product_id,
-                        product_name=products_by_id[item.product_id].name if item.product_id in products_by_id else "",
+                        product_name=names[item.product_id],
                         quantity=item.quantity,
                         price=item.price,
                     )
@@ -324,6 +352,4 @@ class OrderService:
                 shippingstatus=order.shippingstatus,
             ))
 
-        # count is the total across all pages (order_ids is every order the company can see), not
-        # this page's length.
-        return ManagerOrdersPageRead(page=page, limit=limit, count=len(order_ids), data=data)
+        return ManagerOrdersPageRead(page=page, limit=limit, count=total, data=data)
