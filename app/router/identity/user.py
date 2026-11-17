@@ -38,8 +38,10 @@ def change_password(payload:ChangePasswordRequest, user:Users=Depends(get_curren
     response.set_cookie("refresh_token", token["refresh_token"], httponly=True, secure=True, samesite="none")
     return response
 
+# The per-IP limit sits above the per-email one (3/hour), so one user retrying gets the per-email
+# 429 and its code; the per-IP limit only stops scripting many addresses from one IP.
 @router.post("/forgot-password", response_model=MessageResponse)
-def forgot_password(payload:ForgotPasswordRequest, _:None=Depends(rate_limit(3,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
+def forgot_password(payload:ForgotPasswordRequest, _:None=Depends(rate_limit(8,60,ip_key)), db:Session=Depends(get_db)) -> MessageResponse:
     # Per-email limit, counted the same for registered and unregistered addresses.
     if forgot_password_limit_exceeded(payload.email):
         raise ApiHTTPException(status_code=429, detail="Too many password reset requests. Please try again later.", code="too_many_reset_requests")

@@ -67,6 +67,8 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   also for a deactivated product.
 - **Fixed — a PayPal failure at checkout answers 502 `payment_gateway_unavailable` (#36)** instead
   of an unhandled 500; nothing is created. Capture and the webhook are not covered yet.
+- **Fixed — the forgot-password per-email message is reachable (#35).** The route's per-IP limit is
+  8/min instead of 3/min, so a user retrying gets `too_many_reset_requests`.
 
 ## 1.4.2 — 2026-11-14
 

@@ -91,3 +91,29 @@ def test_forgot_password_is_limited_per_email_across_ips(reset, monkeypatch):
     assert statuses == [200] * FORGOT_PASSWORD_LIMIT + [429]
     assert reset.call_count == FORGOT_PASSWORD_LIMIT
     assert forgot("other@example.com", "198.51.100.200").status_code == 200
+
+
+@patch("app.router.identity.user.UserService.reset_password_process", return_value=True)
+def test_forgot_password_from_one_ip_reaches_the_per_email_limit(reset, monkeypatch):
+    # bugs.md #35: one user retrying quickly from one network gets the per-email 429 and its code,
+    # not the per-IP limit.
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 1)
+    headers = {"X-Forwarded-For": "198.51.100.7"}
+
+    responses = [client.post("/profile/forgot-password", json={"email": "fan@example.com"}, headers=headers)
+                 for _ in range(FORGOT_PASSWORD_LIMIT + 1)]
+
+    assert [r.status_code for r in responses] == [200] * FORGOT_PASSWORD_LIMIT + [429]
+    assert responses[-1].json()["code"] == "too_many_reset_requests"
+
+
+@patch("app.router.identity.user.UserService.reset_password_process", return_value=True)
+def test_forgot_password_per_ip_limit_still_stops_many_addresses(reset, monkeypatch):
+    # Guard: 8 requests per minute per IP, whatever the email.
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 1)
+    headers = {"X-Forwarded-For": "198.51.100.8"}
+
+    statuses = [client.post("/profile/forgot-password", json={"email": f"user{i}@example.com"}, headers=headers).status_code
+                for i in range(9)]
+
+    assert statuses == [200] * 8 + [429]

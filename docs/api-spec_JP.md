@@ -244,7 +244,7 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 - リクエスト（`ForgotPasswordRequest`）: `email`
 - レスポンス: `{"msg": "reset link sent successfully"}`
 - UI:「パスワードをお忘れですか？」のフロー、ステップ 1。メールアドレスごとに 1 時間あたり 3 回までで、それを
-  超えると 429 `too_many_reset_requests`。
+  超えると 429 `too_many_reset_requests`。さらに IP ごとに毎分 8 回まで（429 `rate_limited`）。
 
 ### `POST /profile/set-password` 🔓
 メールで送られたリンクのトークンを使ってパスワードリセットを完了する。

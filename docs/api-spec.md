@@ -249,7 +249,7 @@ Confirm an email via the token from the verification link.
 - Request (`ForgotPasswordRequest`): `email`
 - Response: `{"msg": "reset link sent successfully"}`
 - UI: "Forgot password?" flow, step 1. Limited to 3 requests per email per hour, then 429
-  `too_many_reset_requests`.
+  `too_many_reset_requests`; also 8 requests per minute per IP (429 `rate_limited`).
 
 ### `POST /profile/set-password` 🔓
 Complete a password reset using the token from the emailed link.
