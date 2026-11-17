@@ -53,6 +53,11 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   counts confirmed and pending orders and ignores cancelled ones (a declined payment, an
   abandoned PayPal checkout), in the checkout and in the database trigger. Migration
   `e8b4d6f0a2c5`.
+- **Fixed — a PayPal capture whose goods are gone fails cleanly (#31, #33).** If the tier sold out,
+  the product ran short, or the product was taken off sale after the fan approved on PayPal, the
+  payment now fails, the ticket or order is released, nothing is captured, and the capture
+  endpoint answers 200 with `status: "failed"` (before: a 404 that left it pending, or a capture
+  of a product that was off sale).
 
 ## 1.4.2 — 2026-11-14
 

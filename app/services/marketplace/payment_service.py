@@ -133,10 +133,14 @@ class PaymentService:
     # helpers). A pending checkout holds no stock or seat, so cancelling only changes statuses.
 
     @staticmethod
-    def cancel_pending_paypal_payment(db: Session, payment: Payment) -> None:
-        """Cancel a PayPal payment that is still pending, together with what it was paying for: a
-        direct-sale ticket, or an order and its shipping status. The caller has already locked
-        `payment` and checked that it's a pending PayPal payment. Doesn't commit.
+    def cancel_pending_paypal_payment(
+        db: Session, payment: Payment, final_status: PaymentStatus = PaymentStatus.cancelled
+    ) -> None:
+        """End a PayPal payment that is still pending, together with what it was paying for: a
+        direct-sale ticket, or an order and its shipping status. The payment ends as `cancelled`
+        (the fan backed out) or, with `final_status=failed`, as failed (it can no longer be
+        captured). The caller has already locked `payment` and checked that it's a pending PayPal
+        payment. Doesn't commit.
 
         Nothing else needs undoing: stock and sold_quantity only change when a payment is captured,
         and a cancelled payment can't be captured later, because finalize_paypal_payment only
@@ -174,9 +178,21 @@ class PaymentService:
                 if shipstatus:
                     shipstatus.status = SchemaShipStatus.cancelled
                     shipstatus.updated_at = datetime.now(timezone.utc)
-        payment.status = PaymentStatus.cancelled
+        payment.status = final_status
         db.flush()  # caller commits
         return None
+
+    @staticmethod
+    def _fail_uncapturable_payment(db: Session, payment: Payment) -> Payment:
+        """The fan approved on PayPal, but what they were paying for can't be had any more (sold
+        out, or the product was taken off sale). Nothing was captured, so no money moved: fail the
+        payment, release the ticket or order, and commit. The payment comes back with status
+        `failed`, so the capture endpoint answers like it does for a declined capture, instead of
+        a 404 that leaves the ticket or order pending.
+        """
+        PaymentService.cancel_pending_paypal_payment(db, payment, PaymentStatus.failed)
+        commit_or_raise(db)
+        return payment
 
     @staticmethod
     def cancel_paypal_payment(db: Session, pg_order_id: str, user_id: uuid.UUID) -> Payment | None:
@@ -215,7 +231,7 @@ class PaymentService:
             if not ticket_type:
                 return None
             if ticket_type.sale_method == SaleMethod.direct and ticket_type.total_quantity - ticket_type.sold_quantity <= 0:
-                return None
+                return PaymentService._fail_uncapturable_payment(db, payment)
             elif ticket_type.sale_method == SaleMethod.lottery:
                 if ticket.payment_deadline_at and ticket.payment_deadline_at < datetime.now(timezone.utc):
                     # Past the deadline: expire the ticket and release its seat.
@@ -250,10 +266,14 @@ class PaymentService:
             products = db.query(Product).filter(Product.id.in_(product_ids)).with_for_update().all()
             if len(order_items) == 0 or len(products) == 0:
                 return None
+            # A product taken off sale after the fan ordered it, or short on stock by now, can't be
+            # captured: fail the payment and release the order instead of leaving it pending.
+            if any(not product.is_active for product in products):
+                return PaymentService._fail_uncapturable_payment(db, payment)
             for product in products:
                 item = next((order_item for order_item in order_items if order_item.product_id == product.id), None)
                 if product.quantity < item.quantity:
-                    return None
+                    return PaymentService._fail_uncapturable_payment(db, payment)
             paypal_payment = capture_order(pg_order_id)
             if paypal_payment["status"] == "COMPLETED":
                 payment.status = PaymentStatus.success

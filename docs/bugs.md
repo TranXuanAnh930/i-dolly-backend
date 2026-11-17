@@ -223,25 +223,29 @@ still hold. That pass corrected line references, added the **Review** notes belo
   their own pending PayPal orders, and the cancel endpoint cancels one when they back out on
   PayPal. Orders left by a fan who never returns still stay `pending`; they block nothing. They
   still count toward the resale cap (#13), until that fan's next checkout cancels them.
-- [ ] **31. Stock gone between PayPal approval and capture leaves everything pending.** When the
+- [x] **31. Stock gone between PayPal approval and capture leaves everything pending.** When the
   tier is sold out or a product is short at capture time, `finalize_paypal_payment` returns `None`
   without changing anything (`payment_service.py:142`, `:180`): the fan, who already approved on
   PayPal, gets a 404, and the ticket or order stays `pending`. Nothing was captured, so no money
   is lost, but it feeds #12 and #27. Mark the payment failed and cancel the ticket/order instead.
   Found in the 2026-11-13 review.
+  **FIXED** (`project_status.md` §4 item 59): the payment fails, the ticket or order (and its
+  shipping status) is cancelled, nothing is captured, and the endpoint answers 200 with
+  `status: "failed"`, like a declined capture.
 - [ ] **32. Capture success is read from the order status only.** `finalize_paypal_payment` treats
   the capture response's top-level `status == "COMPLETED"` as paid (`payment_service.py:154`,
   `:183`) and never reads the capture's own status
   (`purchase_units[].payments.captures[].status`), which can be `PENDING` or `DECLINED` on a
   completed order. Not reproduced against the sandbox. Check the capture status too.
   Found in the 2026-11-13 review.
-- [ ] **33. A pending PayPal order can still be captured after its product is deactivated.**
+- [x] **33. A pending PayPal order can still be captured after its product is deactivated.**
   Applies once products are soft-deleted (#2). `finalize_paypal_payment` re-checks stock before
   capturing but not whether the product is still on sale, so an order placed while the product was
   active is captured and confirmed after a manager deactivates it. Left as is for now: the fan
   ordered while it was on sale, and stock is still enforced. To fix later, with the other PayPal
   pending-state items (#27, #31): treat an inactive product at capture like missing stock — fail
   the payment and cancel the order instead of capturing. Noted 2026-11-14.
+  **FIXED** (`project_status.md` §4 item 59), together with #31 through the same code path.
 - [x] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
   `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
   `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
@@ -282,7 +286,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
 ## Suggested order (updated 2026-11-13)
 
 Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #14 (mitigated), #15,
-#16, #17, #18, #19, #21, #22, #25, #26, #27, #28, #29, and nine code smells.
+#16, #17, #18, #19, #21, #22, #25, #26, #27, #28, #29, #31, #33, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -295,9 +299,9 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #1
    done).
 6. **Auth:** ~~#18, #19~~ (done), then the plaintext-storage half of #20.
 7. **PayPal pending state:** ~~#12, #27~~ (done without a sweep: released on the fan's next
-   checkout or on PayPal cancel), ~~#13~~ (the cap ignores cancelled orders). Left: #31, #33. A
-   scheduled sweep is still needed for unpaid lottery wins, which do hold seats
-   (`project_status.md` §8).
+   checkout or on PayPal cancel), ~~#13~~ (the cap ignores cancelled orders), ~~#31, #33~~ (a
+   capture whose goods are gone fails the payment). A scheduled sweep is still needed for unpaid
+   lottery wins, which do hold seats (`project_status.md` §8).
 8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
    #32.
 9. **Whenever convenient:** ~~#22~~ (done), #23, #24.
