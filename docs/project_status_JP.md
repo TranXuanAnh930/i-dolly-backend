@@ -1212,6 +1212,18 @@ HTTP で機能を動かし（登録 → パスワードリセットを要求 →
     - **テスト:** 商品と注文のページの合計の検証をユニットと結合に追加。2 つの `send_task` の検証は新しいオプションを確認する。
     - 確認: ユニットテスト 672 件と結合テスト 452 件が成功、ruff も問題なし。
 
+61. **注文明細の商品名と PayPal ゲートウェイのエラー**（`bugs_JP.md` #34、#36。#35 は記録のみで未決定）。
+    - 注文のレスポンスの `OrderItem` に `product_name` が加わった。モデルのプロパティが商品の行を読むので、無効化された
+      商品もファンの過去の注文で名前を保つ。ファン向けの 2 つの注文クエリは、明細と一緒に商品を読み込む。
+    - `PaymentService._create_paypal_order` が `httpx.HTTPError` を `PaymentGatewayError`
+      （`app/exception/checkout.py`、502、`payment_gateway_unavailable`）に変え、アプリ全体のハンドラーが応答する。
+      共有している注文、チケット、抽選の購入手続きすべてに効く。リクエストは何もコミットされる前に中断され、カートと在庫は
+      変わらない。`capture_order` と Webhook は、まだ `httpx` のエラーをそのまま出す。
+    - **テスト:** `tests/integration/marketplace/test_order_item_name_and_gateway.py`（3 つの注文エンドポイントの名前、
+      無効化後の名前、接続エラーと 401 がそれぞれ、注文・決済・カートの変更なしで 502 になる）。
+    - 確認: ユニットテスト 673 件と結合テスト 456 件が成功、ruff も問題なし。
+    - フロントエンド: `docs/frontend-tasks/order-item-name-and-gateway-error_JP.md`。
+
 ## 5. 意図的に延期したもの — 次のフェーズで、忘れてはいない
 
 - ~~**グループ／アイドルの CRUD の成功の経路の結合テストのカバレッジ**~~ — **完了**:

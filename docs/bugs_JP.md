@@ -227,6 +227,19 @@
   pending 状態に関する他の項目（#27、#31）とあわせて修正する: キャプチャ時に無効な商品を在庫不足と同じように
   扱い、キャプチャせずに決済を失敗にして注文をキャンセルする。2026-11-14 に記録。
   **修正済み**（`project_status_JP.md` §4 の項目 59）。#31 と同じコードの経路で、あわせて修正した。
+- [x] **34. ファンの注文明細に商品名がない。** `OrderItem`（`schema/marketplace/order.py`）は ID、数量、価格しか返さず、
+  無効化された商品（ストアの一覧になく、詳細は 404）は、ファンの過去の注文で「Unknown product」と表示された。
+  フロントエンドの本物のバックエンドに対する e2e で見つかった（2026-11-17）。**修正済み**（`project_status_JP.md` §4
+  項目 61）: すべての注文明細に `product_name` を追加。`is_active` に関係なく商品の行から読む。
+- [ ] **35. パスワード忘れの IP 単位の制限が、メール単位の制限より先に働く。**
+  `POST /profile/forgot-password` は依存性として `rate_limit(3, 60, ip_key)` を持つので、同じネットワークからは 1 分以内の
+  4 回目が IP 単位の 429（`code` なし）になり、メール単位の `too_many_reset_requests` はほぼ到達できない。どちらも拒否
+  するので安全で、違うのはメッセージだけ。選択肢: このルートの IP 単位の上限を上げる（毎分 5〜10 回）、またはメールを先に
+  確認する。判断が必要。2026-11-17 に発見。
+- [x] **36. チェックアウト時の PayPal の失敗が、処理されない 500 だった。** `create_order` が `httpx.HTTPError` を
+  そのまま出していた。**注文の作成については修正済み**（`project_status_JP.md` §4 項目 61）: 502
+  `payment_gateway_unavailable` になり、何も作られない。`capture_order` と Webhook の検証は、まだ `httpx` の
+  エラーをそのまま出す。2026-11-17 に発見。
 - [x] **29. `manager-*-page` の読み取りに認証もサーバー側の事務所スコープもない。**
   `GET /concerts/manager-events-page`、`/groups/manager-groups-page`、`/idols/manager-idols-page`、
   `/idols/manager-idol-form-page`、`/products/manager-products-page`、`/products/manager-product-form-page` は認証の

@@ -17,6 +17,8 @@ class OrderItem(BaseModel):
     product_id : uuid.UUID
     quantity : int
     price : float
+    # From the product row, whether or not it is still on sale.
+    product_name : str
 
     model_config = {"from_attributes" : True}
 

@@ -63,6 +63,10 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
 - **Fixed — a down Celery broker no longer hangs email and lottery-draw requests.** They fail in
   about 6 s and are logged (email) or answered 503 (draw).
 - `redis` restarts with `unless-stopped` in `docker-compose.yaml`.
+- **Fixed — fan order items carry the product name (#34).** `product_name` on each order item,
+  also for a deactivated product.
+- **Fixed — a PayPal failure at checkout answers 502 `payment_gateway_unavailable` (#36)** instead
+  of an unhandled 500; nothing is created. Capture and the webhook are not covered yet.
 
 ## 1.4.2 — 2026-11-14
 

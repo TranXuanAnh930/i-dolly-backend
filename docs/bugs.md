@@ -246,6 +246,21 @@ still hold. That pass corrected line references, added the **Review** notes belo
   pending-state items (#27, #31): treat an inactive product at capture like missing stock — fail
   the payment and cancel the order instead of capturing. Noted 2026-11-14.
   **FIXED** (`project_status.md` §4 item 59), together with #31 through the same code path.
+- [x] **34. Fan order items have no product name.** `OrderItem` (`schema/marketplace/order.py`)
+  carried ids, quantity and price only, so a deactivated product (gone from the store list, its
+  detail a 404) showed as "Unknown product" in a fan's past orders. Found by the frontend's live
+  e2e run, 2026-11-17. **FIXED** (`project_status.md` §4 item 61): `product_name` on every order
+  item, read from the product row whatever its `is_active`.
+- [ ] **35. The forgot-password per-IP limit fires before the per-email one.**
+  `POST /profile/forgot-password` has `rate_limit(3, 60, ip_key)` as a dependency, so from one
+  network a 4th request within a minute gets the per-IP 429 (no `code`) and the per-email
+  `too_many_reset_requests` is nearly unreachable. Both refuse, so it is safe; only the message
+  differs. Options: raise the per-IP limit on this route (5–10/min), or check the email first.
+  Needs a decision. Found 2026-11-17.
+- [x] **36. A PayPal failure at checkout was an unhandled 500.** `create_order` let
+  `httpx.HTTPError` escape. **FIXED for order creation** (`project_status.md` §4 item 61): it is a
+  502 `payment_gateway_unavailable`, with nothing created. `capture_order` and the webhook
+  verification still raise bare `httpx` errors. Found 2026-11-17.
 - [x] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
   `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
   `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
