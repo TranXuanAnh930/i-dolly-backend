@@ -219,8 +219,9 @@ class TestFinalizePaypalPayment:
         return ticket
 
     def _mock_payment(self, ticket_id=None, order_id=None, user_id=DEFAULT_ID):
-        from app.schema.marketplace import PaymentStatus
+        from app.schema.marketplace import PaymentGateway, PaymentStatus
         payment = MagicMock()
+        payment.payment_gateway = PaymentGateway.paypal
         payment.id = DEFAULT_ID
         payment.ticket_id = ticket_id
         payment.order_id = order_id
@@ -420,25 +421,9 @@ class TestFinalizePaypalPayment:
         mock_invalidate.assert_called_once()
         assert result == payment
 
-    def test_order_insufficient_stock_returns_none(self):
+    def _order_db(self, payment, order, order_item, product):
         from app.db.models.events import Ticket
         from app.db.models.marketplace import Order, OrderItem, Payment, Product
-        from app.schema.marketplace import OrderStatus
-        from app.services.marketplace.payment_service import PaymentService
-
-        payment = self._mock_payment(order_id=DEFAULT_ID)
-        order = MagicMock()
-        order.id = DEFAULT_ID
-        order.user_id = DEFAULT_ID
-        order.status = OrderStatus.pending
-
-        order_item = MagicMock()
-        order_item.product_id = OTHER_ID
-        order_item.quantity = 100  # more than in stock
-
-        product = MagicMock()
-        product.id = OTHER_ID
-        product.quantity = 1
 
         db = MagicMock()
 
@@ -457,9 +442,97 @@ class TestFinalizePaypalPayment:
             return q
 
         db.query.side_effect = query_side_effect
+        return db
 
-        result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
-        assert result is None
+    def _pending_order_with(self, quantity, stock, is_active=True):
+        from app.schema.marketplace import OrderStatus
+
+        order = MagicMock()
+        order.id = DEFAULT_ID
+        order.user_id = DEFAULT_ID
+        order.status = OrderStatus.pending
+        order_item = MagicMock()
+        order_item.product_id = OTHER_ID
+        order_item.quantity = quantity
+        product = MagicMock()
+        product.id = OTHER_ID
+        product.quantity = stock
+        product.is_active = is_active
+        return order, order_item, product
+
+    def test_order_insufficient_stock_fails_the_payment_and_cancels_the_order(self):
+        # bugs.md #31: used to return None, leaving the fan with a 404 and the order pending.
+        from app.schema.marketplace import OrderStatus, PaymentStatus
+        from app.services.marketplace.payment_service import PaymentService
+
+        payment = self._mock_payment(order_id=DEFAULT_ID)
+        order, order_item, product = self._pending_order_with(quantity=100, stock=1)
+        db = self._order_db(payment, order, order_item, product)
+
+        with patch("app.services.marketplace.payment_service.capture_order") as capture:
+            result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
+
+        assert result is payment
+        assert payment.status == PaymentStatus.failed
+        assert order.status == OrderStatus.cancelled
+        assert product.quantity == 1
+        capture.assert_not_called()
+        db.commit.assert_called_once()
+
+    def test_order_with_a_deactivated_product_fails_the_payment_and_cancels_the_order(self):
+        # bugs.md #33: the fan ordered while the product was on sale; it was taken off since.
+        from app.schema.marketplace import OrderStatus, PaymentStatus
+        from app.services.marketplace.payment_service import PaymentService
+
+        payment = self._mock_payment(order_id=DEFAULT_ID)
+        order, order_item, product = self._pending_order_with(quantity=1, stock=10, is_active=False)
+        db = self._order_db(payment, order, order_item, product)
+
+        with patch("app.services.marketplace.payment_service.capture_order") as capture:
+            result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
+
+        assert result is payment
+        assert payment.status == PaymentStatus.failed
+        assert order.status == OrderStatus.cancelled
+        assert product.quantity == 10
+        capture.assert_not_called()
+
+    def test_ticket_direct_sold_out_fails_the_payment_and_cancels_the_ticket(self):
+        # bugs.md #31, tickets: the tier sold out while the fan was on PayPal.
+        from app.db.models.events import Ticket, TicketType
+        from app.db.models.marketplace import Payment
+        from app.schema.events.ticket import TicketStatus
+        from app.schema.marketplace import PaymentStatus
+        from app.services.marketplace.payment_service import PaymentService
+
+        payment = self._mock_payment(ticket_id=DEFAULT_ID)
+        ticket = self._mock_ticket()
+        ticket_type = self._mock_ticket_type(sale_method="direct", total_quantity=10, sold_quantity=10)
+        db = MagicMock()
+
+        def query_side_effect(model):
+            q = MagicMock()
+            if model is Payment:
+                q.filter.return_value.with_for_update.return_value.first.return_value = payment
+            elif model is Ticket:
+                q.filter.return_value.with_for_update.return_value.first.return_value = ticket
+                # cancel_pending_paypal_payment re-selects the ticket through its ticket type
+                q.join.return_value.filter.return_value.with_for_update.return_value.first.return_value = ticket
+            elif model is TicketType:
+                q.filter.return_value.with_for_update.return_value.first.return_value = ticket_type
+            return q
+
+        db.query.side_effect = query_side_effect
+
+        with patch("app.services.marketplace.payment_service.capture_order") as capture:
+            result = PaymentService.finalize_paypal_payment(db, "PAYPAL-ORDER-1")
+
+        assert result is payment
+        assert payment.status == PaymentStatus.failed
+        assert ticket.status == TicketStatus.cancelled
+        assert ticket_type.sold_quantity == 10
+        capture.assert_not_called()
+        db.commit.assert_called_once()
 
     def test_order_declined_cancels(self):
         from app.db.models.events import Ticket

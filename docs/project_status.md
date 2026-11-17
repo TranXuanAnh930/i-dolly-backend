@@ -1370,6 +1370,29 @@ newly introduced.
       their own cap until their next checkout. The comparison uses `!=`, so an order with a `NULL`
       status (impossible through the ORM) would not count.
 
+59. ~~**A PayPal capture whose goods were gone left the ticket or order pending**~~ (`bugs.md` #31,
+    #33) — **FIXED**.
+    - `finalize_paypal_payment` re-checks availability before capturing, but when the direct-sale
+      tier had sold out or a product was short it returned `None`: the fan, who had already
+      approved on PayPal, got a 404 and the ticket or order stayed `pending`. A product taken off
+      sale (item 51) wasn't checked at all, so the order was captured and confirmed.
+    - Now all three cases go through `PaymentService._fail_uncapturable_payment`: it ends the payment
+      as `failed` and releases the ticket or order and its shipping status (the same helper as the
+      PayPal cancel, item 55, which gained a `final_status` argument), commits, and returns the
+      payment. Nothing is captured, so no money moves, and the endpoint answers 200 with
+      `status: "failed"` like a declined capture. A lottery win is untouched: its seat was counted
+      at the draw, so a full tier is normal there. A later capture or webhook finds the payment no
+      longer pending and does nothing.
+    - **Tests:** `tests/integration/marketplace/test_paypal_capture_unavailable.py` (sold-out
+      tier, short stock, deactivated product, each with PayPal never called and the stock
+      unchanged; guards for a normal ticket and order capture, a fully allocated lottery tier and a
+      declined capture), and three unit tests in `test_payment_service.py`. The three feature
+      tests fail against the old code.
+    - Verified: 672 unit and 452 integration tests pass against local Postgres and Redis, ruff
+      clean.
+    - **Known limitation:** the response has no reason field, so the frontend can't tell "sold out"
+      from a declined capture. Frontend task: `docs/frontend-tasks/paypal-capture-failed.md`.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:

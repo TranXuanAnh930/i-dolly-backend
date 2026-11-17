@@ -1168,7 +1168,11 @@ Everything below only applies when `gateway="paypal"` was passed to `POST /order
    same value as `pg_order_id`) and `PayerID` as query params.
 5. **Capture** — the frontend route from step 4 calls `POST /payment/paypal/capture/{pg_order_id}`
    (using the `token` query param as `pg_order_id`) 🔒 fan. Response is the updated
-   `PaymentResponse` — `status` is now `"success"` or `"failed"`.
+   `PaymentResponse` — `status` is now `"success"` or `"failed"`. `"failed"` covers a declined
+     capture, and also a payment that can't be captured because what it paid for is gone: the ticket
+     tier sold out, the product ran short, or the product was taken off sale since the fan ordered.
+     In those cases nothing was captured, no money moved, and the ticket or order is already
+     `"cancelled"`, so the frontend should refresh its copy of it. The response has no reason field.
    - `404` here means: not found, already resolved (e.g. the webhook below beat this call to it —
      treat that as a normal race, not an error to surface), or the payment doesn't belong to the
      caller.
