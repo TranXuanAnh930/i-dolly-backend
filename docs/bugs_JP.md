@@ -68,6 +68,9 @@
   こちらのコミットが失敗した場合 → 課金済みなのに DB は `pending`。Webhook が再び `capture_order` を呼ぶ → 422 already
   captured → 500 → 3 日間リトライされ、決して解決しない。Webhook は再キャプチャするのではなく、イベントを適用すべき。
   #30、#32 とあわせて設計する（同じ関数、同じ PayPal 呼び出し）。
+  #36 の残りもここで扱う: `capture_order` と `verify_webhook_signature` は `httpx` のエラーを処理されない 500 として
+  出す。購入手続きのような単純な 502 にはできない: タイムアウトしたキャプチャはファンに課金済みかもしれず、
+  `ORDER_NOT_APPROVED` / `ORDER_ALREADY_CAPTURED` は個別の処理が必要なので、何を返すかは PayPal との突き合わせ次第。
 
 ## 🟠 高
 
@@ -240,8 +243,8 @@
   毎分 8 回にしたので、1 人のユーザーの 4 回目は `too_many_reset_requests` になる。
 - [x] **36. チェックアウト時の PayPal の失敗が、処理されない 500 だった。** `create_order` が `httpx.HTTPError` を
   そのまま出していた。**注文の作成については修正済み**（`project_status_JP.md` §4 項目 61）: 502
-  `payment_gateway_unavailable` になり、何も作られない。`capture_order` と Webhook の検証は、まだ `httpx` の
-  エラーをそのまま出す。2026-11-17 に発見。
+  `payment_gateway_unavailable` になり、何も作られない。キャプチャと Webhook の側は、何を返すかが突き合わせ次第なので
+  #8 に含めた。2026-11-17 に発見。
 - [x] **29. `manager-*-page` の読み取りに認証もサーバー側の事務所スコープもない。**
   `GET /concerts/manager-events-page`、`/groups/manager-groups-page`、`/idols/manager-idols-page`、
   `/idols/manager-idol-form-page`、`/products/manager-products-page`、`/products/manager-product-form-page` は認証の
@@ -293,5 +296,5 @@
 7. **PayPal の pending 状態:** ~~#12、#27~~（掃除処理なしで完了: ファンの次の購入手続きか、PayPal でのキャンセルで
    解放する）、~~#13~~（上限はキャンセルされた注文を無視する）、~~#31、#33~~（商品がなくなったキャプチャは決済を
    失敗にする）。席を確保する未払いの抽選の当選には、引き続き定期的な掃除処理が必要（`project_status_JP.md` §8）。
-8. **先に設計が必要:** #8 ロック中の PayPal キャプチャ／Webhook の突き合わせ、#30 と #32 もあわせて。
+8. **先に設計が必要:** #8 ロック中の PayPal キャプチャ／Webhook の突き合わせ、#30、#32、#36 のキャプチャ側もあわせて。
 9. **都合のよいときに:** ~~#22、#23~~（完了）、#24。

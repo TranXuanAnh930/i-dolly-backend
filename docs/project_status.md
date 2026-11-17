@@ -1417,7 +1417,7 @@ newly introduced.
       (`app/exception/checkout.py`, 502, `payment_gateway_unavailable`), answered by an app-level
       handler. It covers the order, ticket and lottery checkouts, which share it. The request
       aborts before anything is committed; the cart and stock are untouched. `capture_order` and the
-      webhook still raise bare `httpx` errors.
+      webhook still raise bare `httpx` errors; that half is folded into `bugs.md` #8.
     - **Tests:** `tests/integration/marketplace/test_order_item_name_and_gateway.py` (name on the
       three order endpoints, name after deactivation, a connection error and a 401 each give 502
       with no order, payment or cart change).

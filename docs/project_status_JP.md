@@ -1218,7 +1218,7 @@ HTTP で機能を動かし（登録 → パスワードリセットを要求 →
     - `PaymentService._create_paypal_order` が `httpx.HTTPError` を `PaymentGatewayError`
       （`app/exception/checkout.py`、502、`payment_gateway_unavailable`）に変え、アプリ全体のハンドラーが応答する。
       共有している注文、チケット、抽選の購入手続きすべてに効く。リクエストは何もコミットされる前に中断され、カートと在庫は
-      変わらない。`capture_order` と Webhook は、まだ `httpx` のエラーをそのまま出す。
+      変わらない。`capture_order` と Webhook は、まだ `httpx` のエラーをそのまま出す（この部分は `bugs_JP.md` #8 に含めた）。
     - **テスト:** `tests/integration/marketplace/test_order_item_name_and_gateway.py`（3 つの注文エンドポイントの名前、
       無効化後の名前、接続エラーと 401 がそれぞれ、注文・決済・カートの変更なしで 502 になる）。
     - 確認: ユニットテスト 673 件と結合テスト 456 件が成功、ruff も問題なし。

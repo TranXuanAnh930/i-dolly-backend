@@ -73,6 +73,10 @@ still hold. That pass corrected line references, added the **Review** notes belo
   fails → charged, DB `pending`. The webhook re-calls `capture_order` → 422 already captured →
   500 → retried for 3 days, never resolves. Webhook should apply the event, not re-capture.
   Design it together with #30 and #32 (same function, same PayPal calls).
+  Also covers the rest of #36: `capture_order` and `verify_webhook_signature` let `httpx` errors
+  escape as a bare 500. Not a simple 502 like checkout: a capture that times out may have
+  charged the fan, and `ORDER_NOT_APPROVED` / `ORDER_ALREADY_CAPTURED` need their own handling,
+  so the answer depends on reconciling with PayPal.
 
 ## 🟠 High
 
@@ -262,8 +266,8 @@ still hold. That pass corrected line references, added the **Review** notes belo
   8/min, so one user's 4th request gets `too_many_reset_requests`.
 - [x] **36. A PayPal failure at checkout was an unhandled 500.** `create_order` let
   `httpx.HTTPError` escape. **FIXED for order creation** (`project_status.md` §4 item 61): it is a
-  502 `payment_gateway_unavailable`, with nothing created. `capture_order` and the webhook
-  verification still raise bare `httpx` errors. Found 2026-11-17.
+  502 `payment_gateway_unavailable`, with nothing created. The capture and webhook half is folded
+  into #8, since what to answer there depends on reconciliation. Found 2026-11-17.
 - [x] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
   `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
   `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
@@ -320,6 +324,6 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #1
    checkout or on PayPal cancel), ~~#13~~ (the cap ignores cancelled orders), ~~#31, #33~~ (a
    capture whose goods are gone fails the payment). A scheduled sweep is still needed for unpaid
    lottery wins, which do hold seats (`project_status.md` §8).
-8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
-   #32.
+8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30,
+   #32 and the capture half of #36.
 9. **Whenever convenient:** ~~#22, #23~~ (done), #24.
