@@ -2,8 +2,8 @@
 
 English | [日本語](order-item-name-and-gateway-error_JP.md)
 
-**Backend change:** `docs/bugs.md` #34 and #36. Neither is breaking; both are additive.
-**Reply to:** `docs/backend-tasks/live-e2e-findings.md` items 1 and 3.
+**Backend change:** `docs/bugs.md` #34, #35 and #36. None is breaking.
+**Reply to:** `docs/backend-tasks/live-e2e-findings.md` items 1–3.
 
 ## 1. `product_name` on every order item
 
@@ -25,3 +25,10 @@ unchanged, so the fan can try again.
 - Show a message such as "PayPal isn't responding right now. Your cart is unchanged; please try
   again." for this code, in both locales.
 - The capture endpoint and the webhook are not covered; they can still answer a bare 500.
+
+## 3. Forgot-password: the per-email message now shows
+
+The per-IP limit on `POST /profile/forgot-password` is 8/min (was 3/min), above the per-email
+limit of 3/hour. A user retrying from one network now gets `too_many_reset_requests` on the 4th
+request, so the message you added is reachable. Nothing to change; the live test no longer needs
+to clear the `rate:ip:*` keys to reach it.

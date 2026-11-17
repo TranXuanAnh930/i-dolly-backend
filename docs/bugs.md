@@ -251,12 +251,13 @@ still hold. That pass corrected line references, added the **Review** notes belo
   detail a 404) showed as "Unknown product" in a fan's past orders. Found by the frontend's live
   e2e run, 2026-11-17. **FIXED** (`project_status.md` §4 item 61): `product_name` on every order
   item, read from the product row whatever its `is_active`.
-- [ ] **35. The forgot-password per-IP limit fires before the per-email one.**
+- [x] **35. The forgot-password per-IP limit fires before the per-email one.**
   `POST /profile/forgot-password` has `rate_limit(3, 60, ip_key)` as a dependency, so from one
   network a 4th request within a minute gets the per-IP 429 (no `code`) and the per-email
   `too_many_reset_requests` is nearly unreachable. Both refuse, so it is safe; only the message
   differs. Options: raise the per-IP limit on this route (5–10/min), or check the email first.
-  Needs a decision. Found 2026-11-17.
+  Found 2026-11-17. **FIXED** (`project_status.md` §4 item 63): the per-IP limit on this route is
+  8/min, so one user's 4th request gets `too_many_reset_requests`.
 - [x] **36. A PayPal failure at checkout was an unhandled 500.** `create_order` let
   `httpx.HTTPError` escape. **FIXED for order creation** (`project_status.md` §4 item 61): it is a
   502 `payment_gateway_unavailable`, with nothing created. `capture_order` and the webhook

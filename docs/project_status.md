@@ -1410,7 +1410,7 @@ newly introduced.
       order pages; the two `send_task` assertions check the new options.
     - Verified: 672 unit and 452 integration tests pass, ruff clean.
 
-61. **Order item names and PayPal gateway errors** (`bugs.md` #34, #36; #35 logged, undecided).
+61. **Order item names and PayPal gateway errors** (`bugs.md` #34, #36; #35 is item 63).
     - `OrderItem` in the order responses has `product_name`, from a property on the model that
       reads the product row, so a deactivated product keeps its name in the fan's past orders. The
       two fan order queries load the product with the items.
@@ -1424,6 +1424,16 @@ newly introduced.
       with no order, payment or cart change).
     - Verified: 673 unit and 456 integration tests pass, ruff clean.
     - Frontend: `docs/frontend-tasks/order-item-name-and-gateway-error.md`.
+
+63. **Forgot-password per-IP limit raised to 8/min** (`bugs.md` #35).
+    - `POST /profile/forgot-password` had `rate_limit(3, 60, ip_key)`, so one user's 4th request
+      within a minute hit the per-IP 429 (no `code`) before the per-email limit (3/hour) could
+      answer `too_many_reset_requests`. At 8/min the per-email limit answers first for a single
+      user; the per-IP limit still stops one IP from trying many addresses.
+    - **Tests:** two in `tests/unit/identity/test_auth_rate_limits.py` (one IP and one email reach
+      `too_many_reset_requests`; one IP and nine emails hit the per-IP limit at the 9th). Both fail
+      at 3/min.
+    - Verified: 675 unit and 456 integration tests pass, ruff clean.
 
 ## 5. Deliberately deferred — next phase, not forgotten
 

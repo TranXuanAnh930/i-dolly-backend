@@ -253,7 +253,7 @@ The `FOR UPDATE` locking in checkout and the lottery draw is what keeps that saf
   **Per-account limits.** IP limits can't stop an attacker with many real IPs, so two routes also
   count per email: `POST /account/login` allows 5 failed attempts per 15 minutes (checked before
   the password; a success clears the count) and `POST /profile/forgot-password` allows 3 requests
-  per hour. Both count registered and unregistered addresses the same way, so the 429 doesn't
+  per hour (its per-IP limit, 8/min, is set above that so a single user sees the per-email 429). Both count registered and unregistered addresses the same way, so the 429 doesn't
   reveal whether an account exists, and key on a SHA-256 of the lower-cased email. The trade-off:
   anyone who knows an address can lock its login for up to 15 minutes.
 
