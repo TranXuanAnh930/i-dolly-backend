@@ -68,6 +68,7 @@ additionally 403 when a manager acts outside their own company's resources (note
 | `insufficient_stock` | 400 | Cart add or order checkout: not enough stock |
 | `product_unavailable` | 400 | Order checkout: a product in the cart was deactivated after it was added |
 | `category_in_use` | 400 | Deleting a category that still has products (admin) |
+| `payment_gateway_unavailable` | 502 | A `paypal` checkout (order or ticket): PayPal unreachable or refused; nothing was created |
 | `cart_empty` | 404 | `POST /order/checkout` with an empty cart |
 | `address_not_found` | 404 | Checkout with an unknown shipping address |
 | `amount_mismatch` | 400 | Checkout `amount` doesn't match the current total (prices changed — refetch) |
@@ -1086,7 +1087,8 @@ follow up with `GET /payment/status/order/{order_id}` (below) to fetch the payme
 
 ### `GET /order/fetch_placed_order` 🔒 fan
 - Response: `List[Order]` — each `Order` includes `status` (`"pending"|"confirmed"|"cancelled"`),
-  nested `items` (`OrderItem[]`), `shippingstatus`, `shippingaddress`
+  nested `items` (`OrderItem[]`: `product_id`, `product_name` — kept for a deactivated product — `quantity`, `price`),
+  `shippingstatus`, `shippingaddress`
 - UI: "My orders" list
 
 ### `GET /order/single_placed_order/{order_id}` 🔒 fan

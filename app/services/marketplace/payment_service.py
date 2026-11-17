@@ -1,12 +1,15 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.cache.invalidation import CacheInvalidation
 from app.db.models.events import Ticket, TicketType
 from app.db.models.marketplace import Cart, Order, OrderItem, Payment, Product
 from app.db.models.marketplace import ShippingStatus as ModelShipStatus
+from app.exception.checkout import PaymentGatewayError
 from app.exception.db_triggers import commit_or_raise
 from app.schema.events import TicketCheckoutCreate, WonTicketCheckoutCreate
 from app.schema.events.ticket import TicketStatus
@@ -18,8 +21,19 @@ from app.services.shared.notification_service import NotificationService
 from app.utils.mock_id import generate_mock_id
 from app.utils.paypal_client import capture_id_from_response, capture_order, create_order, extract_approval_url
 
+logger = logging.getLogger(__name__)
+
 
 class PaymentService:
+
+    @staticmethod
+    def _create_paypal_order(amount: float) -> dict:
+        """create_order, with PayPal's HTTP and network failures turned into PaymentGatewayError."""
+        try:
+            return create_order(str(amount), "JPY")
+        except httpx.HTTPError as e:
+            logger.warning("PayPal create_order failed: %s", e)
+            raise PaymentGatewayError("PayPal create_order failed") from e
 
     @staticmethod
     def create_payment(db:Session, user_id:uuid.UUID, order:Order, data:PaymentCreate) -> Payment:
@@ -43,7 +57,7 @@ class PaymentService:
                 shipstatus = ModelShipStatus(order_id=order.id, status=SchemaShipStatus.pending)
         elif gateway == PaymentGateway.paypal:
             payment_status = PaymentStatus.pending
-            order_response = create_order(str(data.amount), "JPY")
+            order_response = PaymentService._create_paypal_order(data.amount)
             pg_order_id = order_response["id"]
             pg_approval_url = extract_approval_url(order_response)
             pg_payment_id = pg_signature = None
@@ -91,7 +105,7 @@ class PaymentService:
                 pg_signature = ids["signature_id"]
                 ticket.status = TicketStatus.paid
         elif gateway == PaymentGateway.paypal:
-            order_response = create_order(str(data.amount), "JPY")
+            order_response = PaymentService._create_paypal_order(data.amount)
             pg_order_id = order_response["id"]
             pg_approval_url = extract_approval_url(order_response)
             pg_payment_id = pg_signature = None

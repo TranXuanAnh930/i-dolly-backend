@@ -175,7 +175,7 @@ class OrderService:
         order = (
             db.query(Order)
             .filter(Order.user_id==user_id)
-            .options(selectinload(Order.items), selectinload(Order.items).selectinload(OrderItem.order_product))
+            .options(selectinload(Order.items).selectinload(OrderItem.order_product))
             .all()
         )
         return order
@@ -185,7 +185,7 @@ class OrderService:
         return (
             db.query(Order)
             .filter(Order.id==order_id, Order.user_id==user_id)
-            .options(selectinload(Order.items))
+            .options(selectinload(Order.items).selectinload(OrderItem.order_product))
             .first()
         )
 

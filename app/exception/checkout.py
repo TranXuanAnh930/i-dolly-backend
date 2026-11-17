@@ -1,5 +1,11 @@
-from app.exception.common import CodedError
+from app.exception.common import CodedError, ServiceError
 
+
+class PaymentGatewayError(ServiceError):
+    """The payment gateway (PayPal) couldn't be reached or refused the request (502). Raised before
+    anything is committed, so nothing was created or charged."""
+    status_code = 502
+    code = "payment_gateway_unavailable"
 
 class CartItemError(CodedError):
     code = "checkout_error"

@@ -65,6 +65,7 @@
 | `insufficient_stock` | 400 | カートへの追加または注文の購入手続き: 在庫が足りない |
 | `product_unavailable` | 400 | 注文の購入手続き: カートに入れた後で無効化された商品がある |
 | `category_in_use` | 400 | 商品が残っているカテゴリの削除（管理者） |
+| `payment_gateway_unavailable` | 502 | `paypal` の購入手続き（注文／チケット）: PayPal に接続できない、または拒否された。何も作られない |
 | `cart_empty` | 404 | 空のカートでの `POST /order/checkout` |
 | `address_not_found` | 404 | 存在しない配送先住所での購入手続き |
 | `amount_mismatch` | 400 | 購入手続きの `amount` が現在の合計と一致しない（価格が変わった — 再取得すること） |
@@ -1054,7 +1055,7 @@ OAuth2 のパスワードグラント — すべての 🔒 エンドポイン�
 
 ### `GET /order/fetch_placed_order` 🔒 fan
 - レスポンス: `List[Order]` — 各 `Order` は `status`（`"pending"|"confirmed"|"cancelled"`）、ネストした `items`
-  （`OrderItem[]`）、`shippingstatus`、`shippingaddress` を含む
+  （`OrderItem[]`: `product_id`、`product_name`（無効化された商品も保たれる）、`quantity`、`price`）、`shippingstatus`、`shippingaddress` を含む
 - UI:「注文履歴」の一覧
 
 ### `GET /order/single_placed_order/{order_id}` 🔒 fan

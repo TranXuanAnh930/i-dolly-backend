@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.exception.checkout import PaymentGatewayError
 from app.exception.common import CodedError
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ STATUS_CODES = {
     422: "validation_error",
     429: "rate_limited",
     500: "internal_error",
+    502: "bad_gateway",
     503: "service_unavailable",
 }
 
@@ -62,6 +64,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         status_code=exc.status_code,
         content={"detail": exc.detail, "code": error_code(exc)},
         headers=getattr(exc, "headers", None),
+    )
+
+
+async def payment_gateway_exception_handler(request: Request, exc: PaymentGatewayError) -> JSONResponse:
+    logger.warning("Payment gateway failure on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": "The payment gateway is not responding. Please try again.", "code": exc.code},
     )
 
 
@@ -112,3 +122,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     # Starlette's HTTPException also covers unmatched routes (404) and wrong methods (405).
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(PaymentGatewayError, payment_gateway_exception_handler)

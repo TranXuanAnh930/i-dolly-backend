@@ -37,3 +37,8 @@ class OrderItem(Base):
 
     order = relationship("Order", back_populates="items")
     order_product = relationship("Product", back_populates="order_items")
+
+    @property
+    def product_name(self) -> str:
+        # Read by the Order response schema; the product row outlives a soft delete.
+        return self.order_product.name

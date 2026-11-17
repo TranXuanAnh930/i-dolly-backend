@@ -1410,6 +1410,21 @@ newly introduced.
       order pages; the two `send_task` assertions check the new options.
     - Verified: 672 unit and 452 integration tests pass, ruff clean.
 
+61. **Order item names and PayPal gateway errors** (`bugs.md` #34, #36; #35 logged, undecided).
+    - `OrderItem` in the order responses has `product_name`, from a property on the model that
+      reads the product row, so a deactivated product keeps its name in the fan's past orders. The
+      two fan order queries load the product with the items.
+    - `PaymentService._create_paypal_order` turns `httpx.HTTPError` into `PaymentGatewayError`
+      (`app/exception/checkout.py`, 502, `payment_gateway_unavailable`), answered by an app-level
+      handler. It covers the order, ticket and lottery checkouts, which share it. The request
+      aborts before anything is committed; the cart and stock are untouched. `capture_order` and the
+      webhook still raise bare `httpx` errors.
+    - **Tests:** `tests/integration/marketplace/test_order_item_name_and_gateway.py` (name on the
+      three order endpoints, name after deactivation, a connection error and a 401 each give 502
+      with no order, payment or cart change).
+    - Verified: 673 unit and 456 integration tests pass, ruff clean.
+    - Frontend: `docs/frontend-tasks/order-item-name-and-gateway-error.md`.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:
