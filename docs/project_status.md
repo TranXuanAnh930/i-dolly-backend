@@ -1432,7 +1432,7 @@ newly introduced.
       counted and sliced in the database, and only the page's orders and their products are loaded.
       Same results and scoping as before.
     - **Tests:** the existing manager orders tests (company scoping, pagination, admin view) pass
-      unchanged. Verified: 672 unit and 452 integration tests, ruff clean.
+      unchanged. Verified: 675 unit and 456 integration tests, ruff clean.
 
 63. **Forgot-password per-IP limit raised to 8/min** (`bugs.md` #35).
     - `POST /profile/forgot-password` had `rate_limit(3, 60, ip_key)`, so one user's 4th request
