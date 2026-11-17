@@ -1341,6 +1341,35 @@ newly introduced.
       completion notice; the outcome is still on the results page
       (`GET /lottery_entries/concert/{concert_id}/results`).
 
+58. ~~**The resale cap counted cancelled orders**~~ (`bugs.md` #13) — **FIXED**, written by hand.
+    - The 3-unit-per-product cap (resale-capped categories) summed a fan's past order lines with
+      no filter on order status, so a cancelled order kept using it up: a declined mock payment, or
+      a PayPal checkout the next checkout cancelled (item 55). A fan who wanted 2 units, abandoned
+      a PayPal checkout and retried got "would exceed the cap" while owning none.
+    - **Rule:** count the orders that still stand — confirmed and pending — and not cancelled.
+      Pending orders keep counting on purpose: a pending PayPal order reserves its units, so
+      several of them can't each pass the cap and then all be captured (capture doesn't re-check
+      it). A fan's own stale pending PayPal orders are cancelled at their next checkout, before
+      the cap check, so an abandoned one never blocks the retry.
+    - **Two places, kept in step:** `OrderService._units_already_ordered` (the query that used to
+      sit inline in `checkout`) and the trigger function `fn_enforce_resale_cap`, replaced in
+      migration `e8b4d6f0a2c5` with `AND o.status != 'cancelled'` added to its sum. The advisory
+      lock from `d4a7c9e2f1b5` is kept, and `downgrade()` restores that version exactly. If only
+      the service changed, the trigger would still reject the insert.
+    - **Tests:** `tests/integration/marketplace/test_resale_cap_status.py`, 14 tests: the helper in
+      isolation, the trigger by inserting lines directly, and end to end through
+      `POST /order/checkout` (a declined payment, an abandoned PayPal checkout and its retry), with
+      guards for what must not change (confirmed and pending orders count, the 4th unit is
+      refused, other fans and uncapped products are unaffected). The existing concurrency tests
+      (`test_resale_cap_concurrency.py`) stay green. The migration round trip was checked on the
+      test database: after `downgrade` the trigger has the lock and no status filter, after
+      `upgrade` both.
+    - Verified: 670 unit and 445 integration tests pass against local Postgres and Redis, ruff
+      clean.
+    - **Known limitations:** a pending order left by a fan who never returns keeps counting toward
+      their own cap until their next checkout. The comparison uses `!=`, so an order with a `NULL`
+      status (impossible through the ORM) would not count.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:

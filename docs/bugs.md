@@ -99,7 +99,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
   the same concert cancels their own pending direct-sale PayPal checkout, and the new
   `POST /payment/paypal/cancel/{pg_order_id}` cancels it when they back out on PayPal. A pending
   direct-sale ticket holds no seat, so nothing else needs one.
-- [ ] **13. Resale cap counts cancelled/declined orders** (`order_service.py`, no status
+- [x] **13. Resale cap counts cancelled/declined orders** (`order_service.py`, no status
   filter). ~~Computed before the lock (concurrent checkouts can both pass)~~ — **race FIXED**:
   `checkout` now runs the cap check after the `FOR UPDATE` on the cart's products, and
   `fn_enforce_resale_cap` takes a `pg_advisory_xact_lock` on (buyer, product) before its sum
@@ -116,6 +116,11 @@ still hold. That pass corrected line references, added the **Review** notes belo
   with no status filter either, so it needs its own migration. And once only `confirmed` orders
   count, a fan can open several `pending` PayPal orders that each pass the cap and capture them
   all — `finalize_paypal_payment` has to re-check the cap before capturing.
+  **FIXED** (`project_status.md` §4 item 58): the cap counts every order except cancelled ones, in
+  `OrderService._units_already_ordered` and in `fn_enforce_resale_cap` (migration `e8b4d6f0a2c5`).
+  Pending orders still count, so a pending PayPal order reserves its units and no capture-time
+  re-check is needed; a fan's own stale pending PayPal orders are cancelled at their next
+  checkout, before the cap check.
 - [x] **14. `cancel_placed_order` doesn't restock, refund, or bust the product cache.**
   **OUT OF SCOPE**: the frontend doesn't use this endpoint; not in current scope.
   **Review:** the route is still live. `PATCH /order/cancel/{order_id}` (`router/marketplace/order.py:80`)
@@ -217,7 +222,7 @@ still hold. That pass corrected line references, added the **Review** notes belo
   **FIXED without a sweep** (`project_status.md` §4 item 55): the fan's next checkout cancels
   their own pending PayPal orders, and the cancel endpoint cancels one when they back out on
   PayPal. Orders left by a fan who never returns still stay `pending`; they block nothing. They
-  still count toward the resale cap (#13), which counts every order regardless of status.
+  still count toward the resale cap (#13), until that fan's next checkout cancels them.
 - [ ] **31. Stock gone between PayPal approval and capture leaves everything pending.** When the
   tier is sold out or a product is short at capture time, `finalize_paypal_payment` returns `None`
   without changing anything (`payment_service.py:142`, `:180`): the fan, who already approved on
@@ -276,8 +281,8 @@ still hold. That pass corrected line references, added the **Review** notes belo
 
 ## Suggested order (updated 2026-11-13)
 
-Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #14 (mitigated), #15, #16,
-#17, #18, #19, #21, #22, #25, #26, #27, #28, #29, and nine code smells.
+Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #14 (mitigated), #15,
+#16, #17, #18, #19, #21, #22, #25, #26, #27, #28, #29, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -290,9 +295,9 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #14 (mi
    done).
 6. **Auth:** ~~#18, #19~~ (done), then the plaintext-storage half of #20.
 7. **PayPal pending state:** ~~#12, #27~~ (done without a sweep: released on the fan's next
-   checkout or on PayPal cancel). Left: #31, #33, and #13 (the cap can only count `confirmed`
-   orders once a pending one is re-checked at capture). A scheduled sweep is still needed for
-   unpaid lottery wins, which do hold seats (`project_status.md` §8).
+   checkout or on PayPal cancel), ~~#13~~ (the cap ignores cancelled orders). Left: #31, #33. A
+   scheduled sweep is still needed for unpaid lottery wins, which do hold seats
+   (`project_status.md` §8).
 8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
    #32.
 9. **Whenever convenient:** ~~#22~~ (done), #23, #24.

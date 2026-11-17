@@ -952,10 +952,15 @@ Enforced by `fn_enforce_resale_cap` (`schema.sql` §5, renamed from `fn_enforce_
 confirmed against the live `app/db/models/marketplace/order.py` (`orders_items` has
 `order_id`/`product_id`/`quantity`; `orders` has `user_id`). It looks up the product's category's
 `is_resale_capped` flag, and if capped, sums the fan's existing quantity of that `product_id`
-across all their orders and rejects the insert if adding this line would exceed 3. Before that sum
-it takes a transaction-scoped advisory lock on (buyer, product) — migration `d4a7c9e2f1b5`, same
+across all their orders that still stand — confirmed and pending, **not cancelled** (migration
+`e8b4d6f0a2c5`) — and rejects the insert if adding this line would exceed 3. A declined payment or
+a PayPal checkout the fan backed out of therefore stops using up the cap; a pending PayPal order
+keeps reserving its units, so several of them can't all be captured past it. Before that sum it
+takes a transaction-scoped advisory lock on (buyer, product) — migration `d4a7c9e2f1b5`, same
 pattern as `fn_enforce_one_ticket_per_concert` — so two concurrent inserts for the same fan and
-product can't both pass by missing each other's uncommitted line. `order_service.checkout` also
+product can't both pass by missing each other's uncommitted line. The trigger checks every new
+line against the cap, including one inserted into an already-cancelled order; an order is
+normally cancelled after its lines exist. `order_service.checkout` also
 checks the cap, after locking the cart's `products` rows, so the service check reads current
 counts rather than relying on the trigger to catch a race.
 
