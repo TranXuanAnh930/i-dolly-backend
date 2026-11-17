@@ -301,10 +301,10 @@ still hold. That pass corrected line references, added the **Review** notes belo
   `"JPY"`; leftover tutorial comment in `main.py`~~ — fixed: renamed to `max_rank`, default is
   `"JPY"`, and the comment is gone.
 
-## Suggested order (updated 2026-11-13)
+## Suggested order (updated 2026-11-18)
 
 Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #14 (mitigated), #15,
-#16, #17, #18, #19, #21, #22, #25, #26, #27, #28, #29, #31, #33, and nine code smells.
+#16, #17, #18, #19, #21, #22, #23, #25, #26, #27, #28, #29, #31, #33, and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -322,4 +322,4 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #1
    lottery wins, which do hold seats (`project_status.md` §8).
 8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
    #32.
-9. **Whenever convenient:** ~~#22~~ (done), #23, #24.
+9. **Whenever convenient:** ~~#22, #23~~ (done), #24.
