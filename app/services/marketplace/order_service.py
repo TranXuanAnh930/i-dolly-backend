@@ -324,4 +324,6 @@ class OrderService:
                 shippingstatus=order.shippingstatus,
             ))
 
-        return ManagerOrdersPageRead(page=page, limit=limit, count=len(data), data=data)
+        # count is the total across all pages (order_ids is every order the company can see), not
+        # this page's length.
+        return ManagerOrdersPageRead(page=page, limit=limit, count=len(order_ids), data=data)

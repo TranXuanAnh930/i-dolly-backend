@@ -231,11 +231,11 @@ def add_new_bulk_products(product:List[ProductCreate], current_user:Users=Depend
 # Not used by the frontend.
 @router.get("/pagination", response_model=ProductsPageRead)
 def paginated_product(page:int=Query(1, ge=1), limit:int=Query(10, ge=1, le=50), db:Session=Depends(get_db)) -> ProductsPageRead:
-    db_product = ProductService.pagination_process(db, page, limit)
+    db_product, total = ProductService.pagination_process(db, page, limit)
     return ProductsPageRead(
         page=page,
         limit=limit,
-        count=len(db_product),
+        count=total,
         data=db_product,
     )
 
@@ -250,10 +250,10 @@ def filter_product(
     page:int=Query(1, ge=1),
     db:Session=Depends(get_db)
     ) -> ProductsPageRead:
-    products = ProductService.filter_products(db, category, name, min_price, max_price, limit, page)
+    products, total = ProductService.filter_products(db, category, name, min_price, max_price, limit, page)
     return ProductsPageRead(
         page=page,
         limit=limit,
-        count=len(products),
+        count=total,
         data=products,
     )

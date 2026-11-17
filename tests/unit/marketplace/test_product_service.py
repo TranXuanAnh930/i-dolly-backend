@@ -206,9 +206,12 @@ class TestProductService:
         db = MagicMock()
         mock_products = [make_mock_product()]
         db.query().filter().offset().limit().all.return_value = mock_products
+        db.query().filter().count.return_value = 25
 
-        result = ProductService.pagination_process(db, page=1, limit=10)
-        assert len(result) == 1
+        products, total = ProductService.pagination_process(db, page=1, limit=10)
+
+        assert len(products) == 1
+        assert total == 25  # bugs.md #23: the total across pages, not this page's length
 
 
 def make_mock_idol(id=DEFAULT_ID, name="Idol", company_id=DEFAULT_ID, is_active=True):
@@ -401,9 +404,11 @@ class TestProductSalesPage:
         sale_item.order.created_at = MagicMock()
 
         db.query().join().filter().options().order_by().offset().limit().all.return_value = [sale_item]
+        db.query().join().filter().options().order_by().order_by().count.return_value = 25
         admin = make_mock_user(role="admin")
 
         result = ProductService.get_product_sales_page(db, DEFAULT_ID, admin, page=1, limit=10)
 
-        assert result.count == 1
+        assert result.count == 25  # bugs.md #23: the total across pages, not this page's length
+        assert len(result.data) == 1
         assert result.data[0].line_total == 100.0

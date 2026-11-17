@@ -300,7 +300,9 @@ def test_manager_page_pagination(shop):
 
     first = manager_page(seed, shop["manager_a"], page=1, limit=2)
     second = manager_page(seed, shop["manager_a"], page=2, limit=2)
-    assert first["count"] == 2
+    assert len(first["data"]) == 2
+    # count is the total across pages (bugs.md #23), the same on every page.
+    assert first["count"] == second["count"] >= 3
     assert {o["id"] for o in first["data"]}.isdisjoint({o["id"] for o in second["data"]})
 
 

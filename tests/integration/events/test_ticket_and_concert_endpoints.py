@@ -247,7 +247,8 @@ def test_draw_trigger_enqueues_task_and_notifies_managers(event, no_celery):
     res = client.put(f"/concerts/lottery-draw/{concert.id}", headers=seed.headers(event["manager"]))
 
     assert res.status_code == 200
-    no_celery.assert_called_once_with("app.tasks.lottery.draw_lottery", args=[str(concert.id), str(event["manager"].id)])
+    no_celery.assert_called_once_with("app.tasks.lottery.draw_lottery", args=[str(concert.id), str(event["manager"].id)],
+                                      ignore_result=True, retry=False)
     notified = seed.db.query(Notification.user_id).filter(Notification.concert_id == concert.id).all()
     assert (event["manager"].id,) in notified
 

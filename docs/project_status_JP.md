@@ -1198,6 +1198,20 @@ HTTP で機能を動かし（登録 → パスワードリセットを要求 →
     - **既知の制限:** レスポンスに理由のフィールドがないので、フロントエンドは「売り切れ」と拒否されたキャプチャを
       区別できない。フロントエンドのタスク: `docs/frontend-tasks/paypal-capture-failed_JP.md`。
 
+60. **すぐできる 3 件: ページの本当の合計、ブローカー停止時に止まらない、Redis の再起動**（`bugs_JP.md` #23 の一部、
+    #11 の続き）。
+    - ページネーションされた 5 つのエンドポイント（`/products/pagination`、`/products/filter`、
+      `/order/manager-orders-page`、`/products/{id}/sales`、`/tickets/concert/{id}/sales`）の `count` は、ページの長さ
+      ではなく、ページをまたぐ合計になった。`ProductService.pagination_process` と `filter_products` は
+      `(rows, total)` を返す。#23 の未解決: マネージャーの注文ページがすべての ID をメモリに読み込む。
+    - `dispatch_email` と抽選開始は、`send_task` を `ignore_result=True, retry=False` で呼ぶ。これがないと、呼び出しごとに
+      結果バックエンドを購読し、発行を再試行するので、ブローカーが落ちているとリクエストが数分止まった。現在は約 6 秒
+      （ブローカー接続のタイムアウト 4 秒）で失敗し、既存のハンドラーがログに出す（メール）か 503 を返す（抽選）。
+    - `redis` に `app` や `worker` と同じ `restart: unless-stopped` を付けた。Redis のコンテナが止まっていて、結合テストが
+      止まったことがあった。
+    - **テスト:** 商品と注文のページの合計の検証をユニットと結合に追加。2 つの `send_task` の検証は新しいオプションを確認する。
+    - 確認: ユニットテスト 672 件と結合テスト 452 件が成功、ruff も問題なし。
+
 ## 5. 意図的に延期したもの — 次のフェーズで、忘れてはいない
 
 - ~~**グループ／アイドルの CRUD の成功の経路の結合テストのカバレッジ**~~ — **完了**:

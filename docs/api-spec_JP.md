@@ -110,9 +110,8 @@ PayPal の購入手続きは `status: "pending"` とともに **200** を返す�
 
 **ページネーション。** いくつかのエンドポイントは `page`/`limit` のクエリパラメータを取り、
 `{"page", "limit", "count", "data"}` を返す: `GET /products/pagination`、`GET /products/filter`、そしてマネージャー側の
-`GET /order/manager-orders-page`、`GET /products/{id}/sales`、`GET /tickets/concert/{id}/sales`。`count` は合計ではなく
-返されたページのサイズ（`docs/bugs_JP.md` #23）なので、まだ「最後のページ」を示す信頼できる合図はない — ページが
-短く返ってきたら止めること。それ以外のすべてのリストのエンドポイントは、ページネーションなしでコレクション全体を
+`GET /order/manager-orders-page`、`GET /products/{id}/sales`、`GET /tickets/concert/{id}/sales`。`count` は、すべてのページをまたぐ該当行の合計で、
+どのページでも同じ値なので、最後のページは `ceil(count / limit)`。それ以外のすべてのリストのエンドポイントは、ページネーションなしでコレクション全体を
 返す。
 
 **ページのエンドポイント。** 多くの画面には、そのページに必要なものをすべて 1 回のレスポンスで返す `*-page` または

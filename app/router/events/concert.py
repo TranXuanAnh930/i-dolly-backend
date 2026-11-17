@@ -150,7 +150,8 @@ def draw_lottery_for_concert(id: uuid.UUID, current_user: Users = Depends(requir
         raise HTTPException(status_code=403, detail="Managers can only manage concerts for their own company")
 
     try:
-        celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)])
+        celery_app.send_task("app.tasks.lottery.draw_lottery", args=[str(id), str(current_user.id)],
+                             ignore_result=True, retry=False)
     except (OperationalError, RedisError) as e:
         logger.warning("Failed to schedule lottery draw: %s", e)
         raise HTTPException(status_code=503, detail="Failed to schedule lottery draw") from e

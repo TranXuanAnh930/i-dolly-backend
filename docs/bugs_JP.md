@@ -185,9 +185,9 @@
   `get_current_user` に、`user_or_ip_key` のリミッターを `get_current_user_optional` に依存させるので、ルートの
   依存性の順序は問題にならなくなった。逆の順序で書くと、以前は `user_key` が 500 になり、`user_or_ip_key` は
   ログイン済みのユーザーをゲストの IP のバケットに入れていた。
-- [ ] **23.** ページネーションされたページが `count=len(data)`（合計ではなくページのサイズ）を返す
-  （`order_service.py:267`、`ticket_service.py:281`、`product_service.py:477`）。マネージャーの注文ページはすべての
-  商品と注文の ID をメモリに読み込む。
+- [ ] **23.** ~~ページネーションされたページが `count=len(data)`（合計ではなくページのサイズ）を返す~~ — **count は修正済み**:
+  ページネーションされた 5 つのエンドポイントすべてが、ページをまたぐ合計を返す。未解決: マネージャーの注文ページが
+  すべての商品と注文の ID をメモリに読み込む（`order_service.py`）。
 - [ ] **24.** 抽選の計算量が O(応募数 × 希望数) + O(順位数 × キャンペーン数 × 応募数)。
 - [x] **25.** `notify_managers_of_draw_completion` がコミット後に失敗すると、Celery タスクの `except` がマネージャーに
   抽選が *失敗した* と通知する。`draw_lottery` 内で `commit_or_raise` の後にあるものなら何でもこれを引き起こす:

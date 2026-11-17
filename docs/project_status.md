@@ -1393,6 +1393,23 @@ newly introduced.
     - **Known limitation:** the response has no reason field, so the frontend can't tell "sold out"
       from a declined capture. Frontend task: `docs/frontend-tasks/paypal-capture-failed.md`.
 
+60. **Quick wins: real page totals, no hang when the broker is down, Redis restarts** (`bugs.md` #23
+    in part, #11 follow-up).
+    - `count` on the five paginated endpoints (`/products/pagination`, `/products/filter`,
+      `/order/manager-orders-page`, `/products/{id}/sales`, `/tickets/concert/{id}/sales`) is now the
+      total across pages, not the page length. `ProductService.pagination_process` and
+      `filter_products` return `(rows, total)`. Still open in #23: the manager orders page loads
+      every id into memory.
+    - `dispatch_email` and the lottery-draw trigger call `send_task` with `ignore_result=True,
+      retry=False`. Without them each call subscribed to the result backend and retried the
+      publish, so a down broker hung the request for minutes; now it fails in about 6 s (the
+      4 s broker connection timeout) and the existing handlers log it (email) or answer 503 (draw).
+    - `redis` has `restart: unless-stopped` in `docker-compose.yaml`, like `app` and `worker`; a
+      stopped Redis container had hung the integration suite.
+    - **Tests:** total-count assertions in the unit and integration suites for the product and
+      order pages; the two `send_task` assertions check the new options.
+    - Verified: 672 unit and 452 integration tests pass, ruff clean.
+
 ## 5. Deliberately deferred — next phase, not forgotten
 
 - ~~**Group/idol CRUD success-path integration coverage**~~ — **DONE**:

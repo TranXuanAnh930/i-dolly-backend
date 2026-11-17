@@ -58,6 +58,11 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   payment now fails, the ticket or order is released, nothing is captured, and the capture
   endpoint answers 200 with `status: "failed"` (before: a 404 that left it pending, or a capture
   of a product that was off sale).
+- **Fixed — page `count` is the real total (#23, in part).** The five paginated endpoints return
+  the number of matching rows across all pages instead of the page length.
+- **Fixed — a down Celery broker no longer hangs email and lottery-draw requests.** They fail in
+  about 6 s and are logged (email) or answered 503 (draw).
+- `redis` restarts with `unless-stopped` in `docker-compose.yaml`.
 
 ## 1.4.2 — 2026-11-14
 

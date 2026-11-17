@@ -114,9 +114,8 @@ whether the frontend can optimistically update from the response or must refetch
 **Pagination.** A few endpoints take `page`/`limit` query params and return
 `{"page", "limit", "count", "data"}`: `GET /products/pagination`, `GET /products/filter`, and the
 manager-side `GET /order/manager-orders-page`, `GET /products/{id}/sales`,
-`GET /tickets/concert/{id}/sales`. `count` is the size of the returned page, not the total
-(`docs/bugs.md` #23), so there's no reliable "last page" signal yet — stop when a page comes back
-short. Every other list endpoint returns the full collection unpaginated.
+`GET /tickets/concert/{id}/sales`. `count` is the total number of matching rows across all pages, the
+same on every page, so the last page is `ceil(count / limit)`. Every other list endpoint returns the full collection unpaginated.
 
 **Page endpoints.** Many screens have one `*-page` or `/{id}/detail` endpoint that returns
 everything the page needs in one response (e.g. `GET /products/store-page`,

@@ -393,7 +393,7 @@ def test_store_page_lists_seeded_products(world, owned_products):
     assert {str(p.id) for p in owned_products} <= ids
 
 
-def test_search_all_pagination_and_filter(world, owned_products):
+def test_search_all_pagination_and_filter(seed, world, owned_products):
     product_a, _, _ = owned_products
 
     found = client.get(f"/products/search/{product_a.id}")
@@ -402,7 +402,9 @@ def test_search_all_pagination_and_filter(world, owned_products):
     assert client.get(f"/products/search/{uuid.uuid4()}").status_code == 404
 
     assert str(product_a.id) in {p["id"] for p in client.get("/products/all").json()}
-    assert client.get("/products/pagination", params={"page": 1, "limit": 2}).json()["count"] <= 2
+    page = client.get("/products/pagination", params={"page": 1, "limit": 2}).json()
+    assert len(page["data"]) <= 2
+    assert page["count"] == seed.db.query(Product).filter(Product.is_active.is_(True)).count()  # the total
 
     filtered = client.get("/products/filter", params={
         "category": world["category"].name, "name": product_a.name[:12],

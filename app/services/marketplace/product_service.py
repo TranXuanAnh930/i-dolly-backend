@@ -238,10 +238,11 @@ class ProductService:
         return db_products
 
     @staticmethod
-    def pagination_process(db:Session, page:int=1, limit:int=10) -> list[Product]:
+    def pagination_process(db:Session, page:int=1, limit:int=10) -> tuple[list[Product], int]:
+        """One page of active products, and the total number of active products."""
+        query = db.query(Product).filter(Product.is_active.is_(True))
         offset = (page-1)*limit
-        products = db.query(Product).filter(Product.is_active.is_(True)).offset(offset).limit(limit).all()
-        return products
+        return query.offset(offset).limit(limit).all(), query.count()
 
     @staticmethod
     def filter_products(
@@ -251,7 +252,8 @@ class ProductService:
             min_price:int | None = None, 
             max_price:int | None = None, 
             limit:int=5, page:int=1
-        ) -> list[Product]:
+        ) -> tuple[list[Product], int]:
+        """One page of active products matching the filters, and the total number that match."""
         stmt = db.query(Product).options(selectinload(Product.category))
         filters=[Product.is_active.is_(True)]
         if category:
@@ -264,9 +266,10 @@ class ProductService:
         if max_price is not None:
             filters.append(Product.price<=max_price)
         stmt = stmt.filter(*filters).distinct()
+        total = stmt.count()
         offset=(page-1)*limit
         products=stmt.offset(offset).limit(limit).all()
-        return products
+        return products, total
 
     # --- page-shaped reads. Builds the ProductCard shape used by every product grid in one pass.
 
@@ -485,6 +488,7 @@ class ProductService:
             .options(joinedload(OrderItem.order))
             .order_by(Order.created_at.desc())
         )
+        total = query.order_by(None).count()
         offset = (page - 1) * limit
         rows = query.offset(offset).limit(limit).all()
 
@@ -499,4 +503,4 @@ class ProductService:
             )
             for item in rows
         ]
-        return ProductSalesPageRead(page=page, limit=limit, count=len(data), data=data)
+        return ProductSalesPageRead(page=page, limit=limit, count=total, data=data)

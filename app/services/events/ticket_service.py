@@ -301,6 +301,7 @@ class TicketService:
             .options(selectinload(Ticket.ticket_type))
             .order_by(Ticket.created_at.desc())
         )
+        total = query.order_by(None).count()
         offset = (page - 1) * limit
         rows = query.offset(offset).limit(limit).all()
 
@@ -315,7 +316,7 @@ class TicketService:
             )
             for ticket in rows
         ]
-        return TicketSalesPageRead(page=page, limit=limit, count=len(data), data=data)
+        return TicketSalesPageRead(page=page, limit=limit, count=total, data=data)
 
     @staticmethod
     def update_ticket(db: Session, id: uuid.UUID, data: TicketUpdate) -> Ticket:

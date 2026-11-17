@@ -131,7 +131,8 @@ def test_dispatch_email_queues_the_task(_no_real_celery_dispatch):
     dispatch_email("fan@example.com", "Subject", "Body")
 
     _no_real_celery_dispatch.assert_called_once_with(
-        "app.tasks.email.send_email", args=["fan@example.com", "Subject", "Body"]
+        "app.tasks.email.send_email", args=["fan@example.com", "Subject", "Body"],
+        ignore_result=True, retry=False,  # no result-backend subscription, no publish retry: a down broker fails fast
     )
 
 
