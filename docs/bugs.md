@@ -73,6 +73,10 @@ still hold. That pass corrected line references, added the **Review** notes belo
   fails → charged, DB `pending`. The webhook re-calls `capture_order` → 422 already captured →
   500 → retried for 3 days, never resolves. Webhook should apply the event, not re-capture.
   Design it together with #30 and #32 (same function, same PayPal calls).
+  Also covers the rest of #36: `capture_order` and `verify_webhook_signature` let `httpx` errors
+  escape as a bare 500. Not a simple 502 like checkout: a capture that times out may have
+  charged the fan, and `ORDER_NOT_APPROVED` / `ORDER_ALREADY_CAPTURED` need their own handling,
+  so the answer depends on reconciling with PayPal.
 
 ## 🟠 High
 
@@ -197,9 +201,11 @@ still hold. That pass corrected line references, added the **Review** notes belo
   `get_current_user`, and a `user_or_ip_key` limiter on `get_current_user_optional`, so the order
   of a route's dependencies no longer matters. Listed the wrong way round, `user_key` used to 500
   and `user_or_ip_key` put signed-in users in the guests' IP bucket.
-- [ ] **23.** ~~Paginated pages return `count=len(data)` (page size, not total)~~ — **count fixed**:
-  all five paginated endpoints now return the total across pages. Still open: the manager orders
-  page loads every product and order id into memory (`order_service.py`).
+- [x] **23.** Paginated pages return `count=len(data)` (page size, not total); the manager orders
+  page loaded every product and order id into memory. **FIXED** (`project_status.md` §4 items 60
+  and 62): all five endpoints return the total across pages, and the manager orders page filters,
+  counts and pages in SQL (one subquery for the company's products), loading only the page's orders
+  and their products.
 - [ ] **24.** Draw is O(entries × preferences) plus O(ranks × campaigns × entries).
 - [x] **25.** If `notify_managers_of_draw_completion` fails after commit, the Celery task's
   `except` notifies managers the draw *failed*. Anything after `commit_or_raise` in `draw_lottery`
@@ -260,8 +266,8 @@ still hold. That pass corrected line references, added the **Review** notes belo
   8/min, so one user's 4th request gets `too_many_reset_requests`.
 - [x] **36. A PayPal failure at checkout was an unhandled 500.** `create_order` let
   `httpx.HTTPError` escape. **FIXED for order creation** (`project_status.md` §4 item 61): it is a
-  502 `payment_gateway_unavailable`, with nothing created. `capture_order` and the webhook
-  verification still raise bare `httpx` errors. Found 2026-11-17.
+  502 `payment_gateway_unavailable`, with nothing created. The capture and webhook half is folded
+  into #8, since what to answer there depends on reconciliation. Found 2026-11-17.
 - [x] **29. `manager-*-page` reads have no auth and no server-side company scoping.**
   `GET /concerts/manager-events-page`, `/groups/manager-groups-page`,
   `/idols/manager-idols-page`, `/idols/manager-idol-form-page`,
@@ -299,10 +305,11 @@ still hold. That pass corrected line references, added the **Review** notes belo
   `"JPY"`; leftover tutorial comment in `main.py`~~ — fixed: renamed to `max_rank`, default is
   `"JPY"`, and the comment is gone.
 
-## Suggested order (updated 2026-11-13)
+## Suggested order (updated 2026-11-18)
 
 Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #14 (mitigated), #15,
-#16, #17, #18, #19, #21, #22, #25, #26, #27, #28, #29, #31, #33, and nine code smells.
+#16, #17, #18, #19, #21, #22, #23, #25, #26, #27, #28, #29, #31, #33, #34, #35, #36 (checkout; the
+capture half is in #8), and nine code smells.
 
 1. ~~Quick wins: #10, #15, #16, #17~~ (done).
 2. ~~New quick wins: #26 require `confirmed` before shipping; #14 remove or disable the cancel
@@ -318,6 +325,6 @@ Fixed so far: #1, #2, #3, #4, #5, #6 (mitigated), #7, #9, #10, #11, #12, #13, #1
    checkout or on PayPal cancel), ~~#13~~ (the cap ignores cancelled orders), ~~#31, #33~~ (a
    capture whose goods are gone fails the payment). A scheduled sweep is still needed for unpaid
    lottery wins, which do hold seats (`project_status.md` §8).
-8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30 and
-   #32.
-9. **Whenever convenient:** ~~#22~~ (done), #23, #24.
+8. **Needs design first:** #8 PayPal capture under locks / webhook reconciliation, with #30,
+   #32 and the capture half of #36.
+9. **Whenever convenient:** ~~#22, #23~~ (done), #24.

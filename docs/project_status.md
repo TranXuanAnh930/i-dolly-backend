@@ -1398,8 +1398,7 @@ newly introduced.
     - `count` on the five paginated endpoints (`/products/pagination`, `/products/filter`,
       `/order/manager-orders-page`, `/products/{id}/sales`, `/tickets/concert/{id}/sales`) is now the
       total across pages, not the page length. `ProductService.pagination_process` and
-      `filter_products` return `(rows, total)`. Still open in #23: the manager orders page loads
-      every id into memory.
+      `filter_products` return `(rows, total)`. The manager orders page's memory use is item 62.
     - `dispatch_email` and the lottery-draw trigger call `send_task` with `ignore_result=True,
       retry=False`. Without them each call subscribed to the result backend and retried the
       publish, so a down broker hung the request for minutes; now it fails in about 6 s (the
@@ -1418,12 +1417,22 @@ newly introduced.
       (`app/exception/checkout.py`, 502, `payment_gateway_unavailable`), answered by an app-level
       handler. It covers the order, ticket and lottery checkouts, which share it. The request
       aborts before anything is committed; the cart and stock are untouched. `capture_order` and the
-      webhook still raise bare `httpx` errors.
+      webhook still raise bare `httpx` errors; that half is folded into `bugs.md` #8.
     - **Tests:** `tests/integration/marketplace/test_order_item_name_and_gateway.py` (name on the
       three order endpoints, name after deactivation, a connection error and a 401 each give 502
       with no order, payment or cart change).
     - Verified: 673 unit and 456 integration tests pass, ruff clean.
     - Frontend: `docs/frontend-tasks/order-item-name-and-gateway-error.md`.
+
+62. **The manager orders page works in SQL** (`bugs.md` #23, the rest of it).
+    - `get_manager_orders_page` loaded every product, resolved each one's company in Python, and
+      pulled every matching order id into memory just to count and page them. Now
+      `OrderService._company_products_query` selects the company's products (own and ownerless; the
+      owner is the detail row's idol, else its group) as one SQL query, the page is filtered,
+      counted and sliced in the database, and only the page's orders and their products are loaded.
+      Same results and scoping as before.
+    - **Tests:** the existing manager orders tests (company scoping, pagination, admin view) pass
+      unchanged. Verified: 675 unit and 456 integration tests, ruff clean.
 
 63. **Forgot-password per-IP limit raised to 8/min** (`bugs.md` #35).
     - `POST /profile/forgot-password` had `rate_limit(3, 60, ip_key)`, so one user's 4th request

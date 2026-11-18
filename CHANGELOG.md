@@ -62,6 +62,7 @@ Dates are the release commit dates (JST). Bug numbers refer to `docs/bugs.md`.
   the number of matching rows across all pages instead of the page length.
 - **Fixed — a down Celery broker no longer hangs email and lottery-draw requests.** They fail in
   about 6 s and are logged (email) or answered 503 (draw).
+- **Fixed — the manager orders page filters, counts and pages in SQL (#23).**
 - `redis` restarts with `unless-stopped` in `docker-compose.yaml`.
 - **Fixed — fan order items carry the product name (#34).** `product_name` on each order item,
   also for a deactivated product.
